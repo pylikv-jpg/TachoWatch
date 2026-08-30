@@ -16,9 +16,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.ParcelUuid
+import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -43,6 +48,18 @@ class MainActivity : AppCompatActivity() {
 
         private val CCCD_UUID: UUID =
             UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")
+
+        private const val COLOR_BG = 0xFF0B1118.toInt()
+        private const val COLOR_CARD = 0xFF141D27.toInt()
+        private const val COLOR_CARD_ALT = 0xFF101821.toInt()
+        private const val COLOR_TEXT = 0xFFF3F7FA.toInt()
+        private const val COLOR_MUTED = 0xFF9BAAB8.toInt()
+        private const val COLOR_BLUE = 0xFF2196F3.toInt()
+        private const val COLOR_CYAN = 0xFF29B6C8.toInt()
+        private const val COLOR_GREEN = 0xFF42C77A.toInt()
+        private const val COLOR_ORANGE = 0xFFFFB547.toInt()
+        private const val COLOR_RED = 0xFFE85D5D.toInt()
+        private const val COLOR_BORDER = 0xFF263545.toInt()
     }
 
     private val bluetoothManager by lazy {
@@ -54,6 +71,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var statusText: TextView
+    private lateinit var statusDot: View
     private lateinit var deviceText: TextView
     private lateinit var logText: TextView
 
@@ -65,12 +83,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var clearButton: Button
 
     private var targetDevice: BluetoothDevice? = null
-
     private var bluetoothSocket: BluetoothSocket? = null
     private var bluetoothInput: InputStream? = null
-
     private var bluetoothGatt: BluetoothGatt? = null
-
     private var uuidReceiverRegistered = false
 
     private val timeFormat =
@@ -140,148 +155,133 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val gattCallback =
-        object : BluetoothGattCallback() {
+    private val gattCallback = object : BluetoothGattCallback() {
 
-            override fun onConnectionStateChange(
-                gatt: BluetoothGatt,
-                status: Int,
-                newState: Int
-            ) {
+        override fun onConnectionStateChange(
+            gatt: BluetoothGatt,
+            status: Int,
+            newState: Int
+        ) {
+            appendLog("GATT состояние: status=$status, state=$newState")
 
-                appendLog(
-                    "GATT состояние: status=$status, state=$newState"
-                )
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> {
+                    appendLog("GATT: подключено")
+                    updateStatus("GATT подключён")
 
-                when (newState) {
-
-                    BluetoothProfile.STATE_CONNECTED -> {
-                        appendLog("GATT: подключено")
-                        updateStatus("GATT подключён")
-
-                        try {
-                            gatt.discoverServices()
-                            appendLog("Запрошено обнаружение GATT-сервисов")
-                        } catch (e: SecurityException) {
-                            appendLog(
-                                "Ошибка discoverServices: ${e.message}"
-                            )
-                        }
-                    }
-
-                    BluetoothProfile.STATE_DISCONNECTED -> {
-                        appendLog("GATT: соединение разорвано")
-                        updateStatus("Не подключено")
+                    try {
+                        gatt.discoverServices()
+                        appendLog("Запрошено обнаружение GATT-сервисов")
+                    } catch (e: SecurityException) {
+                        appendLog("Ошибка discoverServices: ${e.message}")
                     }
                 }
-            }
 
-            override fun onServicesDiscovered(
-                gatt: BluetoothGatt,
-                status: Int
-            ) {
-
-                appendLog(
-                    "GATT services discovered, status=$status"
-                )
-
-                if (status != BluetoothGatt.GATT_SUCCESS) {
-                    return
-                }
-
-                val services = gatt.services
-
-                appendLog(
-                    "Количество GATT-сервисов: ${services.size}"
-                )
-
-                services.forEach { service ->
-                    logService(service)
-                }
-
-                readGattCharacteristics(gatt, services)
-            }
-
-            @Deprecated("Deprecated in Android")
-            override fun onCharacteristicRead(
-                gatt: BluetoothGatt,
-                characteristic: BluetoothGattCharacteristic,
-                status: Int
-            ) {
-
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    logCharacteristicData(
-                        "READ",
-                        characteristic.uuid,
-                        characteristic.value
-                    )
-                } else {
-                    appendLog(
-                        "READ ошибка ${characteristic.uuid}, status=$status"
-                    )
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    appendLog("GATT: соединение разорвано")
+                    updateStatus("Не подключено")
                 }
             }
+        }
 
-            override fun onCharacteristicRead(
-                gatt: BluetoothGatt,
-                characteristic: BluetoothGattCharacteristic,
-                value: ByteArray,
-                status: Int
-            ) {
+        override fun onServicesDiscovered(
+            gatt: BluetoothGatt,
+            status: Int
+        ) {
+            appendLog("GATT services discovered, status=$status")
 
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    logCharacteristicData(
-                        "READ",
-                        characteristic.uuid,
-                        value
-                    )
-                } else {
-                    appendLog(
-                        "READ ошибка ${characteristic.uuid}, status=$status"
-                    )
-                }
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                return
             }
 
-            @Deprecated("Deprecated in Android")
-            override fun onCharacteristicChanged(
-                gatt: BluetoothGatt,
-                characteristic: BluetoothGattCharacteristic
-            ) {
+            val services = gatt.services
+            appendLog("Количество GATT-сервисов: ${services.size}")
 
+            services.forEach { service ->
+                logService(service)
+            }
+
+            readGattCharacteristics(gatt, services)
+        }
+
+        @Deprecated("Deprecated in Android")
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
                 logCharacteristicData(
-                    "NOTIFY",
+                    "READ",
                     characteristic.uuid,
                     characteristic.value
                 )
-            }
-
-            override fun onCharacteristicChanged(
-                gatt: BluetoothGatt,
-                characteristic: BluetoothGattCharacteristic,
-                value: ByteArray
-            ) {
-
-                logCharacteristicData(
-                    "NOTIFY",
-                    characteristic.uuid,
-                    value
-                )
-            }
-
-            override fun onDescriptorWrite(
-                gatt: BluetoothGatt,
-                descriptor: BluetoothGattDescriptor,
-                status: Int
-            ) {
-
+            } else {
                 appendLog(
-                    "Descriptor write ${descriptor.uuid}, status=$status"
+                    "READ ошибка ${characteristic.uuid}, status=$status"
                 )
             }
         }
 
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                logCharacteristicData(
+                    "READ",
+                    characteristic.uuid,
+                    value
+                )
+            } else {
+                appendLog(
+                    "READ ошибка ${characteristic.uuid}, status=$status"
+                )
+            }
+        }
+
+        @Deprecated("Deprecated in Android")
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic
+        ) {
+            logCharacteristicData(
+                "NOTIFY",
+                characteristic.uuid,
+                characteristic.value
+            )
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            logCharacteristicData(
+                "NOTIFY",
+                characteristic.uuid,
+                value
+            )
+        }
+
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int
+        ) {
+            appendLog(
+                "Descriptor write ${descriptor.uuid}, status=$status"
+            )
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        window.statusBarColor = COLOR_BG
+        window.navigationBarColor = COLOR_BG
 
         createInterface()
         registerUuidReceiver()
@@ -297,104 +297,446 @@ class MainActivity : AppCompatActivity() {
 
     private fun createInterface() {
 
+        val density = resources.displayMetrics.density
+
+        fun dp(value: Int): Int =
+            (value * density).toInt()
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
+            setPadding(
+                dp(16),
+                dp(18),
+                dp(16),
+                dp(14)
+            )
+            setBackgroundColor(COLOR_BG)
+        }
+
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val titleBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
 
         val title = TextView(this).apply {
-            text = "TachoWatch — DTCO диагностика"
-            textSize = 22f
+            text = "TachoWatch"
+            textSize = 26f
+            setTextColor(COLOR_TEXT)
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+        }
+
+        val subtitle = TextView(this).apply {
+            text = "DTCO Bluetooth diagnostics"
+            textSize = 13f
+            setTextColor(COLOR_CYAN)
+            setPadding(
+                0,
+                dp(2),
+                0,
+                0
+            )
+        }
+
+        titleBlock.addView(title)
+        titleBlock.addView(subtitle)
+
+        val badge = TextView(this).apply {
+            text = "DIAG"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(COLOR_TEXT)
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+            setPadding(
+                dp(12),
+                dp(7),
+                dp(12),
+                dp(7)
+            )
+            background =
+                roundedBackground(
+                    COLOR_BLUE,
+                    dp(14).toFloat()
+                )
+        }
+
+        titleRow.addView(
+            titleBlock,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        titleRow.addView(badge)
+
+        root.addView(titleRow)
+        root.addView(verticalSpace(dp(14)))
+
+        val statusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                dp(16),
+                dp(14),
+                dp(16),
+                dp(14)
+            )
+            background =
+                cardBackground(
+                    dp(18).toFloat()
+                )
+        }
+
+        val statusLabel = TextView(this).apply {
+            text = "СОСТОЯНИЕ СОЕДИНЕНИЯ"
+            textSize = 11f
+            setTextColor(COLOR_MUTED)
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+        }
+
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(
+                0,
+                dp(8),
+                0,
+                0
+            )
+        }
+
+        statusDot = View(this).apply {
+            background =
+                roundedBackground(
+                    COLOR_ORANGE,
+                    dp(20).toFloat()
+                )
         }
 
         statusText = TextView(this).apply {
-            text = "Статус: запуск..."
-            textSize = 17f
-            setPadding(0, 14, 0, 8)
+            text = "Запуск..."
+            textSize = 18f
+            setTextColor(COLOR_TEXT)
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+            setPadding(
+                dp(10),
+                0,
+                0,
+                0
+            )
         }
+
+        statusRow.addView(
+            statusDot,
+            LinearLayout.LayoutParams(
+                dp(10),
+                dp(10)
+            )
+        )
+
+        statusRow.addView(statusText)
 
         deviceText = TextView(this).apply {
             text = "DTCO пока не найден"
-            textSize = 15f
-            setPadding(0, 4, 0, 16)
+            textSize = 14f
+            setTextColor(COLOR_MUTED)
+            setLineSpacing(
+                0f,
+                1.12f
+            )
+            setPadding(
+                0,
+                dp(10),
+                0,
+                0
+            )
         }
 
-        findButton = Button(this).apply {
-            text = "НАЙТИ DTCO-20701187"
-            setOnClickListener {
+        statusCard.addView(statusLabel)
+        statusCard.addView(statusRow)
+        statusCard.addView(deviceText)
+
+        root.addView(statusCard)
+        root.addView(verticalSpace(dp(14)))
+
+        val actionLabel = TextView(this).apply {
+            text = "ПОДКЛЮЧЕНИЕ И ДИАГНОСТИКА"
+            textSize = 11f
+            setTextColor(COLOR_MUTED)
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+            setPadding(
+                dp(2),
+                0,
+                0,
+                dp(8)
+            )
+        }
+
+        root.addView(actionLabel)
+
+        findButton =
+            createActionButton(
+                "Найти $TARGET_NAME",
+                COLOR_BLUE
+            ) {
                 findDtco()
             }
-        }
 
-        uuidButton = Button(this).apply {
-            text = "ПОЛУЧИТЬ UUID / SDP"
-            isEnabled = false
-            setOnClickListener {
+        root.addView(
+            findButton,
+            buttonParams(
+                dp(50),
+                dp(7)
+            )
+        )
+
+        uuidButton =
+            createActionButton(
+                "Получить UUID / SDP",
+                COLOR_CYAN
+            ) {
                 requestDeviceUuids()
+            }.apply {
+                isEnabled = false
             }
+
+        root.addView(
+            uuidButton,
+            buttonParams(
+                dp(50),
+                dp(7)
+            )
+        )
+
+        val connectRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 2f
         }
 
-        classicButton = Button(this).apply {
-            text = "ПОДКЛЮЧИТЬ CLASSIC / RFCOMM"
-            isEnabled = false
-            setOnClickListener {
+        classicButton =
+            createActionButton(
+                "CLASSIC\nRFCOMM",
+                COLOR_GREEN
+            ) {
                 connectClassic()
+            }.apply {
+                isEnabled = false
             }
-        }
 
-        gattButton = Button(this).apply {
-            text = "ПОДКЛЮЧИТЬ BLE / GATT"
-            isEnabled = false
-            setOnClickListener {
+        gattButton =
+            createActionButton(
+                "BLE\nGATT",
+                COLOR_CYAN
+            ) {
                 connectGatt()
+            }.apply {
+                isEnabled = false
             }
+
+        connectRow.addView(
+            classicButton,
+            LinearLayout.LayoutParams(
+                0,
+                dp(58),
+                1f
+            ).apply {
+                setMargins(
+                    0,
+                    0,
+                    dp(4),
+                    dp(7)
+                )
+            }
+        )
+
+        connectRow.addView(
+            gattButton,
+            LinearLayout.LayoutParams(
+                0,
+                dp(58),
+                1f
+            ).apply {
+                setMargins(
+                    dp(4),
+                    0,
+                    0,
+                    dp(7)
+                )
+            }
+        )
+
+        root.addView(connectRow)
+
+        val secondaryRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 2f
         }
 
-        disconnectButton = Button(this).apply {
-            text = "ОТКЛЮЧИТЬСЯ"
-            setOnClickListener {
+        disconnectButton =
+            createActionButton(
+                "Отключиться",
+                COLOR_RED
+            ) {
                 disconnectAll()
             }
-        }
 
-        clearButton = Button(this).apply {
-            text = "ОЧИСТИТЬ ЖУРНАЛ"
-            setOnClickListener {
+        clearButton =
+            createActionButton(
+                "Очистить журнал",
+                0xFF3A4958.toInt()
+            ) {
                 logText.text = ""
                 appendLog("Журнал очищен")
             }
+
+        secondaryRow.addView(
+            disconnectButton,
+            LinearLayout.LayoutParams(
+                0,
+                dp(48),
+                1f
+            ).apply {
+                setMargins(
+                    0,
+                    0,
+                    dp(4),
+                    dp(8)
+                )
+            }
+        )
+
+        secondaryRow.addView(
+            clearButton,
+            LinearLayout.LayoutParams(
+                0,
+                dp(48),
+                1f
+            ).apply {
+                setMargins(
+                    dp(4),
+                    0,
+                    0,
+                    dp(8)
+                )
+            }
+        )
+
+        root.addView(secondaryRow)
+
+        val logHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(
+                dp(2),
+                dp(4),
+                dp(2),
+                dp(8)
+            )
         }
 
         val logTitle = TextView(this).apply {
             text = "Диагностический журнал"
-            textSize = 18f
-            setPadding(0, 18, 0, 8)
+            textSize = 16f
+            setTextColor(COLOR_TEXT)
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+        }
+
+        val liveLabel = TextView(this).apply {
+            text = "● LIVE"
+            textSize = 11f
+            setTextColor(COLOR_GREEN)
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+        }
+
+        logHeader.addView(
+            logTitle,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        logHeader.addView(liveLabel)
+        root.addView(logHeader)
+
+        val logCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                dp(12),
+                dp(10),
+                dp(12),
+                dp(10)
+            )
+            background =
+                roundedBackground(
+                    COLOR_CARD_ALT,
+                    dp(16).toFloat(),
+                    COLOR_BORDER
+                )
         }
 
         logText = TextView(this).apply {
-            textSize = 12f
+            textSize = 11.5f
+            setTextColor(
+                0xFFD3DEE7.toInt()
+            )
+            typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
+            setLineSpacing(
+                dp(1).toFloat(),
+                1.05f
+            )
         }
 
         val scroll = ScrollView(this).apply {
-            addView(logText)
+            isFillViewport = true
+
+            addView(
+                logText,
+                ScrollView.LayoutParams(
+                    ScrollView.LayoutParams.MATCH_PARENT,
+                    ScrollView.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
 
-        root.addView(title)
-        root.addView(statusText)
-        root.addView(deviceText)
-
-        root.addView(findButton)
-        root.addView(uuidButton)
-        root.addView(classicButton)
-        root.addView(gattButton)
-        root.addView(disconnectButton)
-        root.addView(clearButton)
-
-        root.addView(logTitle)
+        logCard.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
 
         root.addView(
-            scroll,
+            logCard,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -405,18 +747,128 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
     }
 
+    private fun createActionButton(
+        label: String,
+        color: Int,
+        action: () -> Unit
+    ): Button {
+
+        val density =
+            resources.displayMetrics.density
+
+        val radius =
+            14f * density
+
+        return Button(this).apply {
+            text = label
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+            isAllCaps = false
+
+            setPadding(
+                (12 * density).toInt(),
+                0,
+                (12 * density).toInt(),
+                0
+            )
+
+            background =
+                roundedBackground(
+                    color,
+                    radius
+                )
+
+            setOnClickListener {
+                action()
+            }
+        }
+    }
+
+    private fun buttonParams(
+        height: Int,
+        bottomMargin: Int
+    ): LinearLayout.LayoutParams {
+
+        return LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            height
+        ).apply {
+            setMargins(
+                0,
+                0,
+                0,
+                bottomMargin
+            )
+        }
+    }
+
+    private fun verticalSpace(
+        height: Int
+    ): View {
+
+        return View(this).apply {
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    1,
+                    height
+                )
+        }
+    }
+
+    private fun roundedBackground(
+        fillColor: Int,
+        radius: Float,
+        strokeColor: Int? = null
+    ): GradientDrawable {
+
+        return GradientDrawable().apply {
+            shape =
+                GradientDrawable.RECTANGLE
+
+            cornerRadius =
+                radius
+
+            setColor(fillColor)
+
+            strokeColor?.let {
+                setStroke(
+                    resources.displayMetrics.density
+                        .toInt()
+                        .coerceAtLeast(1),
+                    it
+                )
+            }
+        }
+    }
+
+    private fun cardBackground(
+        radius: Float
+    ): GradientDrawable {
+
+        return roundedBackground(
+            COLOR_CARD,
+            radius,
+            COLOR_BORDER
+        )
+    }
+
     private fun requestPermissions() {
 
         val requiredPermissions =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.S
+            ) {
                 arrayOf(
                     Manifest.permission.BLUETOOTH_SCAN,
                     Manifest.permission.BLUETOOTH_CONNECT
                 )
-
             } else {
-
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION
                 )
@@ -424,16 +876,21 @@ class MainActivity : AppCompatActivity() {
 
         val missing =
             requiredPermissions.filter {
+
                 ContextCompat.checkSelfPermission(
                     this,
                     it
-                ) != PackageManager.PERMISSION_GRANTED
+                ) !=
+                    PackageManager.PERMISSION_GRANTED
             }
 
         if (missing.isEmpty()) {
+
             showBluetoothStatus()
             findDtco()
+
         } else {
+
             permissionLauncher.launch(
                 missing.toTypedArray()
             )
@@ -444,19 +901,38 @@ class MainActivity : AppCompatActivity() {
     private fun showBluetoothStatus() {
 
         if (bluetoothAdapter == null) {
-            updateStatus("Bluetooth отсутствует")
-            appendLog("BluetoothAdapter отсутствует")
+
+            updateStatus(
+                "Bluetooth отсутствует"
+            )
+
+            appendLog(
+                "BluetoothAdapter отсутствует"
+            )
+
             return
         }
 
         if (!bluetoothAdapter.isEnabled) {
-            updateStatus("Bluetooth выключен")
-            appendLog("Включите Bluetooth")
+
+            updateStatus(
+                "Bluetooth выключен"
+            )
+
+            appendLog(
+                "Включите Bluetooth"
+            )
+
             return
         }
 
-        updateStatus("Bluetooth включен")
-        appendLog("Bluetooth активен")
+        updateStatus(
+            "Bluetooth включен"
+        )
+
+        appendLog(
+            "Bluetooth активен"
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -468,17 +944,52 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (!bluetoothAdapter.isEnabled) {
-            appendLog("Bluetooth выключен")
+
+            appendLog(
+                "Bluetooth выключен"
+            )
+
+            updateStatus(
+                "Bluetooth выключен"
+            )
+
             return
         }
 
-        appendLog("--------------------------------")
-        appendLog("Поиск $TARGET_NAME среди сопряжённых устройств")
+        appendLog(
+            "--------------------------------"
+        )
 
-        val bonded = bluetoothAdapter.bondedDevices
+        appendLog(
+            "Поиск $TARGET_NAME среди сопряжённых устройств"
+        )
+
+        updateStatus(
+            "Поиск тахографа..."
+        )
+
+        val bonded =
+            bluetoothAdapter.bondedDevices
 
         if (bonded.isEmpty()) {
-            appendLog("Сопряжённых Bluetooth-устройств нет")
+
+            targetDevice = null
+
+            deviceText.text =
+                "Сопряжённых Bluetooth-устройств нет"
+
+            uuidButton.isEnabled = false
+            classicButton.isEnabled = false
+            gattButton.isEnabled = false
+
+            updateStatus(
+                "DTCO не найден"
+            )
+
+            appendLog(
+                "Сопряжённых Bluetooth-устройств нет"
+            )
+
             return
         }
 
@@ -486,7 +997,8 @@ class MainActivity : AppCompatActivity() {
 
             val name =
                 try {
-                    device.name ?: "Без имени"
+                    device.name
+                        ?: "Без имени"
                 } catch (_: Exception) {
                     "Недоступно"
                 }
@@ -498,6 +1010,7 @@ class MainActivity : AppCompatActivity() {
 
         val found =
             bonded.firstOrNull { device ->
+
                 try {
                     device.name?.equals(
                         TARGET_NAME,
@@ -513,49 +1026,83 @@ class MainActivity : AppCompatActivity() {
             targetDevice = null
 
             deviceText.text =
-                "DTCO-20701187 не найден среди сопряжённых"
+                "$TARGET_NAME не найден среди сопряжённых"
 
             uuidButton.isEnabled = false
             classicButton.isEnabled = false
             gattButton.isEnabled = false
 
-            appendLog("$TARGET_NAME НЕ найден")
+            updateStatus(
+                "DTCO не найден"
+            )
+
+            appendLog(
+                "$TARGET_NAME НЕ найден"
+            )
+
             return
         }
 
-        targetDevice = found
+        targetDevice =
+            found
 
         val info =
             "$TARGET_NAME\n" +
-                    "MAC: ${found.address}\n" +
-                    "Тип: ${deviceType(found.type)}\n" +
-                    "Bond state: ${found.bondState}"
+                "MAC: ${found.address}\n" +
+                "Тип: ${deviceType(found.type)}\n" +
+                "Bond state: ${found.bondState}"
 
-        deviceText.text = info
+        deviceText.text =
+            info
 
         uuidButton.isEnabled = true
         classicButton.isEnabled = true
         gattButton.isEnabled = true
 
-        appendLog("НАЙДЕН ЦЕЛЕВОЙ DTCO")
-        appendLog("MAC: ${found.address}")
-        appendLog("Тип: ${deviceType(found.type)}")
-        appendLog("Bond state: ${found.bondState}")
+        updateStatus(
+            "DTCO найден"
+        )
+
+        appendLog(
+            "НАЙДЕН ЦЕЛЕВОЙ DTCO"
+        )
+
+        appendLog(
+            "MAC: ${found.address}"
+        )
+
+        appendLog(
+            "Тип: ${deviceType(found.type)}"
+        )
+
+        appendLog(
+            "Bond state: ${found.bondState}"
+        )
 
         found.uuids?.forEach {
-            appendLog("Сохранённый UUID: ${it.uuid}")
+            appendLog(
+                "Сохранённый UUID: ${it.uuid}"
+            )
         }
 
-        appendLog("--------------------------------")
+        appendLog(
+            "--------------------------------"
+        )
     }
 
     @SuppressLint("MissingPermission")
     private fun requestDeviceUuids() {
 
-        val device = targetDevice ?: return
+        val device =
+            targetDevice ?: return
 
-        appendLog("--------------------------------")
-        appendLog("Запрашиваю UUID через SDP")
+        appendLog(
+            "--------------------------------"
+        )
+
+        appendLog(
+            "Запрашиваю UUID через SDP"
+        )
 
         try {
 
@@ -583,38 +1130,76 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("MissingPermission")
     private fun connectClassic() {
 
-        val device = targetDevice ?: return
+        val device =
+            targetDevice ?: return
 
         disconnectClassic()
 
-        appendLog("--------------------------------")
-        appendLog("CLASSIC/RFCOMM подключение")
-        appendLog("Устройство: ${device.name}")
-        appendLog("MAC: ${device.address}")
+        appendLog(
+            "--------------------------------"
+        )
+
+        appendLog(
+            "CLASSIC/RFCOMM подключение"
+        )
+
+        appendLog(
+            "Устройство: ${device.name}"
+        )
+
+        appendLog(
+            "MAC: ${device.address}"
+        )
+
+        updateStatus(
+            "RFCOMM: подключение..."
+        )
 
         thread {
 
-            val uuidCandidates = mutableListOf<UUID>()
+            val uuidCandidates =
+                mutableListOf<UUID>()
 
             try {
+
                 device.uuids?.forEach {
-                    uuidCandidates.add(it.uuid)
+                    uuidCandidates.add(
+                        it.uuid
+                    )
                 }
+
             } catch (_: Exception) {
             }
 
-            if (!uuidCandidates.contains(SPP_UUID)) {
-                uuidCandidates.add(SPP_UUID)
+            if (
+                !uuidCandidates.contains(
+                    SPP_UUID
+                )
+            ) {
+                uuidCandidates.add(
+                    SPP_UUID
+                )
             }
 
             if (uuidCandidates.isEmpty()) {
-                appendLog("Нет UUID для проверки RFCOMM")
+
+                appendLog(
+                    "Нет UUID для проверки RFCOMM"
+                )
+
+                updateStatus(
+                    "RFCOMM: UUID не найден"
+                )
+
                 return@thread
             }
 
             uuidCandidates.forEach { uuid ->
 
-                if (bluetoothSocket?.isConnected == true) {
+                if (
+                    bluetoothSocket?.isConnected ==
+                    true
+                ) {
                     return@forEach
                 }
 
@@ -622,18 +1207,24 @@ class MainActivity : AppCompatActivity() {
                     "Пробую RFCOMM UUID: $uuid"
                 )
 
-                var socket: BluetoothSocket? = null
+                var socket:
+                    BluetoothSocket? = null
 
                 try {
 
-                    bluetoothAdapter.cancelDiscovery()
+                    bluetoothAdapter
+                        .cancelDiscovery()
 
                     socket =
-                        device.createRfcommSocketToServiceRecord(uuid)
+                        device
+                            .createRfcommSocketToServiceRecord(
+                                uuid
+                            )
 
                     socket.connect()
 
-                    bluetoothSocket = socket
+                    bluetoothSocket =
+                        socket
 
                     appendLog(
                         "RFCOMM ПОДКЛЮЧЕНИЕ УСПЕШНО"
@@ -643,7 +1234,9 @@ class MainActivity : AppCompatActivity() {
                         "Рабочий UUID: $uuid"
                     )
 
-                    updateStatus("DTCO подключён по RFCOMM")
+                    updateStatus(
+                        "DTCO подключён по RFCOMM"
+                    )
 
                     bluetoothInput =
                         socket.inputStream
@@ -656,7 +1249,7 @@ class MainActivity : AppCompatActivity() {
 
                     appendLog(
                         "RFCOMM не подключился: " +
-                                "${e.javaClass.simpleName}: ${e.message}"
+                            "${e.javaClass.simpleName}: ${e.message}"
                     )
 
                     try {
@@ -666,7 +1259,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            if (bluetoothSocket?.isConnected != true) {
+            if (
+                bluetoothSocket?.isConnected !=
+                true
+            ) {
+
+                updateStatus(
+                    "RFCOMM не подключён"
+                )
 
                 appendLog(
                     "Все проверенные RFCOMM UUID не дали соединение"
@@ -674,7 +1274,7 @@ class MainActivity : AppCompatActivity() {
 
                 appendLog(
                     "Это ещё не означает, что DTCO недоступен — " +
-                            "он может использовать другой Bluetooth-профиль."
+                        "он может использовать другой Bluetooth-профиль."
                 )
             }
         }
@@ -690,30 +1290,42 @@ class MainActivity : AppCompatActivity() {
                 "Запущено чтение входящего RFCOMM потока"
             )
 
-            val buffer = ByteArray(4096)
+            val buffer =
+                ByteArray(4096)
 
-            while (bluetoothSocket?.isConnected == true) {
+            while (
+                bluetoothSocket?.isConnected ==
+                true
+            ) {
 
                 try {
 
                     val count =
-                        input.read(buffer)
+                        input.read(
+                            buffer
+                        )
 
                     if (count <= 0) {
                         continue
                     }
 
                     val data =
-                        buffer.copyOf(count)
+                        buffer.copyOf(
+                            count
+                        )
 
                     appendLog(
                         "RX RFCOMM [$count]: ${bytesToHex(data)}"
                     )
 
                     val ascii =
-                        bytesToAscii(data)
+                        bytesToAscii(
+                            data
+                        )
 
-                    if (ascii.isNotBlank()) {
+                    if (
+                        ascii.isNotBlank()
+                    ) {
                         appendLog(
                             "ASCII: $ascii"
                         )
@@ -739,14 +1351,25 @@ class MainActivity : AppCompatActivity() {
 
         disconnectGatt()
 
-        appendLog("--------------------------------")
-        appendLog("Попытка BLE/GATT подключения")
-        appendLog("MAC: ${device.address}")
+        appendLog(
+            "--------------------------------"
+        )
+
+        appendLog(
+            "Попытка BLE/GATT подключения"
+        )
+
+        appendLog(
+            "MAC: ${device.address}"
+        )
 
         try {
 
             bluetoothGatt =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (
+                    Build.VERSION.SDK_INT >=
+                    Build.VERSION_CODES.M
+                ) {
 
                     device.connectGatt(
                         this,
@@ -765,9 +1388,15 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
-            updateStatus("GATT: подключение...")
+            updateStatus(
+                "GATT: подключение..."
+            )
 
         } catch (e: Exception) {
+
+            updateStatus(
+                "Ошибка GATT"
+            )
 
             appendLog(
                 "Ошибка connectGatt: ${e.javaClass.simpleName}: ${e.message}"
@@ -784,7 +1413,8 @@ class MainActivity : AppCompatActivity() {
             "SERVICE ${service.uuid}"
         )
 
-        service.characteristics.forEach { characteristic ->
+        service.characteristics.forEach {
+                characteristic ->
 
             val properties =
                 characteristicProperties(
@@ -799,12 +1429,13 @@ class MainActivity : AppCompatActivity() {
                 "    properties: $properties"
             )
 
-            characteristic.descriptors.forEach { descriptor ->
+            characteristic.descriptors
+                .forEach { descriptor ->
 
-                appendLog(
-                    "    DESCRIPTOR ${descriptor.uuid}"
-                )
-            }
+                    appendLog(
+                        "    DESCRIPTOR ${descriptor.uuid}"
+                    )
+                }
         }
     }
 
@@ -818,14 +1449,18 @@ class MainActivity : AppCompatActivity() {
 
             for (service in services) {
 
-                for (characteristic in service.characteristics) {
+                for (
+                    characteristic in
+                    service.characteristics
+                ) {
 
                     val properties =
                         characteristic.properties
 
                     if (
                         properties and
-                        BluetoothGattCharacteristic.PROPERTY_READ != 0
+                        BluetoothGattCharacteristic.PROPERTY_READ !=
+                        0
                     ) {
 
                         appendLog(
@@ -838,7 +1473,9 @@ class MainActivity : AppCompatActivity() {
                                 characteristic
                             )
 
-                            Thread.sleep(500)
+                            Thread.sleep(
+                                500
+                            )
 
                         } catch (e: Exception) {
 
@@ -850,13 +1487,18 @@ class MainActivity : AppCompatActivity() {
 
                     val notify =
                         properties and
-                                BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
+                            BluetoothGattCharacteristic.PROPERTY_NOTIFY !=
+                            0
 
                     val indicate =
                         properties and
-                                BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+                            BluetoothGattCharacteristic.PROPERTY_INDICATE !=
+                            0
 
-                    if (notify || indicate) {
+                    if (
+                        notify ||
+                        indicate
+                    ) {
 
                         enableGattNotification(
                             gatt,
@@ -864,7 +1506,9 @@ class MainActivity : AppCompatActivity() {
                             indicate
                         )
 
-                        Thread.sleep(500)
+                        Thread.sleep(
+                            500
+                        )
                     }
                 }
             }
@@ -891,9 +1535,10 @@ class MainActivity : AppCompatActivity() {
             )
 
             val descriptor =
-                characteristic.getDescriptor(
-                    CCCD_UUID
-                )
+                characteristic
+                    .getDescriptor(
+                        CCCD_UUID
+                    )
 
             if (descriptor == null) {
 
@@ -906,12 +1551,20 @@ class MainActivity : AppCompatActivity() {
 
             val value =
                 if (indication) {
-                    BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+
+                    BluetoothGattDescriptor
+                        .ENABLE_INDICATION_VALUE
+
                 } else {
-                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+
+                    BluetoothGattDescriptor
+                        .ENABLE_NOTIFICATION_VALUE
                 }
 
-            if (Build.VERSION.SDK_INT >= 33) {
+            if (
+                Build.VERSION.SDK_INT >=
+                33
+            ) {
 
                 val result =
                     gatt.writeDescriptor(
@@ -926,7 +1579,8 @@ class MainActivity : AppCompatActivity() {
             } else {
 
                 @Suppress("DEPRECATION")
-                descriptor.value = value
+                descriptor.value =
+                    value
 
                 @Suppress("DEPRECATION")
                 val result =
@@ -954,7 +1608,11 @@ class MainActivity : AppCompatActivity() {
     ) {
 
         if (data == null) {
-            appendLog("$source $uuid: null")
+
+            appendLog(
+                "$source $uuid: null"
+            )
+
             return
         }
 
@@ -967,9 +1625,13 @@ class MainActivity : AppCompatActivity() {
         )
 
         val ascii =
-            bytesToAscii(data)
+            bytesToAscii(
+                data
+            )
 
-        if (ascii.isNotBlank()) {
+        if (
+            ascii.isNotBlank()
+        ) {
 
             appendLog(
                 "ASCII: $ascii"
@@ -986,54 +1648,81 @@ class MainActivity : AppCompatActivity() {
 
         if (
             properties and
-            BluetoothGattCharacteristic.PROPERTY_READ != 0
+            BluetoothGattCharacteristic.PROPERTY_READ !=
+            0
         ) {
-            result.add("READ")
+            result.add(
+                "READ"
+            )
         }
 
         if (
             properties and
-            BluetoothGattCharacteristic.PROPERTY_WRITE != 0
+            BluetoothGattCharacteristic.PROPERTY_WRITE !=
+            0
         ) {
-            result.add("WRITE")
+            result.add(
+                "WRITE"
+            )
         }
 
         if (
             properties and
-            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE !=
+            0
         ) {
-            result.add("WRITE_NO_RESPONSE")
+            result.add(
+                "WRITE_NO_RESPONSE"
+            )
         }
 
         if (
             properties and
-            BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
+            BluetoothGattCharacteristic.PROPERTY_NOTIFY !=
+            0
         ) {
-            result.add("NOTIFY")
+            result.add(
+                "NOTIFY"
+            )
         }
 
         if (
             properties and
-            BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+            BluetoothGattCharacteristic.PROPERTY_INDICATE !=
+            0
         ) {
-            result.add("INDICATE")
+            result.add(
+                "INDICATE"
+            )
         }
 
         if (
             properties and
-            BluetoothGattCharacteristic.PROPERTY_BROADCAST != 0
+            BluetoothGattCharacteristic.PROPERTY_BROADCAST !=
+            0
         ) {
-            result.add("BROADCAST")
+            result.add(
+                "BROADCAST"
+            )
         }
 
-        return if (result.isEmpty()) {
+        return if (
+            result.isEmpty()
+        ) {
+
             "NONE"
+
         } else {
-            result.joinToString(" | ")
+
+            result.joinToString(
+                " | "
+            )
         }
     }
 
-    private fun deviceType(type: Int): String {
+    private fun deviceType(
+        type: Int
+    ): String {
 
         return when (type) {
 
@@ -1055,9 +1744,13 @@ class MainActivity : AppCompatActivity() {
         bytes: ByteArray
     ): String {
 
-        return bytes.joinToString(" ") {
+        return bytes.joinToString(
+            " "
+        ) {
+
             "%02X".format(
-                it.toInt() and 0xFF
+                it.toInt() and
+                    0xFF
             )
         }
     }
@@ -1071,11 +1764,20 @@ class MainActivity : AppCompatActivity() {
             bytes.forEach {
 
                 val value =
-                    it.toInt() and 0xFF
+                    it.toInt() and
+                        0xFF
 
-                if (value in 32..126) {
-                    append(value.toChar())
+                if (
+                    value in
+                    32..126
+                ) {
+
+                    append(
+                        value.toChar()
+                    )
+
                 } else {
+
                     append('.')
                 }
             }
@@ -1087,8 +1789,73 @@ class MainActivity : AppCompatActivity() {
     ) {
 
         runOnUiThread {
+
             statusText.text =
-                "Статус: $text"
+                text
+
+            val dotColor =
+                when {
+
+                    text.contains(
+                        "подключён",
+                        ignoreCase = true
+                    ) ->
+                        COLOR_GREEN
+
+                    text.contains(
+                        "найден",
+                        ignoreCase = true
+                    ) &&
+                        !text.contains(
+                            "не найден",
+                            ignoreCase = true
+                        ) ->
+                        COLOR_CYAN
+
+                    text.contains(
+                        "подключение",
+                        ignoreCase = true
+                    ) ||
+                        text.contains(
+                            "поиск",
+                            ignoreCase = true
+                        ) ||
+                        text.contains(
+                            "включен",
+                            ignoreCase = true
+                        ) ->
+                        COLOR_ORANGE
+
+                    text.contains(
+                        "ошибка",
+                        ignoreCase = true
+                    ) ||
+                        text.contains(
+                            "выключен",
+                            ignoreCase = true
+                        ) ||
+                        text.contains(
+                            "не найден",
+                            ignoreCase = true
+                        ) ||
+                        text.contains(
+                            "не подключ",
+                            ignoreCase = true
+                        ) ->
+                        COLOR_RED
+
+                    else ->
+                        COLOR_MUTED
+                }
+
+            statusDot.background =
+                roundedBackground(
+                    dotColor,
+                    20f *
+                        resources
+                            .displayMetrics
+                            .density
+                )
         }
     }
 
@@ -1097,7 +1864,9 @@ class MainActivity : AppCompatActivity() {
     ) {
 
         val timestamp =
-            timeFormat.format(Date())
+            timeFormat.format(
+                Date()
+            )
 
         runOnUiThread {
 
@@ -1145,7 +1914,9 @@ class MainActivity : AppCompatActivity() {
         disconnectClassic()
         disconnectGatt()
 
-        updateStatus("Не подключено")
+        updateStatus(
+            "Не подключено"
+        )
 
         appendLog(
             "Все Bluetooth-соединения закрыты"
@@ -1162,7 +1933,8 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.BLUETOOTH_CONNECT
-            ) == PackageManager.PERMISSION_GRANTED
+            ) ==
+                PackageManager.PERMISSION_GRANTED
 
         } else {
 
@@ -1181,7 +1953,10 @@ class MainActivity : AppCompatActivity() {
                 BluetoothDevice.ACTION_UUID
             )
 
-        if (Build.VERSION.SDK_INT >= 33) {
+        if (
+            Build.VERSION.SDK_INT >=
+            33
+        ) {
 
             registerReceiver(
                 uuidReceiver,
@@ -1198,23 +1973,29 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        uuidReceiverRegistered = true
+        uuidReceiverRegistered =
+            true
     }
 
     override fun onDestroy() {
 
         disconnectAll()
 
-        if (uuidReceiverRegistered) {
+        if (
+            uuidReceiverRegistered
+        ) {
 
             try {
+
                 unregisterReceiver(
                     uuidReceiver
                 )
+
             } catch (_: Exception) {
             }
 
-            uuidReceiverRegistered = false
+            uuidReceiverRegistered =
+                false
         }
 
         super.onDestroy()
