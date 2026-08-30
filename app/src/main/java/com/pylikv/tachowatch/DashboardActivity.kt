@@ -3,8 +3,9 @@ package com.pylikv.tachowatch
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.os.Bundle
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -16,418 +17,1277 @@ import androidx.appcompat.app.AppCompatActivity
 
 class DashboardActivity : AppCompatActivity() {
 
-    private val green = Color.parseColor("#2E7D32")
-    private val yellow = Color.parseColor("#F9A825")
-    private val red = Color.parseColor("#C62828")
-    private val blue = Color.parseColor("#1565C0")
-    private val gray = Color.parseColor("#616161")
-    private val lightGray = Color.parseColor("#EEEEEE")
+    companion object {
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        private const val BG =
+            0xFF0B1118.toInt()
+
+        private const val CARD =
+            0xFF141D27.toInt()
+
+        private const val CARD_DARK =
+            0xFF101821.toInt()
+
+        private const val TEXT =
+            0xFFF4F7FA.toInt()
+
+        private const val MUTED =
+            0xFF97A7B6.toInt()
+
+        private const val BORDER =
+            0xFF273849.toInt()
+
+        private const val GREEN =
+            0xFF45C97A.toInt()
+
+        private const val YELLOW =
+            0xFFFFD54F.toInt()
+
+        private const val ORANGE =
+            0xFFFFA726.toInt()
+
+        private const val RED =
+            0xFFEF5350.toInt()
+
+        private const val CYAN =
+            0xFF32B6C9.toInt()
+
+        private const val BLUE =
+            0xFF3298E8.toInt()
+    }
+
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
+
+        super.onCreate(
+            savedInstanceState
+        )
+
+        window.statusBarColor = BG
+        window.navigationBarColor = BG
 
         showDashboard()
     }
 
+    private fun dp(
+        value: Int
+    ): Int {
+
+        return (
+            value *
+                resources.displayMetrics.density
+            ).toInt()
+    }
+
     private fun showDashboard() {
 
-        val scrollView = ScrollView(this)
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(28, 28, 28, 40)
-        }
-
-        scrollView.addView(root)
-
-        val title = TextView(this).apply {
-            text = "TachoWatch"
-            textSize = 28f
-            setTypeface(null, Typeface.BOLD)
-        }
-
-        val subtitle = TextView(this).apply {
-            text = "Контроль режима труда и отдыха"
-            textSize = 15f
-            setTextColor(gray)
-            setPadding(0, 0, 0, 24)
-        }
-
-        root.addView(title)
-        root.addView(subtitle)
-
         /*
-         * ВРЕМЕННЫЕ ТЕСТОВЫЕ ДАННЫЕ.
+         * ==========================================================
+         * ВРЕМЕННЫЕ ТЕСТОВЫЕ ДАННЫЕ
+         * ==========================================================
          *
-         * Позже вместо них будут реальные данные,
-         * полученные из тахографа и локальной истории.
+         * Позже эти значения заменим данными DTCO
+         * и локальными расчётами TachoWatch.
          */
 
-        addSectionTitle(
-            root,
-            "ТЕКУЩИЙ РЕЖИМ"
-        )
+        val driverName =
+            "Василий Пылик"
 
-        val activityText = TextView(this).apply {
-            text = "● ВОЖДЕНИЕ"
-            textSize = 26f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(green)
-            gravity = Gravity.CENTER
-            setPadding(0, 16, 0, 16)
-        }
+        val currentActivity =
+            "ВОЖДЕНИЕ"
 
-        root.addView(activityText)
+        // Непрерывное вождение
+        val continuousUsedMinutes =
+            227 // 3:47
 
-        addSeparator(root)
+        val continuousLimitMinutes =
+            270 // 4:30
+
+        val continuousRemaining =
+            continuousLimitMinutes -
+                continuousUsedMinutes
+
+        // Дневное вождение
+        val dailyUsedMinutes =
+            435 // 7:15
 
         /*
-         * НЕПРЕРЫВНОЕ ВОЖДЕНИЕ
+         * false = стандартный лимит 9 часов.
+         * true = используется продление до 10 часов.
+         */
+        val tenHourDay =
+            false
+
+        val dailyLimitMinutes =
+            if (tenHourDay) {
+                600
+            } else {
+                540
+            }
+
+        val dailyRemaining =
+            dailyLimitMinutes -
+                dailyUsedMinutes
+
+        // Текущая пауза
+        val breakMinutes =
+            18
+
+        val requiredBreakMinutes =
+            45
+
+        val breakRemaining =
+            (
+                requiredBreakMinutes -
+                    breakMinutes
+                ).coerceAtLeast(0)
+
+        // Отдых
+        val dailyRestDeadline =
+            "21:35"
+
+        val weeklyRestDeadline =
+            "Сб 18:00"
+
+        // Вождение за неделю
+        val weeklyUsedMinutes =
+            51 * 60
+
+        val weeklyLimitMinutes =
+            56 * 60
+
+        val weeklyRemaining =
+            weeklyLimitMinutes -
+                weeklyUsedMinutes
+
+        // Вождение за две недели
+        val twoWeekUsedMinutes =
+            82 * 60
+
+        val twoWeekLimitMinutes =
+            90 * 60
+
+        val twoWeekRemaining =
+            twoWeekLimitMinutes -
+                twoWeekUsedMinutes
+
+        /*
+         * ==========================================================
+         * ЦВЕТОВАЯ ЛОГИКА
+         * ==========================================================
          */
 
-        addSectionTitle(
-            root,
-            "Непрерывное вождение"
+        val continuousColor =
+            when {
+                continuousRemaining <= 0 ->
+                    RED
+
+                continuousRemaining <= 15 ->
+                    ORANGE
+
+                continuousRemaining <= 30 ->
+                    YELLOW
+
+                else ->
+                    GREEN
+            }
+
+        val dailyColor =
+            when {
+                dailyRemaining <= 0 ->
+                    RED
+
+                dailyRemaining <= 30 ->
+                    ORANGE
+
+                dailyRemaining <= 60 ->
+                    YELLOW
+
+                else ->
+                    GREEN
+            }
+
+        val breakColor =
+            when {
+                breakMinutes >=
+                    requiredBreakMinutes ->
+                    GREEN
+
+                breakRemaining <= 5 ->
+                    YELLOW
+
+                else ->
+                    ORANGE
+            }
+
+        val weeklyColor =
+            when {
+                weeklyRemaining <=
+                    2 * 60 ->
+                    RED
+
+                weeklyRemaining <=
+                    5 * 60 ->
+                    YELLOW
+
+                else ->
+                    GREEN
+            }
+
+        val twoWeekColor =
+            when {
+                twoWeekRemaining <=
+                    2 * 60 ->
+                    RED
+
+                twoWeekRemaining <=
+                    5 * 60 ->
+                    YELLOW
+
+                else ->
+                    GREEN
+            }
+
+        /*
+         * ==========================================================
+         * ОСНОВНОЙ ЭКРАН
+         * ==========================================================
+         */
+
+        val scroll =
+            ScrollView(this).apply {
+
+                setBackgroundColor(
+                    BG
+                )
+
+                isFillViewport =
+                    true
+            }
+
+        val root =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
+
+                setPadding(
+                    dp(16),
+                    dp(16),
+                    dp(16),
+                    dp(28)
+                )
+
+                setBackgroundColor(
+                    BG
+                )
+            }
+
+        scroll.addView(
+            root
         )
 
-        val continuousDriving = TextView(this).apply {
-            text = "3:47"
-            textSize = 44f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-        }
+        /*
+         * ШАПКА
+         */
 
-        val continuousLimit = TextView(this).apply {
-            text = "из 4:30"
-            textSize = 18f
-            setTextColor(gray)
-            gravity = Gravity.CENTER
-        }
+        val header =
+            LinearLayout(this).apply {
 
-        root.addView(continuousDriving)
-        root.addView(continuousLimit)
+                orientation =
+                    LinearLayout.HORIZONTAL
 
-        val continuousProgress =
-            createProgressBar(
-                progress = 227,
-                max = 270,
-                color = yellow
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        val headerText =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+
+        val title =
+            TextView(this).apply {
+
+                text =
+                    "TachoWatch"
+
+                textSize =
+                    28f
+
+                setTextColor(
+                    TEXT
+                )
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+            }
+
+        val subtitle =
+            TextView(this).apply {
+
+                text =
+                    "Режим труда и отдыха"
+
+                textSize =
+                    13f
+
+                setTextColor(
+                    CYAN
+                )
+            }
+
+        headerText.addView(
+            title
+        )
+
+        headerText.addView(
+            subtitle
+        )
+
+        val diagnosticButton =
+            createSmallButton(
+                "DIAG",
+                BLUE
+            ) {
+
+                startActivity(
+                    Intent(
+                        this,
+                        MainActivity::class.java
+                    )
+                )
+            }
+
+        header.addView(
+            headerText,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        header.addView(
+            diagnosticButton
+        )
+
+        root.addView(
+            header
+        )
+
+        addSpace(
+            root,
+            14
+        )
+
+        /*
+         * ВОДИТЕЛЬ
+         */
+
+        val driverCard =
+            createCard(
+                accentColor = CYAN
             )
 
-        root.addView(continuousProgress)
+        addSmallLabel(
+            driverCard,
+            "ВОДИТЕЛЬ"
+        )
 
-        val breakRemaining = TextView(this).apply {
-            text = "До обязательной паузы осталось 43 мин"
-            textSize = 20f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(yellow)
-            gravity = Gravity.CENTER
-            setPadding(0, 12, 0, 18)
-        }
+        val driverText =
+            TextView(this).apply {
 
-        root.addView(breakRemaining)
+                text =
+                    driverName
 
-        addSeparator(root)
+                textSize =
+                    21f
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    TEXT
+                )
+
+                setPadding(
+                    0,
+                    dp(7),
+                    0,
+                    0
+                )
+            }
+
+        driverCard.addView(
+            driverText
+        )
+
+        root.addView(
+            driverCard
+        )
+
+        addSpace(
+            root,
+            10
+        )
+
+        /*
+         * ТЕКУЩИЙ РЕЖИМ
+         */
+
+        val activityCard =
+            createCard(
+                accentColor = GREEN
+            )
+
+        val activityText =
+            TextView(this).apply {
+
+                text =
+                    "●  $currentActivity"
+
+                textSize =
+                    24f
+
+                gravity =
+                    Gravity.CENTER
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    GREEN
+                )
+
+                setPadding(
+                    0,
+                    dp(6),
+                    0,
+                    dp(6)
+                )
+            }
+
+        activityCard.addView(
+            activityText
+        )
+
+        root.addView(
+            activityCard
+        )
+
+        addSpace(
+            root,
+            10
+        )
+
+        /*
+         * ОСТАЛОСЬ ДО ОБЯЗАТЕЛЬНОЙ ПАУЗЫ
+         */
+
+        val continuousCard =
+            createCard(
+                accentColor =
+                    continuousColor,
+                strongerAccent = true
+            )
+
+        addSmallLabel(
+            continuousCard,
+            "ОСТАЛОСЬ ДО ОБЯЗАТЕЛЬНОЙ ПАУЗЫ",
+            continuousColor
+        )
+
+        val remainingBig =
+            TextView(this).apply {
+
+                text =
+                    formatDuration(
+                        continuousRemaining
+                    )
+
+                textSize =
+                    46f
+
+                gravity =
+                    Gravity.CENTER
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    continuousColor
+                )
+
+                setPadding(
+                    0,
+                    dp(8),
+                    0,
+                    dp(2)
+                )
+            }
+
+        continuousCard.addView(
+            remainingBig
+        )
+
+        val continuousDescription =
+            TextView(this).apply {
+
+                text =
+                    "${formatDuration(continuousUsedMinutes)} из 4:30"
+
+                textSize =
+                    17f
+
+                gravity =
+                    Gravity.CENTER
+
+                setTextColor(
+                    TEXT
+                )
+            }
+
+        continuousCard.addView(
+            continuousDescription
+        )
+
+        continuousCard.addView(
+            createProgress(
+                continuousUsedMinutes,
+                continuousLimitMinutes,
+                continuousColor
+            )
+        )
+
+        root.addView(
+            continuousCard
+        )
+
+        addSpace(
+            root,
+            10
+        )
 
         /*
          * ДНЕВНОЕ ВОЖДЕНИЕ
          */
 
-        addSectionTitle(
-            root,
-            "Вождение сегодня"
-        )
-
-        val dailyDriving = TextView(this).apply {
-            text = "7:15 из 9:00"
-            textSize = 28f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-        }
-
-        root.addView(dailyDriving)
-
-        val dailyProgress =
-            createProgressBar(
-                progress = 435,
-                max = 540,
-                color = green
+        val dailyCard =
+            createCard(
+                accentColor =
+                    dailyColor
             )
 
-        root.addView(dailyProgress)
+        val dailyTop =
+            LinearLayout(this).apply {
 
-        val dailyRemaining = TextView(this).apply {
-            text = "Осталось сегодня: 1 ч 45 мин"
-            textSize = 17f
-            gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 4)
-        }
+                orientation =
+                    LinearLayout.HORIZONTAL
 
-        val extendedDay = TextView(this).apply {
-            text = "Обычный лимит: 9 часов"
-            textSize = 14f
-            setTextColor(gray)
-            gravity = Gravity.CENTER
-        }
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
 
-        root.addView(dailyRemaining)
-        root.addView(extendedDay)
+        val dailyTitle =
+            TextView(this).apply {
 
-        addSeparator(root)
+                text =
+                    "ДНЕВНОЕ ВОЖДЕНИЕ"
+
+                textSize =
+                    12f
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    MUTED
+                )
+            }
+
+        val dailyLimitBadge =
+            TextView(this).apply {
+
+                text =
+                    if (tenHourDay) {
+                        "ЛИМИТ 10 Ч"
+                    } else {
+                        "ЛИМИТ 9 Ч"
+                    }
+
+                textSize =
+                    11f
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    dailyColor
+                )
+
+                gravity =
+                    Gravity.END
+            }
+
+        dailyTop.addView(
+            dailyTitle,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        dailyTop.addView(
+            dailyLimitBadge
+        )
+
+        dailyCard.addView(
+            dailyTop
+        )
+
+        val dailyValue =
+            TextView(this).apply {
+
+                text =
+                    "${formatDuration(dailyUsedMinutes)} из " +
+                        if (tenHourDay) {
+                            "10:00"
+                        } else {
+                            "9:00"
+                        }
+
+                textSize =
+                    29f
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    dailyColor
+                )
+
+                gravity =
+                    Gravity.CENTER
+
+                setPadding(
+                    0,
+                    dp(10),
+                    0,
+                    0
+                )
+            }
+
+        dailyCard.addView(
+            dailyValue
+        )
+
+        dailyCard.addView(
+            createProgress(
+                dailyUsedMinutes,
+                dailyLimitMinutes,
+                dailyColor
+            )
+        )
+
+        val dailyRemainingText =
+            TextView(this).apply {
+
+                text =
+                    "Осталось: " +
+                        formatWords(
+                            dailyRemaining
+                        )
+
+                textSize =
+                    16f
+
+                gravity =
+                    Gravity.CENTER
+
+                setTextColor(
+                    TEXT
+                )
+
+                setPadding(
+                    0,
+                    dp(8),
+                    0,
+                    0
+                )
+            }
+
+        dailyCard.addView(
+            dailyRemainingText
+        )
+
+        root.addView(
+            dailyCard
+        )
+
+        addSpace(
+            root,
+            10
+        )
 
         /*
          * ТЕКУЩАЯ ПАУЗА
          */
 
-        addSectionTitle(
-            root,
-            "Пауза"
-        )
-
-        val breakTime = TextView(this).apply {
-            text = "00:00"
-            textSize = 32f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-        }
-
-        root.addView(breakTime)
-
-        val breakProgress =
-            createProgressBar(
-                progress = 0,
-                max = 45,
-                color = red
+        val breakCard =
+            createCard(
+                accentColor =
+                    breakColor
             )
 
-        root.addView(breakProgress)
-
-        val breakStatus = TextView(this).apply {
-            text = "Для полного отдыха требуется 45 минут"
-            textSize = 16f
-            setTextColor(red)
-            gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 4)
-        }
-
-        root.addView(breakStatus)
-
-        val splitBreakStatus = TextView(this).apply {
-            text = "Разделённая пауза: пока не используется"
-            textSize = 14f
-            setTextColor(gray)
-            gravity = Gravity.CENTER
-        }
-
-        root.addView(splitBreakStatus)
-
-        addSeparator(root)
-
-        /*
-         * СУТОЧНЫЙ ОТДЫХ
-         */
-
-        addSectionTitle(
-            root,
-            "Суточный отдых"
+        addSmallLabel(
+            breakCard,
+            "ТЕКУЩАЯ ПАУЗА",
+            breakColor
         )
 
-        val dailyRestDeadline = TextView(this).apply {
-            text = "Начать суточный отдых\nне позднее 21:35"
-            textSize = 24f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setTextColor(blue)
-            setPadding(0, 12, 0, 12)
-        }
+        val breakValue =
+            TextView(this).apply {
 
-        root.addView(dailyRestDeadline)
+                text =
+                    formatDuration(
+                        breakMinutes
+                    )
 
-        val restType = TextView(this).apply {
-            text = "План: нормальный суточный отдых"
-            textSize = 15f
-            setTextColor(gray)
-            gravity = Gravity.CENTER
-        }
+                textSize =
+                    34f
 
-        root.addView(restType)
+                gravity =
+                    Gravity.CENTER
 
-        addSeparator(root)
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
 
-        /*
-         * СМЕНА
-         */
+                setTextColor(
+                    breakColor
+                )
 
-        addSectionTitle(
-            root,
-            "Текущая смена"
+                setPadding(
+                    0,
+                    dp(8),
+                    0,
+                    0
+                )
+            }
+
+        breakCard.addView(
+            breakValue
         )
 
-        val shiftStart = TextView(this).apply {
-            text = "Смена открыта: 06:42"
-            textSize = 22f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-        }
+        breakCard.addView(
+            createProgress(
+                breakMinutes,
+                requiredBreakMinutes,
+                breakColor
+            )
+        )
 
-        val country = TextView(this).apply {
-            text = "Страна начала: Германия"
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setTextColor(gray)
-            setPadding(0, 6, 0, 4)
-        }
+        val breakStatus =
+            TextView(this).apply {
 
-        root.addView(shiftStart)
-        root.addView(country)
+                text =
+                    if (
+                        breakMinutes >=
+                        requiredBreakMinutes
+                    ) {
 
-        addSeparator(root)
+                        "Пауза состоялась"
+
+                    } else {
+
+                        "До полной паузы осталось " +
+                            "$breakRemaining мин"
+                    }
+
+                textSize =
+                    16f
+
+                gravity =
+                    Gravity.CENTER
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    breakColor
+                )
+
+                setPadding(
+                    0,
+                    dp(8),
+                    0,
+                    0
+                )
+            }
+
+        breakCard.addView(
+            breakStatus
+        )
+
+        root.addView(
+            breakCard
+        )
+
+        addSpace(
+            root,
+            10
+        )
+
+        /*
+         * СУТОЧНЫЙ / НЕДЕЛЬНЫЙ ОТДЫХ
+         */
+
+        val restRow =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+            }
+
+        val dailyRestCard =
+            createMiniCard(
+                title =
+                    "СУТОЧНЫЙ ОТДЫХ",
+                value =
+                    "Начать до\n$dailyRestDeadline",
+                color =
+                    CYAN
+            )
+
+        val weeklyRestCard =
+            createMiniCard(
+                title =
+                    "НЕДЕЛЬНЫЙ ОТДЫХ",
+                value =
+                    "Начать до\n$weeklyRestDeadline",
+                color =
+                    BLUE
+            )
+
+        restRow.addView(
+            dailyRestCard,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply {
+
+                setMargins(
+                    0,
+                    0,
+                    dp(5),
+                    0
+                )
+            }
+        )
+
+        restRow.addView(
+            weeklyRestCard,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply {
+
+                setMargins(
+                    dp(5),
+                    0,
+                    0,
+                    0
+                )
+            }
+        )
+
+        root.addView(
+            restRow
+        )
+
+        addSpace(
+            root,
+            10
+        )
 
         /*
          * НЕДЕЛЯ / ДВЕ НЕДЕЛИ
          */
 
-        addSectionTitle(
-            root,
-            "Итоги"
-        )
+        val weekRow =
+            LinearLayout(this).apply {
 
-        addCompactRow(
-            root,
-            "Вождение за неделю",
-            "31:20 / 56:00"
-        )
-
-        addCompactRow(
-            root,
-            "За две недели",
-            "67:45 / 90:00"
-        )
-
-        addCompactRow(
-            root,
-            "Рабочее время сегодня",
-            "08:03"
-        )
-
-        addCompactRow(
-            root,
-            "Готовность сегодня",
-            "01:12"
-        )
-
-        addSeparator(root)
-
-        /*
-         * ПРЕДУПРЕЖДЕНИЯ
-         */
-
-        addSectionTitle(
-            root,
-            "Предупреждения"
-        )
-
-        val warning = TextView(this).apply {
-            text = "Сейчас критических предупреждений нет"
-            textSize = 16f
-            setTextColor(green)
-            gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 16)
-        }
-
-        root.addView(warning)
-
-        /*
-         * BLUETOOTH / ДИАГНОСТИКА
-         */
-
-        val connectionStatus = TextView(this).apply {
-            text = "DTCO: не подключён"
-            textSize = 15f
-            setTextColor(gray)
-            gravity = Gravity.CENTER
-            setPadding(0, 12, 0, 8)
-        }
-
-        root.addView(connectionStatus)
-
-        val diagnosticButton = Button(this).apply {
-            text = "ДИАГНОСТИКА DTCO"
-
-            setOnClickListener {
-
-                val intent =
-                    Intent(
-                        this@DashboardActivity,
-                        MainActivity::class.java
-                    )
-
-                startActivity(intent)
-            }
-        }
-
-        root.addView(diagnosticButton)
-
-        val testDataNote = TextView(this).apply {
-            text =
-                "Сейчас на экране используются тестовые данные. " +
-                "После подключения к тахографу они будут заменены реальными."
-            textSize = 12f
-            setTextColor(gray)
-            gravity = Gravity.CENTER
-            setPadding(8, 18, 8, 10)
-        }
-
-        root.addView(testDataNote)
-
-        setContentView(scrollView)
-    }
-
-    private fun addSectionTitle(
-        parent: LinearLayout,
-        text: String
-    ) {
-
-        val view = TextView(this).apply {
-            this.text = text
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(gray)
-            setPadding(0, 12, 0, 6)
-        }
-
-        parent.addView(view)
-    }
-
-    private fun addSeparator(
-        parent: LinearLayout
-    ) {
-
-        val separator =
-            View(this).apply {
-                setBackgroundColor(lightGray)
+                orientation =
+                    LinearLayout.HORIZONTAL
             }
 
-        val params =
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                2
+        val weekCard =
+            createLimitCard(
+                title =
+                    "ЗА НЕДЕЛЮ",
+                usedMinutes =
+                    weeklyUsedMinutes,
+                limitMinutes =
+                    weeklyLimitMinutes,
+                color =
+                    weeklyColor,
+                warningText =
+                    "Осталось " +
+                        formatWords(
+                            weeklyRemaining
+                        )
             )
 
-        params.setMargins(
-            0,
-            20,
-            0,
-            20
+        val twoWeekCard =
+            createLimitCard(
+                title =
+                    "ЗА 2 НЕДЕЛИ",
+                usedMinutes =
+                    twoWeekUsedMinutes,
+                limitMinutes =
+                    twoWeekLimitMinutes,
+                color =
+                    twoWeekColor,
+                warningText =
+                    "Осталось " +
+                        formatWords(
+                            twoWeekRemaining
+                        )
+            )
+
+        weekRow.addView(
+            weekCard,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply {
+
+                setMargins(
+                    0,
+                    0,
+                    dp(5),
+                    0
+                )
+            }
         )
 
-        parent.addView(
-            separator,
-            params
+        weekRow.addView(
+            twoWeekCard,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply {
+
+                setMargins(
+                    dp(5),
+                    0,
+                    0,
+                    0
+                )
+            }
+        )
+
+        root.addView(
+            weekRow
+        )
+
+        addSpace(
+            root,
+            14
+        )
+
+        /*
+         * НИЖНЯЯ СТРОКА
+         */
+
+        val connection =
+            TextView(this).apply {
+
+                text =
+                    "DTCO: тестовый режим"
+
+                textSize =
+                    13f
+
+                gravity =
+                    Gravity.CENTER
+
+                setTextColor(
+                    MUTED
+                )
+
+                setPadding(
+                    0,
+                    dp(5),
+                    0,
+                    dp(5)
+                )
+            }
+
+        root.addView(
+            connection
+        )
+
+        val note =
+            TextView(this).apply {
+
+                text =
+                    "Сейчас показаны тестовые данные. " +
+                        "После подключения к тахографу " +
+                        "карточки будут обновляться автоматически."
+
+                textSize =
+                    11f
+
+                gravity =
+                    Gravity.CENTER
+
+                setTextColor(
+                    0xFF718190.toInt()
+                )
+            }
+
+        root.addView(
+            note
+        )
+
+        setContentView(
+            scroll
         )
     }
 
-    private fun createProgressBar(
+    /*
+     * ==========================================================
+     * КАРТОЧКИ
+     * ==========================================================
+     */
+
+    private fun createCard(
+        accentColor: Int,
+        strongerAccent: Boolean = false
+    ): LinearLayout {
+
+        return LinearLayout(this).apply {
+
+            orientation =
+                LinearLayout.VERTICAL
+
+            setPadding(
+                dp(16),
+                dp(14),
+                dp(16),
+                dp(14)
+            )
+
+            background =
+                cardDrawable(
+                    accentColor,
+                    if (strongerAccent) {
+                        dp(2)
+                    } else {
+                        dp(1)
+                    }
+                )
+        }
+    }
+
+    private fun createMiniCard(
+        title: String,
+        value: String,
+        color: Int
+    ): LinearLayout {
+
+        return createCard(
+            accentColor = color
+        ).apply {
+
+            addSmallLabel(
+                this,
+                title,
+                color
+            )
+
+            addView(
+                TextView(
+                    this@DashboardActivity
+                ).apply {
+
+                    text =
+                        value
+
+                    textSize =
+                        18f
+
+                    gravity =
+                        Gravity.CENTER
+
+                    setTypeface(
+                        typeface,
+                        Typeface.BOLD
+                    )
+
+                    setTextColor(
+                        color
+                    )
+
+                    setPadding(
+                        0,
+                        dp(10),
+                        0,
+                        dp(4)
+                    )
+                }
+            )
+        }
+    }
+
+    private fun createLimitCard(
+        title: String,
+        usedMinutes: Int,
+        limitMinutes: Int,
+        color: Int,
+        warningText: String
+    ): LinearLayout {
+
+        return createCard(
+            accentColor = color
+        ).apply {
+
+            addSmallLabel(
+                this,
+                title,
+                color
+            )
+
+            addView(
+                TextView(
+                    this@DashboardActivity
+                ).apply {
+
+                    text =
+                        "${formatDuration(usedMinutes)} / " +
+                            formatDuration(
+                                limitMinutes
+                            )
+
+                    textSize =
+                        18f
+
+                    gravity =
+                        Gravity.CENTER
+
+                    setTypeface(
+                        typeface,
+                        Typeface.BOLD
+                    )
+
+                    setTextColor(
+                        color
+                    )
+
+                    setPadding(
+                        0,
+                        dp(9),
+                        0,
+                        0
+                    )
+                }
+            )
+
+            addView(
+                createProgress(
+                    usedMinutes,
+                    limitMinutes,
+                    color
+                )
+            )
+
+            addView(
+                TextView(
+                    this@DashboardActivity
+                ).apply {
+
+                    text =
+                        warningText
+
+                    textSize =
+                        13f
+
+                    gravity =
+                        Gravity.CENTER
+
+                    setTextColor(
+                        color
+                    )
+
+                    setPadding(
+                        0,
+                        dp(7),
+                        0,
+                        0
+                    )
+                }
+            )
+        }
+    }
+
+    private fun cardDrawable(
+        accentColor: Int,
+        strokeWidth: Int
+    ): GradientDrawable {
+
+        return GradientDrawable().apply {
+
+            shape =
+                GradientDrawable.RECTANGLE
+
+            cornerRadius =
+                dp(18).toFloat()
+
+            setColor(
+                CARD
+            )
+
+            setStroke(
+                strokeWidth,
+                accentColor
+            )
+        }
+    }
+
+    /*
+     * ==========================================================
+     * ПРОГРЕСС
+     * ==========================================================
+     */
+
+    private fun createProgress(
         progress: Int,
         max: Int,
         color: Int
@@ -439,8 +1299,14 @@ class DashboardActivity : AppCompatActivity() {
             android.R.attr.progressBarStyleHorizontal
         ).apply {
 
-            this.max = max
-            this.progress = progress
+            this.max =
+                max
+
+            this.progress =
+                progress.coerceIn(
+                    0,
+                    max
+                )
 
             progressTintList =
                 ColorStateList.valueOf(
@@ -449,79 +1315,176 @@ class DashboardActivity : AppCompatActivity() {
 
             progressBackgroundTintList =
                 ColorStateList.valueOf(
-                    lightGray
+                    0xFF26333F.toInt()
                 )
 
             layoutParams =
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    22
+                    dp(7)
                 ).apply {
 
                     setMargins(
                         0,
-                        14,
+                        dp(10),
                         0,
-                        4
+                        0
                     )
                 }
         }
     }
 
-    private fun addCompactRow(
+    /*
+     * ==========================================================
+     * МЕЛКИЕ ЭЛЕМЕНТЫ
+     * ==========================================================
+     */
+
+    private fun addSmallLabel(
         parent: LinearLayout,
-        title: String,
-        value: String
+        text: String,
+        color: Int = MUTED
     ) {
 
-        val row =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-
-                gravity =
-                    Gravity.CENTER_VERTICAL
-
-                setPadding(
-                    0,
-                    10,
-                    0,
-                    10
-                )
-            }
-
-        val titleView =
+        parent.addView(
             TextView(this).apply {
-                text = title
-                textSize = 16f
-            }
 
-        val valueView =
-            TextView(this).apply {
-                text = value
-                textSize = 16f
+                this.text =
+                    text
+
+                textSize =
+                    11f
+
                 setTypeface(
-                    null,
+                    typeface,
                     Typeface.BOLD
                 )
 
-                gravity =
-                    Gravity.END
+                setTextColor(
+                    color
+                )
             }
+        )
+    }
 
-        row.addView(
-            titleView,
+    private fun addSpace(
+        parent: LinearLayout,
+        height: Int
+    ) {
+
+        parent.addView(
+            View(this),
             LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
+                1,
+                dp(height)
             )
         )
+    }
 
-        row.addView(
-            valueView
+    private fun createSmallButton(
+        text: String,
+        color: Int,
+        onClick: () -> Unit
+    ): Button {
+
+        return Button(this).apply {
+
+            this.text =
+                text
+
+            textSize =
+                12f
+
+            isAllCaps =
+                false
+
+            setTextColor(
+                Color.WHITE
+            )
+
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+
+            setPadding(
+                dp(10),
+                0,
+                dp(10),
+                0
+            )
+
+            background =
+                GradientDrawable().apply {
+
+                    shape =
+                        GradientDrawable.RECTANGLE
+
+                    cornerRadius =
+                        dp(14).toFloat()
+
+                    setColor(
+                        color
+                    )
+                }
+
+            setOnClickListener {
+
+                onClick()
+            }
+        }
+    }
+
+    /*
+     * ==========================================================
+     * ФОРМАТИРОВАНИЕ ВРЕМЕНИ
+     * ==========================================================
+     */
+
+    private fun formatDuration(
+        totalMinutes: Int
+    ): String {
+
+        val safe =
+            totalMinutes.coerceAtLeast(0)
+
+        val hours =
+            safe / 60
+
+        val minutes =
+            safe % 60
+
+        return String.format(
+            "%d:%02d",
+            hours,
+            minutes
         )
+    }
 
-        parent.addView(row)
+    private fun formatWords(
+        totalMinutes: Int
+    ): String {
+
+        val safe =
+            totalMinutes.coerceAtLeast(0)
+
+        val hours =
+            safe / 60
+
+        val minutes =
+            safe % 60
+
+        return when {
+
+            hours > 0 &&
+                minutes > 0 ->
+                "$hours ч $minutes мин"
+
+            hours > 0 ->
+                "$hours ч"
+
+            else ->
+                "$minutes мин"
+        }
     }
 }
