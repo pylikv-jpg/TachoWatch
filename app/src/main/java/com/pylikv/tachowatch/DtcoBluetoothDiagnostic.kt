@@ -7,7 +7,6 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
@@ -42,10 +41,10 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "BLE-RHMI-STATUS-1"
+            "BLE-RHMI-OPEN-1"
 
         private const val MAX_LOG_LINES =
-            4000
+            4500
 
         private const val INITIAL_CREDITS =
             1
@@ -148,28 +147,28 @@ class DtcoBluetoothDiagnostic(
         false
 
     @Volatile
-    private var diagnosticsCreditsSent =
-        false
-
-    @Volatile
-    private var downloadCreditsSent =
-        false
-
-    @Volatile
-    private var diagnosticsCreditsReceived =
-        false
-
-    @Volatile
-    private var downloadCreditsReceived =
-        false
-
-    @Volatile
     private var diagnosticsTxCredits =
         0
 
     @Volatile
+    private var downloadTxCredits =
+        0
+
+    @Volatile
+    private var openRequestSent =
+        false
+
+    @Volatile
+    private var openPositiveResponseReceived =
+        false
+
+    @Volatile
     private var statusRequestSent =
         false
+
+    @Volatile
+    private var finalRhmiStatus:
+        Int? = null
 
     fun hasConnectPermission():
         Boolean {
@@ -196,7 +195,9 @@ class DtcoBluetoothDiagnostic(
         device: BluetoothDevice
     ) {
 
-        if (!hasConnectPermission()) {
+        if (
+            !hasConnectPermission()
+        ) {
 
             appendLog(
                 "ОШИБКА: нет BLUETOOTH_CONNECT"
@@ -225,30 +226,30 @@ class DtcoBluetoothDiagnostic(
         handshakeStarted =
             false
 
-        diagnosticsCreditsSent =
-            false
-
-        downloadCreditsSent =
-            false
-
-        diagnosticsCreditsReceived =
-            false
-
-        downloadCreditsReceived =
-            false
-
         diagnosticsTxCredits =
             0
 
+        downloadTxCredits =
+            0
+
+        openRequestSent =
+            false
+
+        openPositiveResponseReceived =
+            false
+
         statusRequestSent =
             false
+
+        finalRhmiStatus =
+            null
 
         appendLog(
             "========================================"
         )
 
         appendLog(
-            "TachoWatch — DTCO Remote HMI test"
+            "TachoWatch — DTCO Remote HMI"
         )
 
         appendLog(
@@ -260,39 +261,43 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "БЕЗОПАСНЫЙ РЕЖИМ"
+            "РЕЖИМ ТЕСТА"
         )
 
         appendLog(
-            "Запись в карту водителя: НЕТ"
+            "Карта водителя: данные НЕ читаются"
         )
 
         appendLog(
-            "Изменение данных карты: НЕТ"
+            "Карта водителя: данные НЕ изменяются"
         )
 
         appendLog(
-            "Изменение деятельности водителя: НЕТ"
+            "Деятельность водителя НЕ изменяется"
         )
 
         appendLog(
-            "Изменение данных DTCO: НЕТ"
+            "Download FIFO НЕ используется"
         )
 
         appendLog(
-            "Download-команды: НЕТ"
+            "Будет выполнено:"
         )
 
         appendLog(
-            "OpenRHMISession: НЕ отправляется"
+            "1. BLE/GATT transport"
         )
 
         appendLog(
-            "Отправится только READ-ONLY:"
+            "2. Credits handshake"
         )
 
         appendLog(
-            "GetRHMISessionStatus = 31 03 F2 11"
+            "3. OpenRHMISession = 31 01 F2 11"
+        )
+
+        appendLog(
+            "4. GetRHMISessionStatus = 31 03 F2 11"
         )
 
         appendLog(
@@ -337,7 +342,9 @@ class DtcoBluetoothDiagnostic(
 
             appendLog(
                 "BluetoothGatt object = ${
-                    if (gatt != null) {
+                    if (
+                        gatt != null
+                    ) {
                         "CREATED"
                     } else {
                         "NULL"
@@ -379,18 +386,37 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "diagnosticsCreditsReceived = " +
-                diagnosticsCreditsReceived
+            "Diagnostics TX Credits = $diagnosticsTxCredits"
         )
 
         appendLog(
-            "diagnosticsTxCredits = " +
-                diagnosticsTxCredits
+            "Download TX Credits = $downloadTxCredits"
         )
 
         appendLog(
-            "statusRequestSent = " +
-                statusRequestSent
+            "Open request sent = $openRequestSent"
+        )
+
+        appendLog(
+            "Open positive response = " +
+                openPositiveResponseReceived
+        )
+
+        appendLog(
+            "Status request sent = $statusRequestSent"
+        )
+
+        appendLog(
+            "RHMI status = ${
+                finalRhmiStatus?.let {
+                    "0x${
+                        "%02X".format(
+                            Locale.US,
+                            it
+                        )
+                    }"
+                } ?: "UNKNOWN"
+            }"
         )
 
         appendLog(
@@ -414,6 +440,10 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
+                    "========================================"
+                )
+
+                appendLog(
                     "CALLBACK: onConnectionStateChange"
                 )
 
@@ -425,7 +455,13 @@ class DtcoBluetoothDiagnostic(
                     "newState = $newState (${profileStateToString(newState)})"
                 )
 
-                when (newState) {
+                appendLog(
+                    "========================================"
+                )
+
+                when (
+                    newState
+                ) {
 
                     BluetoothProfile.STATE_CONNECTED -> {
 
@@ -461,7 +497,9 @@ class DtcoBluetoothDiagnostic(
                                 "requestMtu = $started"
                             )
 
-                            if (!started) {
+                            if (
+                                !started
+                            ) {
 
                                 discoverServicesSafe(
                                     gatt
@@ -500,6 +538,20 @@ class DtcoBluetoothDiagnostic(
                             safeDeviceName(
                                 gatt.device
                             )
+                        )
+                    }
+
+                    BluetoothProfile.STATE_CONNECTING -> {
+
+                        appendLog(
+                            "BLE GATT CONNECTING"
+                        )
+                    }
+
+                    BluetoothProfile.STATE_DISCONNECTING -> {
+
+                        appendLog(
+                            "BLE GATT DISCONNECTING"
                         )
                     }
                 }
@@ -542,11 +594,19 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
+                    "========================================"
+                )
+
+                appendLog(
                     "CALLBACK: onServicesDiscovered"
                 )
 
                 appendLog(
                     "status = $status (${gattStatusToString(status)})"
+                )
+
+                appendLog(
+                    "========================================"
                 )
 
                 if (
@@ -588,7 +648,7 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
-                    "Characteristic: ${
+                    "Characteristic = ${
                         descriptor.characteristic.uuid
                     }"
                 )
@@ -673,6 +733,15 @@ class DtcoBluetoothDiagnostic(
                     value
                 )
             }
+
+            override fun onServiceChanged(
+                gatt: BluetoothGatt
+            ) {
+
+                appendLog(
+                    "CALLBACK: onServiceChanged"
+                )
+            }
         }
 
     @SuppressLint("MissingPermission")
@@ -709,6 +778,9 @@ class DtcoBluetoothDiagnostic(
     ) {
 
         subscriptionQueue.clear()
+
+        subscriptionInProgress =
+            false
 
         addSubscription(
             gatt,
@@ -751,6 +823,10 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
+            ""
+        )
+
+        appendLog(
             "STEP 4: subscription count = " +
                 subscriptionQueue.size
         )
@@ -771,19 +847,45 @@ class DtcoBluetoothDiagnostic(
         val service =
             gatt.getService(
                 serviceUuid
-            ) ?: return
+            )
+
+        if (
+            service == null
+        ) {
+
+            appendLog(
+                "$label: SERVICE NOT FOUND"
+            )
+
+            return
+        }
 
         val characteristic =
             service.getCharacteristic(
                 characteristicUuid
-            ) ?: return
+            )
+
+        if (
+            characteristic == null
+        ) {
+
+            appendLog(
+                "$label: CHARACTERISTIC NOT FOUND"
+            )
+
+            return
+        }
 
         subscriptionQueue.addLast(
             SubscriptionItem(
-                label,
-                characteristic,
-                mode
+                label = label,
+                characteristic = characteristic,
+                mode = mode
             )
+        )
+
+        appendLog(
+            "$label: added"
         )
     }
 
@@ -808,7 +910,15 @@ class DtcoBluetoothDiagnostic(
             )
 
             appendLog(
+                "========================================"
+            )
+
+            appendLog(
                 "SUBSCRIPTION SETUP COMPLETE"
+            )
+
+            appendLog(
+                "========================================"
             )
 
             mainHandler.postDelayed(
@@ -839,17 +949,42 @@ class DtcoBluetoothDiagnostic(
             "SUBSCRIBE: ${item.label}"
         )
 
-        val local =
-            gatt.setCharacteristicNotification(
-                characteristic,
-                true
-            )
-
         appendLog(
-            "setCharacteristicNotification = $local"
+            "UUID: ${characteristic.uuid}"
         )
 
-        if (!local) {
+        appendLog(
+            "Mode: ${item.mode}"
+        )
+
+        val localResult =
+
+            try {
+
+                gatt.setCharacteristicNotification(
+                    characteristic,
+                    true
+                )
+
+            } catch (
+                e: Throwable
+            ) {
+
+                appendThrowable(
+                    "setCharacteristicNotification",
+                    e
+                )
+
+                false
+            }
+
+        appendLog(
+            "setCharacteristicNotification = $localResult"
+        )
+
+        if (
+            !localResult
+        ) {
 
             mainHandler.postDelayed(
                 {
@@ -912,17 +1047,34 @@ class DtcoBluetoothDiagnostic(
             true
 
         val started =
-            writeDescriptorCompat(
-                gatt,
-                descriptor,
-                cccdValue
-            )
+
+            try {
+
+                writeDescriptorCompat(
+                    gatt,
+                    descriptor,
+                    cccdValue
+                )
+
+            } catch (
+                e: Throwable
+            ) {
+
+                appendThrowable(
+                    "write CCCD",
+                    e
+                )
+
+                false
+            }
 
         appendLog(
             "CCCD write started = $started"
         )
 
-        if (!started) {
+        if (
+            !started
+        ) {
 
             subscriptionInProgress =
                 false
@@ -940,7 +1092,12 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    @SuppressLint("MissingPermission")
+    /*
+     * ============================================================
+     * CREDITS
+     * ============================================================
+     */
+
     private fun startCreditsHandshake(
         gatt: BluetoothGatt
     ) {
@@ -965,10 +1122,6 @@ class DtcoBluetoothDiagnostic(
 
         appendLog(
             "STEP 5: CREDITS HANDSHAKE"
-        )
-
-        appendLog(
-            "FIFO ещё НЕ используется."
         )
 
         appendLog(
@@ -1008,12 +1161,34 @@ class DtcoBluetoothDiagnostic(
         val service =
             gatt.getService(
                 serviceUuid
-            ) ?: return
+            )
+
+        if (
+            service == null
+        ) {
+
+            appendLog(
+                "$label Credits: SERVICE NOT FOUND"
+            )
+
+            return
+        }
 
         val characteristic =
             service.getCharacteristic(
                 characteristicUuid
-            ) ?: return
+            )
+
+        if (
+            characteristic == null
+        ) {
+
+            appendLog(
+                "$label Credits: CHARACTERISTIC NOT FOUND"
+            )
+
+            return
+        }
 
         val data =
             byteArrayOf(
@@ -1042,21 +1217,13 @@ class DtcoBluetoothDiagnostic(
         appendLog(
             "Credit write started = $started"
         )
-
-        if (
-            characteristicUuid ==
-            UUID_DIAGNOSTICS_CREDITS
-        ) {
-
-            diagnosticsCreditsSent =
-                started
-
-        } else {
-
-            downloadCreditsSent =
-                started
-        }
     }
+
+    /*
+     * ============================================================
+     * RX
+     * ============================================================
+     */
 
     private fun handleIncoming(
         gatt: BluetoothGatt,
@@ -1109,24 +1276,15 @@ class DtcoBluetoothDiagnostic(
 
             UUID_DOWNLOAD_CREDITS -> {
 
-                downloadCreditsReceived =
-                    value.isNotEmpty()
-
-                if (
-                    value.isNotEmpty()
-                ) {
-
-                    appendLog(
-                        "Download Credits RX = ${
-                            value[0].toInt() and 0xFF
-                        }"
-                    )
-                }
+                handleDownloadCredits(
+                    value
+                )
             }
 
             UUID_DIAGNOSTICS_FIFO -> {
 
                 handleDiagnosticsFifo(
+                    gatt,
                     value
                 )
             }
@@ -1134,7 +1292,18 @@ class DtcoBluetoothDiagnostic(
             UUID_DOWNLOAD_FIFO -> {
 
                 appendLog(
-                    "Download FIFO RX — не обрабатываем."
+                    "Download FIFO received."
+                )
+
+                appendLog(
+                    "Download protocol НЕ используется."
+                )
+            }
+
+            UUID_EXTRA_NOTIFY -> {
+
+                appendLog(
+                    "Extra NOTIFY received."
                 )
             }
         }
@@ -1163,9 +1332,6 @@ class DtcoBluetoothDiagnostic(
         val credits =
             value[0].toInt() and 0xFF
 
-        diagnosticsCreditsReceived =
-            true
-
         appendLog(
             "Diagnostics Credits RX = $credits"
         )
@@ -1191,18 +1357,18 @@ class DtcoBluetoothDiagnostic(
         )
 
         /*
-         * Первая содержательная команда отправляется
-         * ТОЛЬКО после получения credits от DTCO.
+         * Первый UDS-запрос теперь —
+         * OPEN RHMI SESSION.
          */
         if (
             diagnosticsTxCredits > 0 &&
-            !statusRequestSent
+            !openRequestSent
         ) {
 
             mainHandler.postDelayed(
                 {
 
-                    sendRhmiStatusRequest(
+                    sendOpenRhmiRequest(
                         gatt
                     )
 
@@ -1212,38 +1378,75 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
+    private fun handleDownloadCredits(
+        value: ByteArray
+    ) {
+
+        if (
+            value.isEmpty()
+        ) {
+
+            appendLog(
+                "Download Credits EMPTY"
+            )
+
+            return
+        }
+
+        val credits =
+            value[0].toInt() and 0xFF
+
+        appendLog(
+            "Download Credits RX = $credits"
+        )
+
+        if (
+            credits !=
+            0xFF
+        ) {
+
+            downloadTxCredits +=
+                credits
+        }
+
+        appendLog(
+            "Download TX Credits = $downloadTxCredits"
+        )
+
+        appendLog(
+            "Download FIFO всё равно НЕ используем."
+        )
+    }
+
     /*
      * ============================================================
-     * ПЕРВЫЙ READ-ONLY UDS ЗАПРОС
+     * OPEN RHMI SESSION
      * ============================================================
      *
-     * Application data:
+     * Application:
      *
-     * 31 03 F2 11
+     * 31 01 F2 11
      *
-     * RoutineControl
-     * RequestRoutineResults
-     * OpenRHMISession
+     * RoutineControl / StartRoutine /
+     * OpenRHMIsession
      *
-     * Это НЕ OpenRHMISession.
-     * Это только запрос текущего статуса.
+     * BLE transport:
      *
-     * Transport header:
+     * 01 = total packets
+     * 01 = packet number
      *
-     * 01 = всего один пакет
-     * 01 = пакет №1
+     * Final:
      *
-     * Финальный FIFO пакет:
-     *
-     * 01 01 31 03 F2 11
+     * 01 01 31 01 F2 11
      */
+
     @SuppressLint("MissingPermission")
-    private fun sendRhmiStatusRequest(
+    private fun sendOpenRhmiRequest(
         gatt: BluetoothGatt
     ) {
 
         if (
-            statusRequestSent
+            openRequestSent
         ) {
 
             return
@@ -1254,31 +1457,15 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             appendLog(
-                "RHMI STATUS TX запрещён: нет Credits."
-            )
-
-            return
-        }
-
-        val service =
-            gatt.getService(
-                UUID_DIAGNOSTICS_SERVICE
-            )
-
-        if (
-            service == null
-        ) {
-
-            appendLog(
-                "Diagnostics service NOT FOUND"
+                "OPEN RHMI: нет Diagnostics Credits."
             )
 
             return
         }
 
         val fifo =
-            service.getCharacteristic(
-                UUID_DIAGNOSTICS_FIFO
+            getDiagnosticsFifo(
+                gatt
             )
 
         if (
@@ -1297,7 +1484,7 @@ class DtcoBluetoothDiagnostic(
                 0x01,
                 0x01,
                 0x31,
-                0x03,
+                0x01,
                 0xF2.toByte(),
                 0x11
             )
@@ -1311,11 +1498,11 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "STEP 6: READ-ONLY RHMI STATUS REQUEST"
+            "STEP 6: OPEN RHMI SESSION"
         )
 
         appendLog(
-            "Application: 31 03 F2 11"
+            "Application: 31 01 F2 11"
         )
 
         appendLog(
@@ -1323,19 +1510,15 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Purpose: GetRHMISessionStatus"
+            "Purpose: OpenRHMISession"
         )
 
         appendLog(
-            "НЕ открывает Remote HMI session."
+            "Карта водителя НЕ изменяется."
         )
 
         appendLog(
-            "НЕ меняет данные карты."
-        )
-
-        appendLog(
-            "НЕ меняет деятельность."
+            "Деятельность НЕ изменяется."
         )
 
         val started =
@@ -1353,11 +1536,11 @@ class DtcoBluetoothDiagnostic(
             started
         ) {
 
+            openRequestSent =
+                true
+
             diagnosticsTxCredits -=
                 1
-
-            statusRequestSent =
-                true
 
             appendLog(
                 "Remaining Diagnostics TX Credits = " +
@@ -1370,7 +1553,14 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
+    /*
+     * ============================================================
+     * DIAGNOSTICS FIFO RESPONSE
+     * ============================================================
+     */
+
     private fun handleDiagnosticsFifo(
+        gatt: BluetoothGatt,
         value: ByteArray
     ) {
 
@@ -1411,20 +1601,89 @@ class DtcoBluetoothDiagnostic(
         )
 
         /*
-         * Ожидаемый положительный ответ:
+         * OpenRHMISession positive:
+         *
+         * 71 01 F2 11
+         */
+        if (
+            appData.size >= 4 &&
+            (appData[0].toInt() and 0xFF) ==
+            0x71 &&
+            (appData[1].toInt() and 0xFF) ==
+            0x01 &&
+            (appData[2].toInt() and 0xFF) ==
+            0xF2 &&
+            (appData[3].toInt() and 0xFF) ==
+            0x11
+        ) {
+
+            openPositiveResponseReceived =
+                true
+
+            appendLog(
+                ""
+            )
+
+            appendLog(
+                "******** OPEN RHMI POSITIVE RESPONSE ********"
+            )
+
+            appendLog(
+                "DTCO принял OpenRHMISession."
+            )
+
+            appendLog(
+                "Предварительные условия выполнены."
+            )
+
+            appendLog(
+                "Теперь проверяем решение/статус пользователя."
+            )
+
+            appendLog(
+                "*********************************************"
+            )
+
+            /*
+             * Чтобы DTCO мог прислать ещё один
+             * FIFO response, даём ему новый RX credit.
+             */
+            mainHandler.postDelayed(
+                {
+
+                    grantDiagnosticsCreditForStatus(
+                        gatt
+                    )
+
+                },
+                250L
+            )
+
+            return
+        }
+
+        /*
+         * GetRHMISessionStatus positive:
          *
          * 71 03 F2 11 XX
          */
         if (
             appData.size >= 5 &&
-            (appData[0].toInt() and 0xFF) == 0x71 &&
-            (appData[1].toInt() and 0xFF) == 0x03 &&
-            (appData[2].toInt() and 0xFF) == 0xF2 &&
-            (appData[3].toInt() and 0xFF) == 0x11
+            (appData[0].toInt() and 0xFF) ==
+            0x71 &&
+            (appData[1].toInt() and 0xFF) ==
+            0x03 &&
+            (appData[2].toInt() and 0xFF) ==
+            0xF2 &&
+            (appData[3].toInt() and 0xFF) ==
+            0x11
         ) {
 
-            val status =
+            val rhmiStatus =
                 appData[4].toInt() and 0xFF
+
+            finalRhmiStatus =
+                rhmiStatus
 
             appendLog(
                 ""
@@ -1438,7 +1697,7 @@ class DtcoBluetoothDiagnostic(
                 "RHMIsessionStatus HEX = ${
                     "%02X".format(
                         Locale.US,
-                        status
+                        rhmiStatus
                     )
                 }"
             )
@@ -1446,10 +1705,46 @@ class DtcoBluetoothDiagnostic(
             appendLog(
                 "Meaning = ${
                     rhmiStatusToString(
-                        status
+                        rhmiStatus
                     )
                 }"
             )
+
+            if (
+                rhmiStatus ==
+                0x10
+            ) {
+
+                appendLog(
+                    ""
+                )
+
+                appendLog(
+                    ">>> REMOTE HMI SESSION OPENED <<<"
+                )
+
+                appendLog(
+                    "Транспортный и RHMI уровни готовы."
+                )
+            }
+
+            if (
+                rhmiStatus ==
+                0x01
+            ) {
+
+                appendLog(
+                    ""
+                )
+
+                appendLog(
+                    ">>> НУЖНО РЕШЕНИЕ ПОЛЬЗОВАТЕЛЯ НА DTCO <<<"
+                )
+
+                appendLog(
+                    "Посмотри на дисплей тахографа."
+                )
+            }
 
             appendLog(
                 "***************************************"
@@ -1459,9 +1754,9 @@ class DtcoBluetoothDiagnostic(
         }
 
         /*
-         * Стандартный UDS negative response:
+         * UDS negative response:
          *
-         * 7F <service> <NRC>
+         * 7F 31 NRC
          */
         if (
             appData.size >= 3 &&
@@ -1509,10 +1804,253 @@ class DtcoBluetoothDiagnostic(
                 }"
             )
 
+            if (
+                nrc ==
+                0x21
+            ) {
+
+                appendLog(
+                    "Возможна ожидающая проверка/решение пользователя."
+                )
+            }
+
+            if (
+                nrc ==
+                0x22
+            ) {
+
+                appendLog(
+                    "Условия открытия RHMI сейчас не выполнены."
+                )
+            }
+
             appendLog(
                 "***************************************"
             )
         }
+    }
+
+    /*
+     * Перед status response даём DTCO
+     * ещё один RX credit.
+     */
+    private fun grantDiagnosticsCreditForStatus(
+        gatt: BluetoothGatt
+    ) {
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "STEP 7A: grant Diagnostics RX credit"
+        )
+
+        sendCredit(
+            gatt,
+            UUID_DIAGNOSTICS_SERVICE,
+            UUID_DIAGNOSTICS_CREDITS,
+            "Diagnostics-for-status"
+        )
+
+        mainHandler.postDelayed(
+            {
+
+                trySendRhmiStatusRequest(
+                    gatt,
+                    attempt = 1
+                )
+
+            },
+            350L
+        )
+    }
+
+    /*
+     * DTCO обычно возвращает новый TX credit
+     * после принятого FIFO-пакета.
+     *
+     * Если он ещё не пришёл —
+     * несколько раз коротко ждём.
+     */
+    private fun trySendRhmiStatusRequest(
+        gatt: BluetoothGatt,
+        attempt: Int
+    ) {
+
+        if (
+            statusRequestSent
+        ) {
+
+            return
+        }
+
+        if (
+            diagnosticsTxCredits >
+            0
+        ) {
+
+            sendRhmiStatusRequest(
+                gatt
+            )
+
+            return
+        }
+
+        if (
+            attempt >=
+            10
+        ) {
+
+            appendLog(
+                "STATUS REQUEST: не получили TX Credit вовремя."
+            )
+
+            return
+        }
+
+        appendLog(
+            "STATUS REQUEST: ждём Diagnostics Credit " +
+                "(attempt $attempt)"
+        )
+
+        mainHandler.postDelayed(
+            {
+
+                trySendRhmiStatusRequest(
+                    gatt,
+                    attempt + 1
+                )
+
+            },
+            300L
+        )
+    }
+
+    /*
+     * ============================================================
+     * GET RHMI SESSION STATUS
+     * ============================================================
+     *
+     * 31 03 F2 11
+     */
+
+    @SuppressLint("MissingPermission")
+    private fun sendRhmiStatusRequest(
+        gatt: BluetoothGatt
+    ) {
+
+        if (
+            statusRequestSent
+        ) {
+
+            return
+        }
+
+        if (
+            diagnosticsTxCredits <=
+            0
+        ) {
+
+            appendLog(
+                "STATUS REQUEST запрещён: нет TX Credits."
+            )
+
+            return
+        }
+
+        val fifo =
+            getDiagnosticsFifo(
+                gatt
+            )
+
+        if (
+            fifo ==
+            null
+        ) {
+
+            appendLog(
+                "Diagnostics FIFO NOT FOUND"
+            )
+
+            return
+        }
+
+        val packet =
+            byteArrayOf(
+                0x01,
+                0x01,
+                0x31,
+                0x03,
+                0xF2.toByte(),
+                0x11
+            )
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "STEP 7B: GET RHMI SESSION STATUS"
+        )
+
+        appendLog(
+            "Application: 31 03 F2 11"
+        )
+
+        appendLog(
+            "Transport packet: ${bytesToHex(packet)}"
+        )
+
+        val started =
+            writeCharacteristicCompat(
+                gatt,
+                fifo,
+                packet
+            )
+
+        appendLog(
+            "Diagnostics FIFO write started = $started"
+        )
+
+        if (
+            started
+        ) {
+
+            statusRequestSent =
+                true
+
+            diagnosticsTxCredits -=
+                1
+
+            appendLog(
+                "Remaining Diagnostics TX Credits = " +
+                    diagnosticsTxCredits
+            )
+        }
+
+        appendLog(
+            "========================================"
+        )
+    }
+
+    private fun getDiagnosticsFifo(
+        gatt: BluetoothGatt
+    ): BluetoothGattCharacteristic? {
+
+        val service =
+            gatt.getService(
+                UUID_DIAGNOSTICS_SERVICE
+            )
+
+        return service
+            ?.getCharacteristic(
+                UUID_DIAGNOSTICS_FIFO
+            )
     }
 
     private fun rhmiStatusToString(
@@ -1533,7 +2071,7 @@ class DtcoBluetoothDiagnostic(
                 "Remote HMI session ОТКРЫТА"
 
             0x20 ->
-                "Remote HMI отклонён пользователем"
+                "Remote HMI отклонена пользователем"
 
             0x21 ->
                 "Используется локальный интерфейс DTCO"
@@ -1741,6 +2279,9 @@ class DtcoBluetoothDiagnostic(
 
         subscriptionQueue.clear()
 
+        subscriptionInProgress =
+            false
+
         connected =
             false
 
@@ -1773,7 +2314,8 @@ class DtcoBluetoothDiagnostic(
             null
 
         if (
-            gatt != null
+            gatt !=
+            null
         ) {
 
             try {
@@ -1809,7 +2351,7 @@ class DtcoBluetoothDiagnostic(
         String {
 
         return logLines.joinToString(
-            "\n"
+            separator = "\n"
         )
     }
 
@@ -1873,10 +2415,17 @@ class DtcoBluetoothDiagnostic(
 
         mainHandler.post {
 
-            listener?.onConnectionStateChanged(
-                isConnected,
-                deviceName
-            )
+            try {
+
+                listener?.onConnectionStateChanged(
+                    isConnected,
+                    deviceName
+                )
+
+            } catch (
+                _: Throwable
+            ) {
+            }
         }
     }
 
@@ -1975,6 +2524,9 @@ class DtcoBluetoothDiagnostic(
             BluetoothDevice.DEVICE_TYPE_DUAL ->
                 "DUAL"
 
+            BluetoothDevice.DEVICE_TYPE_UNKNOWN ->
+                "UNKNOWN"
+
             else ->
                 "UNKNOWN($type)"
         }
@@ -2025,11 +2577,20 @@ class DtcoBluetoothDiagnostic(
             BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION ->
                 "GATT_INSUFFICIENT_AUTHENTICATION"
 
+            BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED ->
+                "GATT_REQUEST_NOT_SUPPORTED"
+
             BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION ->
                 "GATT_INSUFFICIENT_ENCRYPTION"
 
-            BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED ->
-                "GATT_REQUEST_NOT_SUPPORTED"
+            BluetoothGatt.GATT_INVALID_OFFSET ->
+                "GATT_INVALID_OFFSET"
+
+            BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH ->
+                "GATT_INVALID_ATTRIBUTE_LENGTH"
+
+            BluetoothGatt.GATT_CONNECTION_CONGESTED ->
+                "GATT_CONNECTION_CONGESTED"
 
             BluetoothGatt.GATT_FAILURE ->
                 "GATT_FAILURE"
