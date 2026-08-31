@@ -68,7 +68,6 @@ class MainActivity :
     }
 
     private val bluetoothAdapter by lazy {
-
         bluetoothManager.adapter
     }
 
@@ -90,7 +89,13 @@ class MainActivity :
     private lateinit var logText:
         TextView
 
+    private lateinit var logScroll:
+        ScrollView
+
     private lateinit var connectButton:
+        Button
+
+    private lateinit var manualGattButton:
         Button
 
     private lateinit var disconnectButton:
@@ -231,7 +236,7 @@ class MainActivity :
             TextView(this).apply {
 
                 text =
-                    "DTCO Bluetooth diagnostics"
+                    "DTCO Bluetooth diagnostics — MANUAL GATT"
 
                 textSize =
                     13f
@@ -452,8 +457,33 @@ class MainActivity :
 
         controlCard.addView(
             labelText(
-                "ДИАГНОСТИКА BLE"
+                "ДИАГНОСТИКА BLE / GATT"
             )
+        )
+
+        val safeHint =
+            TextView(this).apply {
+
+                text =
+                    "Без записи в карту водителя и без записи в DTCO."
+
+                textSize =
+                    13f
+
+                setTextColor(
+                    COLOR_GREEN
+                )
+
+                setPadding(
+                    0,
+                    dp(7),
+                    0,
+                    dp(4)
+                )
+            }
+
+        controlCard.addView(
+            safeHint
         )
 
         connectButton =
@@ -495,6 +525,28 @@ class MainActivity :
             )
         }
 
+        manualGattButton =
+            createButton(
+                "Проверить GATT сейчас",
+                COLOR_CYAN
+            )
+
+        manualGattButton.isEnabled =
+            false
+
+        manualGattButton.alpha =
+            0.55f
+
+        manualGattButton.setOnClickListener {
+
+            setStatus(
+                "Ручная проверка GATT...",
+                COLOR_ORANGE
+            )
+
+            diagnostic.manualGattCheck()
+        }
+
         disconnectButton =
             createButton(
                 "Отключиться",
@@ -519,6 +571,16 @@ class MainActivity :
 
         controlCard.addView(
             connectButton
+        )
+
+        controlCard.addView(
+            verticalSpace(
+                dp(8)
+            )
+        )
+
+        controlCard.addView(
+            manualGattButton
         )
 
         controlCard.addView(
@@ -583,7 +645,7 @@ class MainActivity :
             logHeader
         )
 
-        val logScroll =
+        logScroll =
             ScrollView(this).apply {
 
                 isFillViewport =
@@ -644,7 +706,7 @@ class MainActivity :
             logScroll,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(360)
+                dp(420)
             )
         )
 
@@ -848,6 +910,12 @@ class MainActivity :
                 connectButton.alpha =
                     1f
 
+                manualGattButton.isEnabled =
+                    true
+
+                manualGattButton.alpha =
+                    1f
+
                 setStatus(
                     "DTCO выбран",
                     COLOR_ORANGE
@@ -901,6 +969,25 @@ class MainActivity :
                     } else {
                         fullLog
                     }
+
+                if (
+                    ::logScroll.isInitialized
+                ) {
+
+                    logScroll.post {
+
+                        try {
+
+                            logScroll.fullScroll(
+                                View.FOCUS_DOWN
+                            )
+
+                        } catch (
+                            _: Throwable
+                        ) {
+                        }
+                    }
+                }
             }
         }
     }
