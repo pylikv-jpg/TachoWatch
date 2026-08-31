@@ -3,36 +3,37 @@ package com.pylikv.tachowatch
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattService
-import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
-import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * TachoWatch
- * DTCO BLE diagnostic
  *
- * Версия GATT-SERVICES-7
+ * DTCO Bluetooth diagnostic
  *
- * Главное отличие:
- * BLE worker НИКОГДА напрямую не обновляет интерфейс.
+ * Версия RFCOMM-SPP-1
  *
- * appendLog() только сохраняет текст в памяти.
- * UI отдельно забирает журнал раз в 500 мс.
+ * Цель этого теста:
  *
- * MTU / READ / WRITE / NOTIFY отключены.
+ * 1. НЕ использовать BLE GATT.
+ * 2. Проверить Classic Bluetooth / RFCOMM.
+ * 3. Проверить стандартный Serial Port Profile.
+ * 4. НИЧЕГО не отправлять тахографу.
+ * 5. Только установить соединение и посмотреть,
+ *    принимает ли DTCO RFCOMM/SPP.
  */
 class DtcoBluetoothDiagnostic(
     private val context: Context,
@@ -54,19 +55,22 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "GATT-SERVICES-7"
-
-        private const val DISCOVERY_DELAY_MS =
-            1000L
-
-        private const val WORKER_INTERVAL_MS =
-            100L
-
-        private const val SERVICE_READ_DELAY_MS =
-            300L
+            "RFCOMM-SPP-1"
 
         private const val UI_REFRESH_MS =
-            500L
+            400L
+
+        private const val CONNECT_TIMEOUT_MS =
+            8000L
+
+        /*
+         * Стандартный UUID Bluetooth
+         * Serial Port Profile (SPP).
+         */
+        private val SPP_UUID: UUID =
+            UUID.fromString(
+                "00001101-0000-1000-8000-00805F9B34FB"
+            )
     }
 
     private val mainHandler =
@@ -76,7 +80,7 @@ class DtcoBluetoothDiagnostic(
 
     private val workerThread =
         HandlerThread(
-            "TachoWatch-BLE-Worker"
+            "TachoWatch-RFCOMM-Worker"
         ).apply {
             start()
         }
@@ -90,101 +94,13 @@ class DtcoBluetoothDiagnostic(
         CopyOnWriteArrayList<String>()
 
     @Volatile
-    private var bluetoothGatt:
-        BluetoothGatt? = null
-
-    @Volatile
     private var stopped =
         true
 
     @Volatile
-    private var callbackConnected =
-        false
+    private var currentSocket:
+        BluetoothSocket? = null
 
-    @Volatile
-    private var callbackDisconnected =
-        false
-
-    @Volatile
-    private var connectionStatus =
-        -1
-
-    @Volatile
-    private var connectionState =
-        BluetoothProfile.STATE_DISCONNECTED
-
-    @Volatile
-    private var connectedAt =
-        0L
-
-    @Volatile
-    private var connectionHandled =
-        false
-
-    @Volatile
-    private var discoveryStarted =
-        false
-
-    @Volatile
-    private var discoveryReturned =
-        false
-
-    @Volatile
-    private var discoveryReturnValue =
-        false
-
-    @Volatile
-    private var servicesCallbackReceived =
-        false
-
-    @Volatile
-    private var servicesCallbackStatus =
-        -1
-
-    @Volatile
-    private var servicesCallbackAt =
-        0L
-
-    @Volatile
-    private var servicesHandled =
-        false
-
-    /*
-     * ВАЖНО:
-     * Этот runnable только выполняет BLE-логику.
-     * UI здесь не вызывается.
-     */
-    private val workerLoop =
-        object : Runnable {
-
-            override fun run() {
-
-                try {
-
-                    processBle()
-
-                } catch (
-                    e: Throwable
-                ) {
-
-                    appendThrowable(
-                        "WORKER LOOP",
-                        e
-                    )
-                }
-
-                workerHandler.postDelayed(
-                    this,
-                    WORKER_INTERVAL_MS
-                )
-            }
-        }
-
-    /*
-     * Отдельный цикл отображения журнала.
-     *
-     * BLE-worker к нему отношения не имеет.
-     */
     private val uiLoop =
         object : Runnable {
 
@@ -209,10 +125,6 @@ class DtcoBluetoothDiagnostic(
         }
 
     init {
-
-        workerHandler.post(
-            workerLoop
-        )
 
         mainHandler.post(
             uiLoop
@@ -249,15 +161,13 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             appendLog(
-                "ОШИБКА: нет BLUETOOTH_CONNECT"
+                "ОШИБКА: нет разрешения BLUETOOTH_CONNECT"
             )
 
             return
         }
 
-        disconnectGattOnly()
-
-        resetState()
+        disconnectSocket()
 
         logLines.clear()
 
@@ -277,15 +187,19 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "BLE logger: MEMORY ONLY"
+            "Режим: CLASSIC BLUETOOTH / RFCOMM"
         )
 
         appendLog(
-            "UI refresh: ${UI_REFRESH_MS} мс"
+            "BLE GATT: НЕ используется"
         )
 
         appendLog(
-            "MTU: ОТКЛЮЧЕН"
+            "Запись данных в DTCO: ОТКЛЮЧЕНА"
+        )
+
+        appendLog(
+            "Команды DTCO: НЕ отправляются"
         )
 
         appendLog(
@@ -317,7 +231,7 @@ class DtcoBluetoothDiagnostic(
                 "Нет доступа"
             }
 
-        val bond =
+        val bondState =
             try {
 
                 bondStateToString(
@@ -331,7 +245,7 @@ class DtcoBluetoothDiagnostic(
                 "Нет доступа"
             }
 
-        val type =
+        val deviceType =
             try {
 
                 deviceTypeToString(
@@ -354,11 +268,11 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Bond state: $bond"
+            "Bond state: $bondState"
         )
 
         appendLog(
-            "Тип устройства: $type"
+            "Тип Bluetooth: $deviceType"
         )
 
         appendLog(
@@ -370,82 +284,659 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "STEP 1: connectGatt()"
+            "STEP 1: проверяем UUID устройства"
         )
+
+        logCachedUuids(
+            device
+        )
+
+        appendLog(
+            "----------------------------------------"
+        )
+
+        appendLog(
+            "STEP 2: запускаем RFCOMM/SPP тест"
+        )
+
+        workerHandler.post {
+
+            runRfcommDiagnostic(
+                device
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun runRfcommDiagnostic(
+        device: BluetoothDevice
+    ) {
+
+        if (
+            stopped
+        ) {
+
+            return
+        }
+
+        appendLog(
+            "Рабочий поток: ${Thread.currentThread().name}"
+        )
+
+        appendLog(
+            "SPP UUID:"
+        )
+
+        appendLog(
+            SPP_UUID.toString()
+        )
+
+        appendLog(
+            "----------------------------------------"
+        )
+
+        appendLog(
+            "TEST A: Secure RFCOMM / SPP"
+        )
+
+        val secureResult =
+            trySocketConnection(
+                device = device,
+                secure = true
+            )
+
+        if (
+            secureResult
+        ) {
+
+            appendLog(
+                "========================================"
+            )
+
+            appendLog(
+                "РЕЗУЛЬТАТ:"
+            )
+
+            appendLog(
+                "SECURE RFCOMM/SPP ПОДКЛЮЧЕНИЕ УСПЕШНО"
+            )
+
+            appendLog(
+                "Это сильный признак, что DTCO имеет"
+            )
+
+            appendLog(
+                "Classic Bluetooth serial channel."
+            )
+
+            appendLog(
+                "Никакие команды тахографу не отправлялись."
+            )
+
+            appendLog(
+                "========================================"
+            )
+
+            return
+        }
+
+        if (
+            stopped
+        ) {
+
+            return
+        }
+
+        appendLog(
+            "----------------------------------------"
+        )
+
+        appendLog(
+            "TEST B: Insecure RFCOMM / SPP"
+        )
+
+        val insecureResult =
+            trySocketConnection(
+                device = device,
+                secure = false
+            )
+
+        if (
+            insecureResult
+        ) {
+
+            appendLog(
+                "========================================"
+            )
+
+            appendLog(
+                "РЕЗУЛЬТАТ:"
+            )
+
+            appendLog(
+                "INSECURE RFCOMM/SPP ПОДКЛЮЧЕНИЕ УСПЕШНО"
+            )
+
+            appendLog(
+                "DTCO принимает Classic Bluetooth RFCOMM."
+            )
+
+            appendLog(
+                "Никакие команды тахографу не отправлялись."
+            )
+
+            appendLog(
+                "========================================"
+            )
+
+            return
+        }
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "РЕЗУЛЬТАТ:"
+        )
+
+        appendLog(
+            "Стандартный RFCOMM/SPP канал не открылся."
+        )
+
+        appendLog(
+            "Secure: FAIL"
+        )
+
+        appendLog(
+            "Insecure: FAIL"
+        )
+
+        appendLog(
+            "Это НЕ означает, что Bluetooth DTCO"
+        )
+
+        appendLog(
+            "не работает."
+        )
+
+        appendLog(
+            "Следующим тестом потребуется определить"
+        )
+
+        appendLog(
+            "конкретный профиль/UUID, который использует"
+        )
+
+        appendLog(
+            "VDO Fleet."
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        notifyConnectionState(
+            false,
+            safeDeviceName(
+                device
+            )
+        )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun trySocketConnection(
+        device: BluetoothDevice,
+        secure: Boolean
+    ): Boolean {
+
+        if (
+            stopped
+        ) {
+
+            return false
+        }
+
+        var socket:
+            BluetoothSocket? = null
 
         try {
 
-            val gatt =
-                device.connectGatt(
-                    context,
-                    false,
-                    gattCallback,
-                    BluetoothDevice.TRANSPORT_LE
+            appendLog(
+                if (secure) {
+                    "Создание secure RFCOMM socket..."
+                } else {
+                    "Создание insecure RFCOMM socket..."
+                }
+            )
+
+            socket =
+                if (
+                    secure
+                ) {
+
+                    device
+                        .createRfcommSocketToServiceRecord(
+                            SPP_UUID
+                        )
+
+                } else {
+
+                    device
+                        .createInsecureRfcommSocketToServiceRecord(
+                            SPP_UUID
+                        )
+                }
+
+            currentSocket =
+                socket
+
+            appendLog(
+                "Socket создан."
+            )
+
+            appendLog(
+                "Запускаю connect()."
+            )
+
+            appendLog(
+                "Timeout теста: ${CONNECT_TIMEOUT_MS / 1000} сек."
+            )
+
+            val result =
+                connectSocketWithTimeout(
+                    socket
                 )
 
-            bluetoothGatt =
-                gatt
+            if (
+                !result
+            ) {
+
+                appendLog(
+                    "Результат connect(): FAIL"
+                )
+
+                closeSocket(
+                    socket
+                )
+
+                currentSocket =
+                    null
+
+                return false
+            }
+
+            if (
+                !socket.isConnected
+            ) {
+
+                appendLog(
+                    "connect() завершился, но socket.isConnected = false"
+                )
+
+                closeSocket(
+                    socket
+                )
+
+                currentSocket =
+                    null
+
+                return false
+            }
 
             appendLog(
-                "STEP 1 OK: connectGatt() вернулся"
+                "----------------------------------------"
             )
 
             appendLog(
-                "BluetoothGatt null: ${gatt == null}"
+                "RFCOMM SOCKET CONNECTED"
             )
+
+            appendLog(
+                "socket.isConnected = true"
+            )
+
+            appendLog(
+                "Remote device: ${safeDeviceName(device)}"
+            )
+
+            notifyConnectionState(
+                true,
+                safeDeviceName(
+                    device
+                )
+            )
+
+            /*
+             * ВАЖНО:
+             * Мы намеренно ничего не пишем
+             * в OutputStream.
+             *
+             * Только смотрим, есть ли уже
+             * какие-либо входящие байты.
+             */
+            try {
+
+                val available =
+                    socket.inputStream.available()
+
+                appendLog(
+                    "InputStream.available(): $available"
+                )
+
+                if (
+                    available > 0
+                ) {
+
+                    appendLog(
+                        "DTCO уже имеет входящие данные,"
+                    )
+
+                    appendLog(
+                        "но в этом тесте мы их НЕ читаем."
+                    )
+
+                } else {
+
+                    appendLog(
+                        "Самопроизвольных входящих данных нет."
+                    )
+                }
+
+            } catch (
+                e: Throwable
+            ) {
+
+                appendThrowable(
+                    "InputStream.available",
+                    e
+                )
+            }
+
+            appendLog(
+                "Ничего в OutputStream не отправлено."
+            )
+
+            appendLog(
+                "Закрываю тестовое соединение."
+            )
+
+            closeSocket(
+                socket
+            )
+
+            currentSocket =
+                null
+
+            notifyConnectionState(
+                false,
+                safeDeviceName(
+                    device
+                )
+            )
+
+            return true
 
         } catch (
             e: Throwable
         ) {
 
             appendThrowable(
-                "connectGatt",
+                if (secure) {
+                    "SECURE RFCOMM"
+                } else {
+                    "INSECURE RFCOMM"
+                },
                 e
             )
+
+            closeSocket(
+                socket
+            )
+
+            currentSocket =
+                null
+
+            return false
         }
     }
 
+    private fun connectSocketWithTimeout(
+        socket: BluetoothSocket
+    ): Boolean {
+
+        val success =
+            AtomicBoolean(
+                false
+            )
+
+        val error =
+            AtomicReference<Throwable?>(
+                null
+            )
+
+        val connectThread =
+            Thread {
+
+                try {
+
+                    socket.connect()
+
+                    success.set(
+                        true
+                    )
+
+                } catch (
+                    e: Throwable
+                ) {
+
+                    error.set(
+                        e
+                    )
+                }
+
+            }.apply {
+
+                name =
+                    "TachoWatch-RFCOMM-Connect"
+            }
+
+        connectThread.start()
+
+        try {
+
+            connectThread.join(
+                CONNECT_TIMEOUT_MS
+            )
+
+        } catch (
+            e: InterruptedException
+        ) {
+
+            Thread.currentThread()
+                .interrupt()
+
+            appendThrowable(
+                "RFCOMM JOIN",
+                e
+            )
+
+            closeSocket(
+                socket
+            )
+
+            return false
+        }
+
+        if (
+            connectThread.isAlive
+        ) {
+
+            appendLog(
+                "TIMEOUT: connect() не завершился за ${CONNECT_TIMEOUT_MS / 1000} сек."
+            )
+
+            /*
+             * Закрытие BluetoothSocket должно
+             * прервать блокирующий connect().
+             */
+            closeSocket(
+                socket
+            )
+
+            try {
+
+                connectThread.join(
+                    1500L
+                )
+
+            } catch (
+                _: InterruptedException
+            ) {
+
+                Thread.currentThread()
+                    .interrupt()
+            }
+
+            return false
+        }
+
+        val throwable =
+            error.get()
+
+        if (
+            throwable != null
+        ) {
+
+            appendThrowable(
+                "RFCOMM connect",
+                throwable
+            )
+
+            return false
+        }
+
+        return success.get()
+    }
+
     @SuppressLint("MissingPermission")
+    private fun logCachedUuids(
+        device: BluetoothDevice
+    ) {
+
+        val uuids =
+            try {
+
+                device.uuids
+
+            } catch (
+                e: Throwable
+            ) {
+
+                appendThrowable(
+                    "device.uuids",
+                    e
+                )
+
+                null
+            }
+
+        if (
+            uuids == null
+        ) {
+
+            appendLog(
+                "Cached UUID: null"
+            )
+
+            return
+        }
+
+        if (
+            uuids.isEmpty()
+        ) {
+
+            appendLog(
+                "Cached UUID: список пуст"
+            )
+
+            return
+        }
+
+        appendLog(
+            "Найдено сохранённых UUID: ${uuids.size}"
+        )
+
+        uuids.forEachIndexed {
+                index,
+                parcelUuid ->
+
+            val uuid =
+                parcelUuid.uuid
+
+            appendLog(
+                "UUID ${index + 1}: $uuid"
+            )
+
+            if (
+                uuid == SPP_UUID
+            ) {
+
+                appendLog(
+                    ">>> ЭТО STANDARD SERIAL PORT PROFILE"
+                )
+            }
+        }
+    }
+
     fun disconnect() {
 
         stopped =
             true
 
-        disconnectGattOnly()
+        workerHandler.removeCallbacksAndMessages(
+            null
+        )
 
-        resetState()
+        disconnectSocket()
+
+        notifyConnectionState(
+            false,
+            null
+        )
     }
 
-    @SuppressLint("MissingPermission")
-    private fun disconnectGattOnly() {
+    private fun disconnectSocket() {
 
-        val oldGatt =
-            bluetoothGatt
+        val socket =
+            currentSocket
 
-        bluetoothGatt =
+        currentSocket =
             null
 
+        closeSocket(
+            socket
+        )
+    }
+
+    private fun closeSocket(
+        socket: BluetoothSocket?
+    ) {
+
         if (
-            oldGatt != null
+            socket == null
         ) {
 
-            try {
+            return
+        }
 
-                oldGatt.disconnect()
+        try {
 
-            } catch (
-                _: Throwable
-            ) {
-            }
+            socket.close()
 
-            try {
-
-                oldGatt.close()
-
-            } catch (
-                _: Throwable
-            ) {
-            }
+        } catch (
+            _: Throwable
+        ) {
         }
     }
 
@@ -462,613 +953,73 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
-    private fun resetState() {
-
-        callbackConnected =
-            false
-
-        callbackDisconnected =
-            false
-
-        connectionStatus =
-            -1
-
-        connectionState =
-            BluetoothProfile.STATE_DISCONNECTED
-
-        connectedAt =
-            0L
-
-        connectionHandled =
-            false
-
-        discoveryStarted =
-            false
-
-        discoveryReturned =
-            false
-
-        discoveryReturnValue =
-            false
-
-        servicesCallbackReceived =
-            false
-
-        servicesCallbackStatus =
-            -1
-
-        servicesCallbackAt =
-            0L
-
-        servicesHandled =
-            false
-    }
-
-    /*
-     * Bluetooth callback:
-     *
-     * НЕТ log()
-     * НЕТ Handler
-     * НЕТ discoverServices()
-     *
-     * Только переменные.
-     */
-    private val gattCallback =
-        object : BluetoothGattCallback() {
-
-            override fun onConnectionStateChange(
-                gatt: BluetoothGatt,
-                status: Int,
-                newState: Int
-            ) {
-
-                bluetoothGatt =
-                    gatt
-
-                connectionStatus =
-                    status
-
-                connectionState =
-                    newState
-
-                if (
-                    newState ==
-                    BluetoothProfile.STATE_CONNECTED
-                ) {
-
-                    connectedAt =
-                        SystemClock.elapsedRealtime()
-
-                    callbackConnected =
-                        true
-
-                } else if (
-                    newState ==
-                    BluetoothProfile.STATE_DISCONNECTED
-                ) {
-
-                    callbackDisconnected =
-                        true
-                }
-            }
-
-            override fun onServicesDiscovered(
-                gatt: BluetoothGatt,
-                status: Int
-            ) {
-
-                bluetoothGatt =
-                    gatt
-
-                servicesCallbackStatus =
-                    status
-
-                servicesCallbackAt =
-                    SystemClock.elapsedRealtime()
-
-                servicesCallbackReceived =
-                    true
-            }
-        }
-
-    private fun processBle() {
-
-        if (
-            stopped
-        ) {
-
-            return
-        }
-
-        processDisconnected()
-
-        processConnected()
-
-        processServices()
-    }
-
-    private fun processDisconnected() {
-
-        if (
-            !callbackDisconnected
-        ) {
-
-            return
-        }
-
-        callbackDisconnected =
-            false
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "WORKER: DISCONNECTED"
-        )
-
-        notifyConnectionState(
-            false,
-            null
-        )
-    }
-
-    private fun processConnected() {
-
-        if (
-            !callbackConnected
-        ) {
-
-            return
-        }
-
-        val gatt =
-            bluetoothGatt
-                ?: return
-
-        if (
-            !connectionHandled
-        ) {
-
-            connectionHandled =
-                true
-
-            /*
-             * Сначала запишем ВЕСЬ блок
-             * без какого-либо обращения к UI.
-             */
-            appendLog(
-                "----------------------------------------"
-            )
-
-            appendLog(
-                "STEP 2 OK: WORKER увидел CONNECTED"
-            )
-
-            appendLog(
-                "GATT status: $connectionStatus"
-            )
-
-            appendLog(
-                "GATT state: " +
-                    connectionStateToString(
-                        connectionState
-                    )
-            )
-
-            appendLog(
-                "MARKER A: после GATT state"
-            )
-
-            appendLog(
-                "MARKER B: worker продолжает работу"
-            )
-
-            appendLog(
-                "MTU НЕ запрашивается"
-            )
-
-            appendLog(
-                "MARKER C: перед ожиданием discovery"
-            )
-
-            notifyConnectionState(
-                true,
-                safeGattDeviceName(
-                    gatt
-                )
-            )
-        }
-
-        if (
-            discoveryStarted
-        ) {
-
-            return
-        }
-
-        val elapsed =
-            SystemClock.elapsedRealtime() -
-                connectedAt
-
-        if (
-            elapsed <
-            DISCOVERY_DELAY_MS
-        ) {
-
-            return
-        }
-
-        discoveryStarted =
-            true
-
-        runDiscovery(
-            gatt
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun runDiscovery(
-        gatt: BluetoothGatt
+    private fun appendLog(
+        message: String
     ) {
+
+        val time =
+            SimpleDateFormat(
+                "HH:mm:ss.SSS",
+                Locale.getDefault()
+            ).format(
+                Date()
+            )
+
+        logLines.add(
+            "$time  $message"
+        )
 
         /*
-         * Весь диагностический текст сначала
-         * складывается только в память.
+         * Ограничиваем размер журнала,
+         * чтобы диагностическая программа
+         * не могла бесконечно накапливать память.
          */
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "STEP 3: ПЕРЕД discoverServices()"
-        )
-
-        appendLog(
-            "Worker thread: " +
-                Thread.currentThread().name
-        )
-
-        appendLog(
-            "MARKER D: сейчас вызываю Android API"
-        )
-
-        try {
-
-            val result =
-                gatt.discoverServices()
-
-            discoveryReturnValue =
-                result
-
-            discoveryReturned =
-                true
-
-            appendLog(
-                "STEP 4 OK: discoverServices() ВЕРНУЛСЯ"
-            )
-
-            appendLog(
-                "discoverServices result: $result"
-            )
-
-        } catch (
-            e: Throwable
+        while (
+            logLines.size > 1200
         ) {
-
-            discoveryReturned =
-                true
-
-            appendThrowable(
-                "discoverServices",
-                e
-            )
-        }
-    }
-
-    private fun processServices() {
-
-        if (
-            !servicesCallbackReceived
-        ) {
-
-            return
-        }
-
-        if (
-            servicesHandled
-        ) {
-
-            return
-        }
-
-        val elapsed =
-            SystemClock.elapsedRealtime() -
-                servicesCallbackAt
-
-        if (
-            elapsed <
-            SERVICE_READ_DELAY_MS
-        ) {
-
-            return
-        }
-
-        servicesHandled =
-            true
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "STEP 5: WORKER получил результат discovery"
-        )
-
-        appendLog(
-            "Callback status: $servicesCallbackStatus"
-        )
-
-        appendLog(
-            "discoverServices returned: $discoveryReturned"
-        )
-
-        appendLog(
-            "discoverServices result: $discoveryReturnValue"
-        )
-
-        if (
-            servicesCallbackStatus !=
-            BluetoothGatt.GATT_SUCCESS
-        ) {
-
-            appendLog(
-                "Discovery завершён с ошибкой."
-            )
-
-            return
-        }
-
-        val gatt =
-            bluetoothGatt
-
-        if (
-            gatt == null
-        ) {
-
-            appendLog(
-                "ОШИБКА: gatt == null"
-            )
-
-            return
-        }
-
-        inspectServices(
-            gatt
-        )
-    }
-
-    private fun inspectServices(
-        gatt: BluetoothGatt
-    ) {
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "STEP 6: ПЕРЕД gatt.services"
-        )
-
-        val services:
-            List<BluetoothGattService>
-
-        try {
-
-            services =
-                gatt.services
-
-        } catch (
-            e: Throwable
-        ) {
-
-            appendThrowable(
-                "gatt.services",
-                e
-            )
-
-            return
-        }
-
-        appendLog(
-            "STEP 7 OK: gatt.services ВЕРНУЛСЯ"
-        )
-
-        appendLog(
-            "Количество сервисов: ${services.size}"
-        )
-
-        if (
-            services.isEmpty()
-        ) {
-
-            appendLog(
-                "========================================"
-            )
-
-            appendLog(
-                "РЕЗУЛЬТАТ: GATT SERVICES = 0"
-            )
-
-            appendLog(
-                "========================================"
-            )
-
-            return
-        }
-
-        dumpServices(
-            services
-        )
-    }
-
-    private fun dumpServices(
-        services:
-            List<BluetoothGattService>
-    ) {
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "НАЙДЕННАЯ GATT-БАЗА"
-        )
-
-        appendLog(
-            "Сервисов: ${services.size}"
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        services.forEachIndexed {
-                serviceIndex,
-                service ->
-
-            try {
-
-                appendLog(
-                    ""
-                )
-
-                appendLog(
-                    "SERVICE #${serviceIndex + 1}"
-                )
-
-                appendLog(
-                    "UUID: ${service.uuid}"
-                )
-
-                appendLog(
-                    "Type: " +
-                        serviceTypeToString(
-                            service.type
-                        )
-                )
-
-                val characteristics =
-                    service.characteristics
-
-                appendLog(
-                    "Characteristics: " +
-                        characteristics.size
-                )
-
-                characteristics.forEachIndexed {
-                        charIndex,
-                        characteristic ->
-
-                    appendLog(
-                        "  CHARACTERISTIC " +
-                            "#${charIndex + 1}"
-                    )
-
-                    appendLog(
-                        "  UUID: " +
-                            characteristic.uuid
-                    )
-
-                    appendLog(
-                        "  Properties: 0x" +
-                            characteristic.properties
-                                .toString(
-                                    16
-                                )
-                    )
-
-                    appendLog(
-                        "  Permissions: " +
-                            characteristic.permissions
-                    )
-
-                    val descriptors =
-                        characteristic.descriptors
-
-                    appendLog(
-                        "  Descriptors: " +
-                            descriptors.size
-                    )
-
-                    descriptors.forEachIndexed {
-                            descIndex,
-                            descriptor ->
-
-                        appendLog(
-                            "    DESCRIPTOR " +
-                                "#${descIndex + 1}"
-                        )
-
-                        appendLog(
-                            "    UUID: " +
-                                descriptor.uuid
-                        )
-
-                        appendLog(
-                            "    Permissions: " +
-                                descriptor.permissions
-                        )
-                    }
-                }
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "SERVICE #${serviceIndex + 1}",
-                    e
-                )
-            }
-        }
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "GATT DATABASE COMPLETE"
-        )
-
-        appendLog(
-            "========================================"
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun safeGattDeviceName(
-        gatt: BluetoothGatt
-    ): String? {
-
-        return try {
 
             if (
-                hasConnectPermission()
+                logLines.isNotEmpty()
             ) {
 
-                gatt.device.name
-
-            } else {
-
-                null
+                logLines.removeAt(
+                    0
+                )
             }
+        }
+    }
 
-        } catch (
-            _: Throwable
+    private fun appendThrowable(
+        place: String,
+        throwable: Throwable
+    ) {
+
+        appendLog(
+            "ОШИБКА [$place]"
+        )
+
+        appendLog(
+            "Тип: ${throwable.javaClass.name}"
+        )
+
+        appendLog(
+            "Сообщение: ${throwable.message ?: "(нет сообщения)"}"
+        )
+
+        val cause =
+            throwable.cause
+
+        if (
+            cause != null
         ) {
 
-            null
+            appendLog(
+                "Cause: ${cause.javaClass.name}"
+            )
+
+            appendLog(
+                "Cause message: ${cause.message ?: "(нет сообщения)"}"
+            )
         }
     }
 
@@ -1081,11 +1032,10 @@ class DtcoBluetoothDiagnostic(
 
             try {
 
-                listener
-                    ?.onConnectionStateChanged(
-                        connected,
-                        deviceName
-                    )
+                listener?.onConnectionStateChanged(
+                    connected,
+                    deviceName
+                )
 
             } catch (
                 _: Throwable
@@ -1094,97 +1044,21 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    /*
-     * КЛЮЧЕВАЯ ФУНКЦИЯ VERSION 7.
-     *
-     * Здесь НЕТ обращения к UI.
-     */
-    private fun appendLog(
-        message: String
-    ) {
+    @SuppressLint("MissingPermission")
+    private fun safeDeviceName(
+        device: BluetoothDevice
+    ): String {
 
-        try {
+        return try {
 
-            val timestamp =
-                SimpleDateFormat(
-                    "HH:mm:ss.SSS",
-                    Locale.getDefault()
-                ).format(
-                    Date()
-                )
-
-            logLines.add(
-                "[$timestamp] $message"
-            )
+            device.name
+                ?: "DTCO"
 
         } catch (
             _: Throwable
         ) {
-        }
-    }
 
-    private fun appendThrowable(
-        location: String,
-        error: Throwable
-    ) {
-
-        appendLog(
-            "!!! ОШИБКА В $location !!!"
-        )
-
-        appendLog(
-            "Тип: ${error.javaClass.name}"
-        )
-
-        appendLog(
-            "Сообщение: " +
-                (
-                    error.message
-                        ?: "<нет>"
-                    )
-        )
-
-        val cause =
-            error.cause
-
-        if (
-            cause != null
-        ) {
-
-            appendLog(
-                "Cause: " +
-                    cause.javaClass.name +
-                    ": " +
-                    (
-                        cause.message
-                            ?: "<нет>"
-                    )
-            )
-        }
-    }
-
-    private fun connectionStateToString(
-        state: Int
-    ): String {
-
-        return when (
-            state
-        ) {
-
-            BluetoothProfile.STATE_DISCONNECTED ->
-                "DISCONNECTED"
-
-            BluetoothProfile.STATE_CONNECTING ->
-                "CONNECTING"
-
-            BluetoothProfile.STATE_CONNECTED ->
-                "CONNECTED"
-
-            BluetoothProfile.STATE_DISCONNECTING ->
-                "DISCONNECTING"
-
-            else ->
-                "UNKNOWN($state)"
+            "DTCO"
         }
     }
 
@@ -1225,29 +1099,10 @@ class DtcoBluetoothDiagnostic(
                 "LE"
 
             BluetoothDevice.DEVICE_TYPE_DUAL ->
-                "DUAL"
+                "DUAL (Classic + LE)"
 
             BluetoothDevice.DEVICE_TYPE_UNKNOWN ->
                 "UNKNOWN"
-
-            else ->
-                "UNKNOWN($type)"
-        }
-    }
-
-    private fun serviceTypeToString(
-        type: Int
-    ): String {
-
-        return when (
-            type
-        ) {
-
-            BluetoothGattService.SERVICE_TYPE_PRIMARY ->
-                "PRIMARY"
-
-            BluetoothGattService.SERVICE_TYPE_SECONDARY ->
-                "SECONDARY"
 
             else ->
                 "UNKNOWN($type)"
