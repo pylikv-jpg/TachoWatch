@@ -10,6 +10,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -58,7 +60,13 @@ class MainActivity :
 
         private const val COLOR_BORDER =
             0xFF263545.toInt()
+
+        private const val AUTO_GATT_DELAY_MS =
+            2500L
     }
+
+    private val mainHandler =
+        Handler(Looper.getMainLooper())
 
     private val bluetoothManager by lazy {
 
@@ -167,6 +175,10 @@ class MainActivity :
 
     override fun onDestroy() {
 
+        mainHandler.removeCallbacksAndMessages(
+            null
+        )
+
         if (
             ::diagnostic.isInitialized
         ) {
@@ -234,7 +246,7 @@ class MainActivity :
             TextView(this).apply {
 
                 text =
-                    "DTCO Bluetooth diagnostics — MANUAL GATT"
+                    "DTCO Bluetooth diagnostics — AUTO GATT"
 
                 textSize =
                     13f
@@ -484,6 +496,31 @@ class MainActivity :
             safeHint
         )
 
+        val autoHint =
+            TextView(this).apply {
+
+                text =
+                    "GATT-проверка запускается автоматически через 2,5 секунды после подключения."
+
+                textSize =
+                    12f
+
+                setTextColor(
+                    COLOR_MUTED
+                )
+
+                setPadding(
+                    0,
+                    dp(3),
+                    0,
+                    dp(5)
+                )
+            }
+
+        controlCard.addView(
+            autoHint
+        )
+
         connectButton =
             createButton(
                 "Подключиться и начать диагностику",
@@ -513,6 +550,10 @@ class MainActivity :
                 return@setOnClickListener
             }
 
+            mainHandler.removeCallbacksAndMessages(
+                null
+            )
+
             setStatus(
                 "Подключение...",
                 COLOR_ORANGE
@@ -520,6 +561,20 @@ class MainActivity :
 
             diagnostic.connect(
                 device
+            )
+
+            mainHandler.postDelayed(
+                {
+
+                    setStatus(
+                        "Автоматическая проверка GATT...",
+                        COLOR_ORANGE
+                    )
+
+                    diagnostic.manualGattCheck()
+
+                },
+                AUTO_GATT_DELAY_MS
             )
         }
 
@@ -552,6 +607,10 @@ class MainActivity :
             )
 
         disconnectButton.setOnClickListener {
+
+            mainHandler.removeCallbacksAndMessages(
+                null
+            )
 
             diagnostic.disconnect()
 
