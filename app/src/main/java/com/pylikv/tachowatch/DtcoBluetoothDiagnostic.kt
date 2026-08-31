@@ -41,10 +41,10 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "BLE-RHMI-OPEN-1"
+            "BLE-RHMI-D1-ACTIVITY-1"
 
         private const val MAX_LOG_LINES =
-            4500
+            5000
 
         private const val INITIAL_CREDITS =
             1
@@ -170,6 +170,14 @@ class DtcoBluetoothDiagnostic(
     private var finalRhmiStatus:
         Int? = null
 
+    @Volatile
+    private var activityRequestSent =
+        false
+
+    @Volatile
+    private var driver1WorkingState:
+        Int? = null
+
     fun hasConnectPermission():
         Boolean {
 
@@ -244,6 +252,12 @@ class DtcoBluetoothDiagnostic(
         finalRhmiStatus =
             null
 
+        activityRequestSent =
+            false
+
+        driver1WorkingState =
+            null
+
         appendLog(
             "========================================"
         )
@@ -261,43 +275,35 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "РЕЖИМ ТЕСТА"
+            "READ-ONLY TEST"
         )
 
         appendLog(
-            "Карта водителя: данные НЕ читаются"
+            "Карта водителя: ЗАПИСИ НЕТ"
         )
 
         appendLog(
-            "Карта водителя: данные НЕ изменяются"
+            "Деятельность водителя: ИЗМЕНЕНИЯ НЕТ"
         )
 
         appendLog(
-            "Деятельность водителя НЕ изменяется"
+            "DTCO: ИЗМЕНЕНИЯ ДАННЫХ НЕТ"
         )
 
         appendLog(
-            "Download FIFO НЕ используется"
+            "Download FIFO: НЕ используется"
         )
 
         appendLog(
-            "Будет выполнено:"
+            "После открытия RHMI читаем только:"
         )
 
         appendLog(
-            "1. BLE/GATT transport"
+            "Driver1WorkingState DID F903"
         )
 
         appendLog(
-            "2. Credits handshake"
-        )
-
-        appendLog(
-            "3. OpenRHMISession = 31 01 F2 11"
-        )
-
-        appendLog(
-            "4. GetRHMISessionStatus = 31 03 F2 11"
+            "UDS ReadDataByIdentifier = 22 F9 03"
         )
 
         appendLog(
@@ -390,20 +396,11 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Download TX Credits = $downloadTxCredits"
-        )
-
-        appendLog(
             "Open request sent = $openRequestSent"
         )
 
         appendLog(
-            "Open positive response = " +
-                openPositiveResponseReceived
-        )
-
-        appendLog(
-            "Status request sent = $statusRequestSent"
+            "Open positive response = $openPositiveResponseReceived"
         )
 
         appendLog(
@@ -415,6 +412,18 @@ class DtcoBluetoothDiagnostic(
                             it
                         )
                     }"
+                } ?: "UNKNOWN"
+            }"
+        )
+
+        appendLog(
+            "Activity request sent = $activityRequestSent"
+        )
+
+        appendLog(
+            "Driver1WorkingState = ${
+                driver1WorkingState?.let {
+                    "$it (${driverActivityToString(it)})"
                 } ?: "UNKNOWN"
             }"
         )
@@ -1092,12 +1101,6 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    /*
-     * ============================================================
-     * CREDITS
-     * ============================================================
-     */
-
     private fun startCreditsHandshake(
         gatt: BluetoothGatt
     ) {
@@ -1218,12 +1221,6 @@ class DtcoBluetoothDiagnostic(
             "Credit write started = $started"
         )
     }
-
-    /*
-     * ============================================================
-     * RX
-     * ============================================================
-     */
 
     private fun handleIncoming(
         gatt: BluetoothGatt,
@@ -1356,10 +1353,6 @@ class DtcoBluetoothDiagnostic(
                 diagnosticsTxCredits
         )
 
-        /*
-         * Первый UDS-запрос теперь —
-         * OPEN RHMI SESSION.
-         */
         if (
             diagnosticsTxCredits > 0 &&
             !openRequestSent
@@ -1369,6 +1362,31 @@ class DtcoBluetoothDiagnostic(
                 {
 
                     sendOpenRhmiRequest(
+                        gatt
+                    )
+
+                },
+                250L
+            )
+
+            return
+        }
+
+        /*
+         * После открытия RHMI и получения
+         * статуса 0x10 ждём credit для F903.
+         */
+        if (
+            finalRhmiStatus ==
+            0x10 &&
+            diagnosticsTxCredits > 0 &&
+            !activityRequestSent
+        ) {
+
+            mainHandler.postDelayed(
+                {
+
+                    sendDriver1ActivityRequest(
                         gatt
                     )
 
@@ -1414,31 +1432,9 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Download FIFO всё равно НЕ используем."
+            "Download FIFO НЕ используем."
         )
     }
-
-    /*
-     * ============================================================
-     * OPEN RHMI SESSION
-     * ============================================================
-     *
-     * Application:
-     *
-     * 31 01 F2 11
-     *
-     * RoutineControl / StartRoutine /
-     * OpenRHMIsession
-     *
-     * BLE transport:
-     *
-     * 01 = total packets
-     * 01 = packet number
-     *
-     * Final:
-     *
-     * 01 01 31 01 F2 11
-     */
 
     @SuppressLint("MissingPermission")
     private fun sendOpenRhmiRequest(
@@ -1510,10 +1506,6 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Purpose: OpenRHMISession"
-        )
-
-        appendLog(
             "Карта водителя НЕ изменяется."
         )
 
@@ -1552,12 +1544,6 @@ class DtcoBluetoothDiagnostic(
             "========================================"
         )
     }
-
-    /*
-     * ============================================================
-     * DIAGNOSTICS FIFO RESPONSE
-     * ============================================================
-     */
 
     private fun handleDiagnosticsFifo(
         gatt: BluetoothGatt,
@@ -1601,9 +1587,8 @@ class DtcoBluetoothDiagnostic(
         )
 
         /*
-         * OpenRHMISession positive:
-         *
-         * 71 01 F2 11
+         * OpenRHMISession:
+         * positive = 71 01 F2 11
          */
         if (
             appData.size >= 4 &&
@@ -1633,21 +1618,9 @@ class DtcoBluetoothDiagnostic(
             )
 
             appendLog(
-                "Предварительные условия выполнены."
-            )
-
-            appendLog(
-                "Теперь проверяем решение/статус пользователя."
-            )
-
-            appendLog(
                 "*********************************************"
             )
 
-            /*
-             * Чтобы DTCO мог прислать ещё один
-             * FIFO response, даём ему новый RX credit.
-             */
             mainHandler.postDelayed(
                 {
 
@@ -1663,9 +1636,8 @@ class DtcoBluetoothDiagnostic(
         }
 
         /*
-         * GetRHMISessionStatus positive:
-         *
-         * 71 03 F2 11 XX
+         * GetRHMISessionStatus:
+         * positive = 71 03 F2 11 XX
          */
         if (
             appData.size >= 5 &&
@@ -1724,25 +1696,22 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
-                    "Транспортный и RHMI уровни готовы."
-                )
-            }
-
-            if (
-                rhmiStatus ==
-                0x01
-            ) {
-
-                appendLog(
-                    ""
+                    "Следующий шаг: READ-ONLY F903."
                 )
 
-                appendLog(
-                    ">>> НУЖНО РЕШЕНИЕ ПОЛЬЗОВАТЕЛЯ НА DTCO <<<"
-                )
+                /*
+                 * Даём DTCO один credit для ответа
+                 * на чтение Driver1WorkingState.
+                 */
+                mainHandler.postDelayed(
+                    {
 
-                appendLog(
-                    "Посмотри на дисплей тахографа."
+                        grantDiagnosticsCreditForActivity(
+                            gatt
+                        )
+
+                    },
+                    300L
                 )
             }
 
@@ -1754,9 +1723,88 @@ class DtcoBluetoothDiagnostic(
         }
 
         /*
-         * UDS negative response:
+         * ReadDataByIdentifier F903:
          *
-         * 7F 31 NRC
+         * request:
+         * 22 F9 03
+         *
+         * positive:
+         * 62 F9 03 XX
+         */
+        if (
+            appData.size >= 4 &&
+            (appData[0].toInt() and 0xFF) ==
+            0x62 &&
+            (appData[1].toInt() and 0xFF) ==
+            0xF9 &&
+            (appData[2].toInt() and 0xFF) ==
+            0x03
+        ) {
+
+            val state =
+                appData[3].toInt() and 0xFF
+
+            driver1WorkingState =
+                state
+
+            appendLog(
+                ""
+            )
+
+            appendLog(
+                "*********************************************"
+            )
+
+            appendLog(
+                "DRIVER 1 WORKING STATE RECEIVED"
+            )
+
+            appendLog(
+                "DID = F903"
+            )
+
+            appendLog(
+                "RAW HEX = ${
+                    "%02X".format(
+                        Locale.US,
+                        state
+                    )
+                }"
+            )
+
+            appendLog(
+                "VALUE = $state"
+            )
+
+            appendLog(
+                "ACTIVITY = ${
+                    driverActivityToString(
+                        state
+                    )
+                }"
+            )
+
+            appendLog(
+                "*********************************************"
+            )
+
+            appendLog(
+                ""
+            )
+
+            appendLog(
+                ">>> FIRST DRIVER DATA READ SUCCESS <<<"
+            )
+
+            appendLog(
+                "Карта/DTCO при этом НЕ изменялись."
+            )
+
+            return
+        }
+
+        /*
+         * UDS negative response
          */
         if (
             appData.size >= 3 &&
@@ -1804,36 +1852,12 @@ class DtcoBluetoothDiagnostic(
                 }"
             )
 
-            if (
-                nrc ==
-                0x21
-            ) {
-
-                appendLog(
-                    "Возможна ожидающая проверка/решение пользователя."
-                )
-            }
-
-            if (
-                nrc ==
-                0x22
-            ) {
-
-                appendLog(
-                    "Условия открытия RHMI сейчас не выполнены."
-                )
-            }
-
             appendLog(
                 "***************************************"
             )
         }
     }
 
-    /*
-     * Перед status response даём DTCO
-     * ещё один RX credit.
-     */
     private fun grantDiagnosticsCreditForStatus(
         gatt: BluetoothGatt
     ) {
@@ -1866,13 +1890,6 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
-    /*
-     * DTCO обычно возвращает новый TX credit
-     * после принятого FIFO-пакета.
-     *
-     * Если он ещё не пришёл —
-     * несколько раз коротко ждём.
-     */
     private fun trySendRhmiStatusRequest(
         gatt: BluetoothGatt,
         attempt: Int
@@ -1903,7 +1920,7 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             appendLog(
-                "STATUS REQUEST: не получили TX Credit вовремя."
+                "STATUS REQUEST: TX Credit не получен."
             )
 
             return
@@ -1927,14 +1944,6 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
-    /*
-     * ============================================================
-     * GET RHMI SESSION STATUS
-     * ============================================================
-     *
-     * 31 03 F2 11
-     */
-
     @SuppressLint("MissingPermission")
     private fun sendRhmiStatusRequest(
         gatt: BluetoothGatt
@@ -1953,7 +1962,7 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             appendLog(
-                "STATUS REQUEST запрещён: нет TX Credits."
+                "STATUS REQUEST: нет TX Credits."
             )
 
             return
@@ -2038,6 +2047,261 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
+    /*
+     * ============================================================
+     * DRIVER 1 ACTIVITY — DID F903
+     * ============================================================
+     */
+
+    private fun grantDiagnosticsCreditForActivity(
+        gatt: BluetoothGatt
+    ) {
+
+        if (
+            activityRequestSent
+        ) {
+
+            return
+        }
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "STEP 8A: prepare READ F903"
+        )
+
+        appendLog(
+            "Grant one Diagnostics RX credit"
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        sendCredit(
+            gatt,
+            UUID_DIAGNOSTICS_SERVICE,
+            UUID_DIAGNOSTICS_CREDITS,
+            "Diagnostics-for-F903"
+        )
+
+        mainHandler.postDelayed(
+            {
+
+                trySendDriver1ActivityRequest(
+                    gatt,
+                    attempt = 1
+                )
+
+            },
+            350L
+        )
+    }
+
+    private fun trySendDriver1ActivityRequest(
+        gatt: BluetoothGatt,
+        attempt: Int
+    ) {
+
+        if (
+            activityRequestSent
+        ) {
+
+            return
+        }
+
+        if (
+            diagnosticsTxCredits >
+            0
+        ) {
+
+            sendDriver1ActivityRequest(
+                gatt
+            )
+
+            return
+        }
+
+        if (
+            attempt >=
+            10
+        ) {
+
+            appendLog(
+                "F903 REQUEST: TX Credit не получен."
+            )
+
+            return
+        }
+
+        appendLog(
+            "F903 REQUEST: ждём Diagnostics Credit " +
+                "(attempt $attempt)"
+        )
+
+        mainHandler.postDelayed(
+            {
+
+                trySendDriver1ActivityRequest(
+                    gatt,
+                    attempt + 1
+                )
+
+            },
+            300L
+        )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendDriver1ActivityRequest(
+        gatt: BluetoothGatt
+    ) {
+
+        if (
+            activityRequestSent
+        ) {
+
+            return
+        }
+
+        if (
+            finalRhmiStatus !=
+            0x10
+        ) {
+
+            appendLog(
+                "F903 READ запрещён: RHMI session не OPEN."
+            )
+
+            return
+        }
+
+        if (
+            diagnosticsTxCredits <=
+            0
+        ) {
+
+            appendLog(
+                "F903 READ запрещён: нет TX Credits."
+            )
+
+            return
+        }
+
+        val fifo =
+            getDiagnosticsFifo(
+                gatt
+            )
+
+        if (
+            fifo ==
+            null
+        ) {
+
+            appendLog(
+                "Diagnostics FIFO NOT FOUND"
+            )
+
+            return
+        }
+
+        /*
+         * Application:
+         *
+         * 22 F9 03
+         *
+         * BLE transport:
+         *
+         * 01 = total packets
+         * 01 = packet number
+         */
+        val packet =
+            byteArrayOf(
+                0x01,
+                0x01,
+                0x22,
+                0xF9.toByte(),
+                0x03
+            )
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "STEP 8B: READ DRIVER 1 WORKING STATE"
+        )
+
+        appendLog(
+            "UDS service: ReadDataByIdentifier"
+        )
+
+        appendLog(
+            "DID: F903"
+        )
+
+        appendLog(
+            "Application: 22 F9 03"
+        )
+
+        appendLog(
+            "Transport packet: ${bytesToHex(packet)}"
+        )
+
+        appendLog(
+            "Операция READ-ONLY."
+        )
+
+        appendLog(
+            "Никакой деятельности не меняем."
+        )
+
+        appendLog(
+            "Никаких данных в карту не записываем."
+        )
+
+        val started =
+            writeCharacteristicCompat(
+                gatt,
+                fifo,
+                packet
+            )
+
+        appendLog(
+            "Diagnostics FIFO write started = $started"
+        )
+
+        if (
+            started
+        ) {
+
+            activityRequestSent =
+                true
+
+            diagnosticsTxCredits -=
+                1
+
+            appendLog(
+                "Remaining Diagnostics TX Credits = " +
+                    diagnosticsTxCredits
+            )
+        }
+
+        appendLog(
+            "========================================"
+        )
+    }
+
     private fun getDiagnosticsFifo(
         gatt: BluetoothGatt
     ): BluetoothGattCharacteristic? {
@@ -2051,6 +2315,31 @@ class DtcoBluetoothDiagnostic(
             ?.getCharacteristic(
                 UUID_DIAGNOSTICS_FIFO
             )
+    }
+
+    private fun driverActivityToString(
+        value: Int
+    ): String {
+
+        return when (
+            value
+        ) {
+
+            0 ->
+                "ОТДЫХ / ПЕРЕРЫВ"
+
+            1 ->
+                "ГОТОВНОСТЬ"
+
+            2 ->
+                "ДРУГАЯ РАБОТА"
+
+            3 ->
+                "ВОЖДЕНИЕ"
+
+            else ->
+                "НЕИЗВЕСТНОЕ ЗНАЧЕНИЕ ($value)"
+        }
     }
 
     private fun rhmiStatusToString(
@@ -2096,6 +2385,18 @@ class DtcoBluetoothDiagnostic(
         return when (
             nrc
         ) {
+
+            0x10 ->
+                "generalReject"
+
+            0x11 ->
+                "serviceNotSupported"
+
+            0x12 ->
+                "subFunctionNotSupported"
+
+            0x13 ->
+                "incorrectMessageLengthOrInvalidFormat"
 
             0x21 ->
                 "busyRepeatRequest"
