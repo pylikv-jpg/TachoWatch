@@ -42,16 +42,11 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "BLE-CREDITS-HANDSHAKE-1"
+            "BLE-RHMI-STATUS-1"
 
         private const val MAX_LOG_LINES =
-            3500
+            4000
 
-        /*
-         * Первый безопасный тест:
-         * разрешаем только по одному входящему
-         * пакету на каждый официальный канал.
-         */
         private const val INITIAL_CREDITS =
             1
 
@@ -60,9 +55,6 @@ class DtcoBluetoothDiagnostic(
                 "00002902-0000-1000-8000-00805f9b34fb"
             )
 
-        /*
-         * DIAGNOSTICS SERVICE
-         */
         private val UUID_DIAGNOSTICS_SERVICE =
             UUID.fromString(
                 "fa213def-aef4-475c-bcea-0a8d69073efc"
@@ -78,9 +70,6 @@ class DtcoBluetoothDiagnostic(
                 "e168d1a6-304f-42b4-ab96-4cd1d4efebd9"
             )
 
-        /*
-         * DOWNLOAD SERVICE
-         */
         private val UUID_DOWNLOAD_SERVICE =
             UUID.fromString(
                 "eef90782-55dd-4388-b80b-695aba7a69b5"
@@ -96,10 +85,6 @@ class DtcoBluetoothDiagnostic(
                 "db9c4128-bff3-41fe-a306-fb6f9a8aeb2d"
             )
 
-        /*
-         * Третий обнаруженный сервис.
-         * Назначение пока не утверждаем.
-         */
         private val UUID_EXTRA_SERVICE =
             UUID.fromString(
                 "36ab9731-5701-489a-943a-5e16a9dd3183"
@@ -178,6 +163,14 @@ class DtcoBluetoothDiagnostic(
     private var downloadCreditsReceived =
         false
 
+    @Volatile
+    private var diagnosticsTxCredits =
+        0
+
+    @Volatile
+    private var statusRequestSent =
+        false
+
     fun hasConnectPermission():
         Boolean {
 
@@ -203,9 +196,7 @@ class DtcoBluetoothDiagnostic(
         device: BluetoothDevice
     ) {
 
-        if (
-            !hasConnectPermission()
-        ) {
+        if (!hasConnectPermission()) {
 
             appendLog(
                 "ОШИБКА: нет BLUETOOTH_CONNECT"
@@ -246,12 +237,18 @@ class DtcoBluetoothDiagnostic(
         downloadCreditsReceived =
             false
 
+        diagnosticsTxCredits =
+            0
+
+        statusRequestSent =
+            false
+
         appendLog(
             "========================================"
         )
 
         appendLog(
-            "TachoWatch — диагностика DTCO"
+            "TachoWatch — DTCO Remote HMI test"
         )
 
         appendLog(
@@ -271,27 +268,31 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
+            "Изменение данных карты: НЕТ"
+        )
+
+        appendLog(
+            "Изменение деятельности водителя: НЕТ"
+        )
+
+        appendLog(
             "Изменение данных DTCO: НЕТ"
         )
 
         appendLog(
-            "Чтение содержимого карты: НЕТ"
+            "Download-команды: НЕТ"
         )
 
         appendLog(
-            "FIFO-команды: НЕ отправляются"
+            "OpenRHMISession: НЕ отправляется"
         )
 
         appendLog(
-            "Разрешена запись ТОЛЬКО BLE Credits."
+            "Отправится только READ-ONLY:"
         )
 
         appendLog(
-            "Начальный Credit = $INITIAL_CREDITS"
-        )
-
-        appendLog(
-            "Это transport flow-control, не данные карты."
+            "GetRHMISessionStatus = 31 03 F2 11"
         )
 
         appendLog(
@@ -300,10 +301,6 @@ class DtcoBluetoothDiagnostic(
 
         appendDeviceInfo(
             device
-        )
-
-        appendLog(
-            "----------------------------------------"
         )
 
         appendLog(
@@ -319,10 +316,6 @@ class DtcoBluetoothDiagnostic(
                     Build.VERSION_CODES.M
                 ) {
 
-                    appendLog(
-                        "connectGatt(false, TRANSPORT_LE)"
-                    )
-
                     device.connectGatt(
                         context,
                         false,
@@ -331,10 +324,6 @@ class DtcoBluetoothDiagnostic(
                     )
 
                 } else {
-
-                    appendLog(
-                        "connectGatt(false)"
-                    )
 
                     device.connectGatt(
                         context,
@@ -347,7 +336,7 @@ class DtcoBluetoothDiagnostic(
                 gatt
 
             appendLog(
-                "BluetoothGatt object: ${
+                "BluetoothGatt object = ${
                     if (gatt != null) {
                         "CREATED"
                     } else {
@@ -367,11 +356,6 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    /*
-     * Кнопку оставляем диагностической.
-     * Она НЕ повторяет Credits handshake.
-     */
-    @SuppressLint("MissingPermission")
     fun manualGattCheck() {
 
         appendLog(
@@ -383,54 +367,7 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "MANUAL GATT CHECK"
-        )
-
-        val device =
-            currentDevice
-
-        val gatt =
-            currentGatt
-
-        if (
-            device == null
-        ) {
-
-            appendLog(
-                "currentDevice = NULL"
-            )
-
-            appendLog(
-                "========================================"
-            )
-
-            return
-        }
-
-        val state =
-
-            try {
-
-                bluetoothManager.getConnectionState(
-                    device,
-                    BluetoothProfile.GATT
-                )
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "getConnectionState",
-                    e
-                )
-
-                -1
-            }
-
-        appendLog(
-            "Android GATT state = " +
-                "$state (${profileStateToString(state)})"
+            "MANUAL STATUS"
         )
 
         appendLog(
@@ -442,33 +379,19 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "handshakeStarted = $handshakeStarted"
+            "diagnosticsCreditsReceived = " +
+                diagnosticsCreditsReceived
         )
 
         appendLog(
-            "Diagnostics TX credit = $diagnosticsCreditsSent"
+            "diagnosticsTxCredits = " +
+                diagnosticsTxCredits
         )
 
         appendLog(
-            "Diagnostics RX credit = $diagnosticsCreditsReceived"
+            "statusRequestSent = " +
+                statusRequestSent
         )
-
-        appendLog(
-            "Download TX credit = $downloadCreditsSent"
-        )
-
-        appendLog(
-            "Download RX credit = $downloadCreditsReceived"
-        )
-
-        if (
-            gatt != null
-        ) {
-
-            appendLog(
-                "Services = ${gatt.services.size}"
-            )
-        }
 
         appendLog(
             "========================================"
@@ -491,10 +414,6 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
-                    "========================================"
-                )
-
-                appendLog(
                     "CALLBACK: onConnectionStateChange"
                 )
 
@@ -506,13 +425,7 @@ class DtcoBluetoothDiagnostic(
                     "newState = $newState (${profileStateToString(newState)})"
                 )
 
-                appendLog(
-                    "========================================"
-                )
-
-                when (
-                    newState
-                ) {
+                when (newState) {
 
                     BluetoothProfile.STATE_CONNECTED -> {
 
@@ -533,34 +446,22 @@ class DtcoBluetoothDiagnostic(
                             )
                         )
 
-                        /*
-                         * Согласно спецификации MTU exchange
-                         * должен выполняться во время setup.
-                         *
-                         * Это не запись данных DTCO.
-                         */
                         try {
 
                             appendLog(
                                 "STEP 2: requestMtu(512)"
                             )
 
-                            val mtuStarted =
+                            val started =
                                 gatt.requestMtu(
                                     512
                                 )
 
                             appendLog(
-                                "requestMtu(512) = $mtuStarted"
+                                "requestMtu = $started"
                             )
 
-                            /*
-                             * Даже если MTU запрос не стартовал,
-                             * discovery всё равно продолжаем.
-                             */
-                            if (
-                                !mtuStarted
-                            ) {
+                            if (!started) {
 
                                 discoverServicesSafe(
                                     gatt
@@ -582,20 +483,6 @@ class DtcoBluetoothDiagnostic(
                         }
                     }
 
-                    BluetoothProfile.STATE_CONNECTING -> {
-
-                        appendLog(
-                            "BLE GATT CONNECTING"
-                        )
-                    }
-
-                    BluetoothProfile.STATE_DISCONNECTING -> {
-
-                        appendLog(
-                            "BLE GATT DISCONNECTING"
-                        )
-                    }
-
                     BluetoothProfile.STATE_DISCONNECTED -> {
 
                         connected =
@@ -603,11 +490,6 @@ class DtcoBluetoothDiagnostic(
 
                         servicesDiscovered =
                             false
-
-                        subscriptionInProgress =
-                            false
-
-                        subscriptionQueue.clear()
 
                         appendLog(
                             "BLE GATT DISCONNECTED"
@@ -660,19 +542,11 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
-                    "========================================"
-                )
-
-                appendLog(
                     "CALLBACK: onServicesDiscovered"
                 )
 
                 appendLog(
                     "status = $status (${gattStatusToString(status)})"
-                )
-
-                appendLog(
-                    "========================================"
                 )
 
                 if (
@@ -683,17 +557,8 @@ class DtcoBluetoothDiagnostic(
                     servicesDiscovered =
                         true
 
-                    dumpGattMap(
-                        gatt,
-                        "CALLBACK"
-                    )
-
                     appendLog(
-                        ""
-                    )
-
-                    appendLog(
-                        "STEP 4: настройка INDICATE / NOTIFY"
+                        "Services = ${gatt.services.size}"
                     )
 
                     prepareSubscriptions(
@@ -729,31 +594,11 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
-                    "Descriptor: ${descriptor.uuid}"
-                )
-
-                appendLog(
                     "status = $status (${gattStatusToString(status)})"
                 )
 
                 subscriptionInProgress =
                     false
-
-                if (
-                    status ==
-                    BluetoothGatt.GATT_SUCCESS
-                ) {
-
-                    appendLog(
-                        "CCCD настроен успешно."
-                    )
-
-                } else {
-
-                    appendLog(
-                        "CCCD настройка завершилась ошибкой."
-                    )
-                }
 
                 mainHandler.postDelayed(
                     {
@@ -767,9 +612,6 @@ class DtcoBluetoothDiagnostic(
                 )
             }
 
-            /*
-             * Callback для успешных BLE Credits TX.
-             */
             override fun onCharacteristicWrite(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
@@ -785,35 +627,16 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 appendLog(
-                    "UUID: ${characteristic.uuid}"
+                    "UUID = ${characteristic.uuid}"
                 )
 
                 appendLog(
                     "status = $status (${gattStatusToString(status)})"
                 )
-
-                if (
-                    characteristic.uuid ==
-                    UUID_DIAGNOSTICS_CREDITS
-                ) {
-
-                    appendLog(
-                        "Diagnostics Credits write callback."
-                    )
-
-                } else if (
-                    characteristic.uuid ==
-                    UUID_DOWNLOAD_CREDITS
-                ) {
-
-                    appendLog(
-                        "Download Credits write callback."
-                    )
-                }
             }
 
             @Deprecated(
-                "Legacy callback required for older Android"
+                "Legacy callback"
             )
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
@@ -825,21 +648,13 @@ class DtcoBluetoothDiagnostic(
                     Build.VERSION_CODES.TIRAMISU
                 ) {
 
+                    @Suppress("DEPRECATION")
                     val value =
-
-                        try {
-
-                            characteristic.value
-                                ?: byteArrayOf()
-
-                        } catch (
-                            _: Throwable
-                        ) {
-
-                            byteArrayOf()
-                        }
+                        characteristic.value
+                            ?: byteArrayOf()
 
                     handleIncoming(
+                        gatt,
                         characteristic,
                         value
                     )
@@ -853,17 +668,9 @@ class DtcoBluetoothDiagnostic(
             ) {
 
                 handleIncoming(
+                    gatt,
                     characteristic,
                     value
-                )
-            }
-
-            override fun onServiceChanged(
-                gatt: BluetoothGatt
-            ) {
-
-                appendLog(
-                    "CALLBACK: onServiceChanged"
                 )
             }
         }
@@ -883,7 +690,7 @@ class DtcoBluetoothDiagnostic(
                 gatt.discoverServices()
 
             appendLog(
-                "discoverServices() returned = $result"
+                "discoverServices() = $result"
             )
 
         } catch (
@@ -897,17 +704,11 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    /*
-     * Сначала подписываемся на все каналы.
-     * Только ПОСЛЕ этого разрешаем Credits handshake.
-     */
     private fun prepareSubscriptions(
         gatt: BluetoothGatt
     ) {
 
         subscriptionQueue.clear()
-        subscriptionInProgress =
-            false
 
         addSubscription(
             gatt,
@@ -941,20 +742,17 @@ class DtcoBluetoothDiagnostic(
             SubscriptionMode.INDICATE
         )
 
-        /*
-         * Этот канал только слушаем.
-         * Credits к нему не относятся.
-         */
         addSubscription(
             gatt,
             UUID_EXTRA_SERVICE,
             UUID_EXTRA_NOTIFY,
-            "Unknown service NOTIFY",
+            "Extra NOTIFY",
             SubscriptionMode.NOTIFY
         )
 
         appendLog(
-            "Подписок в очереди: ${subscriptionQueue.size}"
+            "STEP 4: subscription count = " +
+                subscriptionQueue.size
         )
 
         subscribeNext(
@@ -973,45 +771,19 @@ class DtcoBluetoothDiagnostic(
         val service =
             gatt.getService(
                 serviceUuid
-            )
-
-        if (
-            service == null
-        ) {
-
-            appendLog(
-                "$label: service NOT FOUND"
-            )
-
-            return
-        }
+            ) ?: return
 
         val characteristic =
             service.getCharacteristic(
                 characteristicUuid
-            )
-
-        if (
-            characteristic == null
-        ) {
-
-            appendLog(
-                "$label: characteristic NOT FOUND"
-            )
-
-            return
-        }
+            ) ?: return
 
         subscriptionQueue.addLast(
             SubscriptionItem(
-                label = label,
-                characteristic = characteristic,
-                mode = mode
+                label,
+                characteristic,
+                mode
             )
-        )
-
-        appendLog(
-            "$label: добавлен в очередь."
         )
     }
 
@@ -1036,25 +808,9 @@ class DtcoBluetoothDiagnostic(
             )
 
             appendLog(
-                "========================================"
-            )
-
-            appendLog(
                 "SUBSCRIPTION SETUP COMPLETE"
             )
 
-            appendLog(
-                "Все CCCD настроены."
-            )
-
-            appendLog(
-                "========================================"
-            )
-
-            /*
-             * Только теперь начинаем
-             * официальный Credits handshake.
-             */
             mainHandler.postDelayed(
                 {
 
@@ -1063,7 +819,7 @@ class DtcoBluetoothDiagnostic(
                     )
 
                 },
-                500L
+                400L
             )
 
             return
@@ -1083,42 +839,17 @@ class DtcoBluetoothDiagnostic(
             "SUBSCRIBE: ${item.label}"
         )
 
-        appendLog(
-            "UUID: ${characteristic.uuid}"
-        )
+        val local =
+            gatt.setCharacteristicNotification(
+                characteristic,
+                true
+            )
 
         appendLog(
-            "Mode: ${item.mode}"
+            "setCharacteristicNotification = $local"
         )
 
-        val localResult =
-
-            try {
-
-                gatt.setCharacteristicNotification(
-                    characteristic,
-                    true
-                )
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "setCharacteristicNotification",
-                    e
-                )
-
-                false
-            }
-
-        appendLog(
-            "setCharacteristicNotification(true) = $localResult"
-        )
-
-        if (
-            !localResult
-        ) {
+        if (!local) {
 
             mainHandler.postDelayed(
                 {
@@ -1128,7 +859,7 @@ class DtcoBluetoothDiagnostic(
                     )
 
                 },
-                120L
+                100L
             )
 
             return
@@ -1144,7 +875,7 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             appendLog(
-                "CCCD NOT FOUND."
+                "CCCD NOT FOUND"
             )
 
             mainHandler.postDelayed(
@@ -1155,7 +886,7 @@ class DtcoBluetoothDiagnostic(
                     )
 
                 },
-                120L
+                100L
             )
 
             return
@@ -1163,49 +894,35 @@ class DtcoBluetoothDiagnostic(
 
         val cccdValue =
 
-            when (
-                item.mode
+            if (
+                item.mode ==
+                SubscriptionMode.INDICATE
             ) {
 
-                SubscriptionMode.INDICATE ->
-                    BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                BluetoothGattDescriptor
+                    .ENABLE_INDICATION_VALUE
 
-                SubscriptionMode.NOTIFY ->
-                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            } else {
+
+                BluetoothGattDescriptor
+                    .ENABLE_NOTIFICATION_VALUE
             }
 
         subscriptionInProgress =
             true
 
         val started =
-
-            try {
-
-                writeCccd(
-                    gatt,
-                    descriptor,
-                    cccdValue
-                )
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "write CCCD",
-                    e
-                )
-
-                false
-            }
+            writeDescriptorCompat(
+                gatt,
+                descriptor,
+                cccdValue
+            )
 
         appendLog(
             "CCCD write started = $started"
         )
 
-        if (
-            !started
-        ) {
+        if (!started) {
 
             subscriptionInProgress =
                 false
@@ -1218,25 +935,11 @@ class DtcoBluetoothDiagnostic(
                     )
 
                 },
-                150L
+                120L
             )
         }
     }
 
-    /*
-     * ============================================================
-     * CREDITS HANDSHAKE
-     * ============================================================
-     *
-     * Никаких FIFO-команд.
-     * Никаких команд карте.
-     * Никаких команд изменения DTCO.
-     *
-     * Только:
-     *
-     * Diagnostics Credits = 01
-     * Download Credits    = 01
-     */
     @SuppressLint("MissingPermission")
     private fun startCreditsHandshake(
         gatt: BluetoothGatt
@@ -1245,10 +948,6 @@ class DtcoBluetoothDiagnostic(
         if (
             handshakeStarted
         ) {
-
-            appendLog(
-                "Credits handshake уже был запущен."
-            )
 
             return
         }
@@ -1269,56 +968,32 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Отправляем минимальное значение: $INITIAL_CREDITS"
-        )
-
-        appendLog(
-            "FIFO при этом НЕ используется."
+            "FIFO ещё НЕ используется."
         )
 
         appendLog(
             "========================================"
         )
 
-        /*
-         * Сначала Diagnostics.
-         */
         sendCredit(
-            gatt = gatt,
-            serviceUuid = UUID_DIAGNOSTICS_SERVICE,
-            creditsUuid = UUID_DIAGNOSTICS_CREDITS,
-            label = "Diagnostics Credits"
+            gatt,
+            UUID_DIAGNOSTICS_SERVICE,
+            UUID_DIAGNOSTICS_CREDITS,
+            "Diagnostics"
         )
 
-        /*
-         * WRITE_NO_RESPONSE может не дать
-         * callback, поэтому вторую независимую
-         * операцию запускаем с небольшой паузой.
-         */
         mainHandler.postDelayed(
             {
 
                 sendCredit(
-                    gatt = gatt,
-                    serviceUuid = UUID_DOWNLOAD_SERVICE,
-                    creditsUuid = UUID_DOWNLOAD_CREDITS,
-                    label = "Download Credits"
+                    gatt,
+                    UUID_DOWNLOAD_SERVICE,
+                    UUID_DOWNLOAD_CREDITS,
+                    "Download"
                 )
 
             },
-            500L
-        )
-
-        /*
-         * Через 3 секунды выводим состояние.
-         */
-        mainHandler.postDelayed(
-            {
-
-                appendHandshakeStatus()
-
-            },
-            3000L
+            400L
         )
     }
 
@@ -1326,43 +1001,21 @@ class DtcoBluetoothDiagnostic(
     private fun sendCredit(
         gatt: BluetoothGatt,
         serviceUuid: UUID,
-        creditsUuid: UUID,
+        characteristicUuid: UUID,
         label: String
     ) {
 
         val service =
             gatt.getService(
                 serviceUuid
-            )
-
-        if (
-            service == null
-        ) {
-
-            appendLog(
-                "$label TX: SERVICE NOT FOUND"
-            )
-
-            return
-        }
+            ) ?: return
 
         val characteristic =
             service.getCharacteristic(
-                creditsUuid
-            )
+                characteristicUuid
+            ) ?: return
 
-        if (
-            characteristic == null
-        ) {
-
-            appendLog(
-                "$label TX: CHARACTERISTIC NOT FOUND"
-            )
-
-            return
-        }
-
-        val value =
+        val data =
             byteArrayOf(
                 INITIAL_CREDITS.toByte()
             )
@@ -1372,81 +1025,598 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "TX FLOW CONTROL"
+            "TX CREDIT: $label"
         )
 
         appendLog(
-            "Channel: $label"
-        )
-
-        appendLog(
-            "UUID: $creditsUuid"
-        )
-
-        appendLog(
-            "HEX: ${bytesToHex(value)}"
-        )
-
-        appendLog(
-            "Meaning: remote side may send " +
-                "$INITIAL_CREDITS packet(s)"
+            "HEX: ${bytesToHex(data)}"
         )
 
         val started =
-
-            try {
-
-                writeCreditCharacteristic(
-                    gatt,
-                    characteristic,
-                    value
-                )
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "$label TX",
-                    e
-                )
-
-                false
-            }
+            writeCharacteristicCompat(
+                gatt,
+                characteristic,
+                data
+            )
 
         appendLog(
             "Credit write started = $started"
         )
 
         if (
-            started
+            characteristicUuid ==
+            UUID_DIAGNOSTICS_CREDITS
         ) {
 
-            if (
-                creditsUuid ==
-                UUID_DIAGNOSTICS_CREDITS
-            ) {
+            diagnosticsCreditsSent =
+                started
 
-                diagnosticsCreditsSent =
-                    true
+        } else {
 
-            } else if (
-                creditsUuid ==
-                UUID_DOWNLOAD_CREDITS
-            ) {
+            downloadCreditsSent =
+                started
+        }
+    }
 
-                downloadCreditsSent =
-                    true
+    private fun handleIncoming(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray
+    ) {
+
+        val uuid =
+            characteristic.uuid
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "RX FROM DTCO"
+        )
+
+        appendLog(
+            "Source: ${
+                characteristicLabel(
+                    uuid
+                )
+            }"
+        )
+
+        appendLog(
+            "Length: ${value.size}"
+        )
+
+        appendLog(
+            "HEX: ${bytesToHex(value)}"
+        )
+
+        when (
+            uuid
+        ) {
+
+            UUID_DIAGNOSTICS_CREDITS -> {
+
+                handleDiagnosticsCredits(
+                    gatt,
+                    value
+                )
             }
+
+            UUID_DOWNLOAD_CREDITS -> {
+
+                downloadCreditsReceived =
+                    value.isNotEmpty()
+
+                if (
+                    value.isNotEmpty()
+                ) {
+
+                    appendLog(
+                        "Download Credits RX = ${
+                            value[0].toInt() and 0xFF
+                        }"
+                    )
+                }
+            }
+
+            UUID_DIAGNOSTICS_FIFO -> {
+
+                handleDiagnosticsFifo(
+                    value
+                )
+            }
+
+            UUID_DOWNLOAD_FIFO -> {
+
+                appendLog(
+                    "Download FIFO RX — не обрабатываем."
+                )
+            }
+        }
+
+        appendLog(
+            "========================================"
+        )
+    }
+
+    private fun handleDiagnosticsCredits(
+        gatt: BluetoothGatt,
+        value: ByteArray
+    ) {
+
+        if (
+            value.isEmpty()
+        ) {
+
+            appendLog(
+                "Diagnostics Credits EMPTY"
+            )
+
+            return
+        }
+
+        val credits =
+            value[0].toInt() and 0xFF
+
+        diagnosticsCreditsReceived =
+            true
+
+        appendLog(
+            "Diagnostics Credits RX = $credits"
+        )
+
+        if (
+            credits ==
+            0xFF
+        ) {
+
+            appendLog(
+                "FLOW CONTROL REJECTED"
+            )
+
+            return
+        }
+
+        diagnosticsTxCredits +=
+            credits
+
+        appendLog(
+            "Available Diagnostics TX Credits = " +
+                diagnosticsTxCredits
+        )
+
+        /*
+         * Первая содержательная команда отправляется
+         * ТОЛЬКО после получения credits от DTCO.
+         */
+        if (
+            diagnosticsTxCredits > 0 &&
+            !statusRequestSent
+        ) {
+
+            mainHandler.postDelayed(
+                {
+
+                    sendRhmiStatusRequest(
+                        gatt
+                    )
+
+                },
+                250L
+            )
         }
     }
 
     /*
-     * Credits characteristics в нашем DTCO
-     * имеют WRITE_NO_RESPONSE.
+     * ============================================================
+     * ПЕРВЫЙ READ-ONLY UDS ЗАПРОС
+     * ============================================================
+     *
+     * Application data:
+     *
+     * 31 03 F2 11
+     *
+     * RoutineControl
+     * RequestRoutineResults
+     * OpenRHMISession
+     *
+     * Это НЕ OpenRHMISession.
+     * Это только запрос текущего статуса.
+     *
+     * Transport header:
+     *
+     * 01 = всего один пакет
+     * 01 = пакет №1
+     *
+     * Финальный FIFO пакет:
+     *
+     * 01 01 31 03 F2 11
      */
     @SuppressLint("MissingPermission")
-    private fun writeCreditCharacteristic(
+    private fun sendRhmiStatusRequest(
+        gatt: BluetoothGatt
+    ) {
+
+        if (
+            statusRequestSent
+        ) {
+
+            return
+        }
+
+        if (
+            diagnosticsTxCredits <= 0
+        ) {
+
+            appendLog(
+                "RHMI STATUS TX запрещён: нет Credits."
+            )
+
+            return
+        }
+
+        val service =
+            gatt.getService(
+                UUID_DIAGNOSTICS_SERVICE
+            )
+
+        if (
+            service == null
+        ) {
+
+            appendLog(
+                "Diagnostics service NOT FOUND"
+            )
+
+            return
+        }
+
+        val fifo =
+            service.getCharacteristic(
+                UUID_DIAGNOSTICS_FIFO
+            )
+
+        if (
+            fifo == null
+        ) {
+
+            appendLog(
+                "Diagnostics FIFO NOT FOUND"
+            )
+
+            return
+        }
+
+        val packet =
+            byteArrayOf(
+                0x01,
+                0x01,
+                0x31,
+                0x03,
+                0xF2.toByte(),
+                0x11
+            )
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "STEP 6: READ-ONLY RHMI STATUS REQUEST"
+        )
+
+        appendLog(
+            "Application: 31 03 F2 11"
+        )
+
+        appendLog(
+            "Transport packet: ${bytesToHex(packet)}"
+        )
+
+        appendLog(
+            "Purpose: GetRHMISessionStatus"
+        )
+
+        appendLog(
+            "НЕ открывает Remote HMI session."
+        )
+
+        appendLog(
+            "НЕ меняет данные карты."
+        )
+
+        appendLog(
+            "НЕ меняет деятельность."
+        )
+
+        val started =
+            writeCharacteristicCompat(
+                gatt,
+                fifo,
+                packet
+            )
+
+        appendLog(
+            "Diagnostics FIFO write started = $started"
+        )
+
+        if (
+            started
+        ) {
+
+            diagnosticsTxCredits -=
+                1
+
+            statusRequestSent =
+                true
+
+            appendLog(
+                "Remaining Diagnostics TX Credits = " +
+                    diagnosticsTxCredits
+            )
+        }
+
+        appendLog(
+            "========================================"
+        )
+    }
+
+    private fun handleDiagnosticsFifo(
+        value: ByteArray
+    ) {
+
+        if (
+            value.size <
+            3
+        ) {
+
+            appendLog(
+                "Diagnostics FIFO packet слишком короткий."
+            )
+
+            return
+        }
+
+        val totalPackets =
+            value[0].toInt() and 0xFF
+
+        val packetNumber =
+            value[1].toInt() and 0xFF
+
+        val appData =
+            value.copyOfRange(
+                2,
+                value.size
+            )
+
+        appendLog(
+            "Transport totalPackets = $totalPackets"
+        )
+
+        appendLog(
+            "Transport packetNumber = $packetNumber"
+        )
+
+        appendLog(
+            "Application HEX = ${bytesToHex(appData)}"
+        )
+
+        /*
+         * Ожидаемый положительный ответ:
+         *
+         * 71 03 F2 11 XX
+         */
+        if (
+            appData.size >= 5 &&
+            (appData[0].toInt() and 0xFF) == 0x71 &&
+            (appData[1].toInt() and 0xFF) == 0x03 &&
+            (appData[2].toInt() and 0xFF) == 0xF2 &&
+            (appData[3].toInt() and 0xFF) == 0x11
+        ) {
+
+            val status =
+                appData[4].toInt() and 0xFF
+
+            appendLog(
+                ""
+            )
+
+            appendLog(
+                "******** RHMI STATUS RESPONSE ********"
+            )
+
+            appendLog(
+                "RHMIsessionStatus HEX = ${
+                    "%02X".format(
+                        Locale.US,
+                        status
+                    )
+                }"
+            )
+
+            appendLog(
+                "Meaning = ${
+                    rhmiStatusToString(
+                        status
+                    )
+                }"
+            )
+
+            appendLog(
+                "***************************************"
+            )
+
+            return
+        }
+
+        /*
+         * Стандартный UDS negative response:
+         *
+         * 7F <service> <NRC>
+         */
+        if (
+            appData.size >= 3 &&
+            (appData[0].toInt() and 0xFF) ==
+            0x7F
+        ) {
+
+            val originalService =
+                appData[1].toInt() and 0xFF
+
+            val nrc =
+                appData[2].toInt() and 0xFF
+
+            appendLog(
+                ""
+            )
+
+            appendLog(
+                "******** UDS NEGATIVE RESPONSE ********"
+            )
+
+            appendLog(
+                "Original service = ${
+                    "%02X".format(
+                        Locale.US,
+                        originalService
+                    )
+                }"
+            )
+
+            appendLog(
+                "NRC = ${
+                    "%02X".format(
+                        Locale.US,
+                        nrc
+                    )
+                }"
+            )
+
+            appendLog(
+                "NRC meaning = ${
+                    negativeResponseToString(
+                        nrc
+                    )
+                }"
+            )
+
+            appendLog(
+                "***************************************"
+            )
+        }
+    }
+
+    private fun rhmiStatusToString(
+        status: Int
+    ): String {
+
+        return when (
+            status
+        ) {
+
+            0x00 ->
+                "Сессия закрыта; открытие возможно"
+
+            0x01 ->
+                "Сессия закрыта; ожидается решение пользователя"
+
+            0x10 ->
+                "Remote HMI session ОТКРЫТА"
+
+            0x20 ->
+                "Remote HMI отклонён пользователем"
+
+            0x21 ->
+                "Используется локальный интерфейс DTCO"
+
+            0x2F ->
+                "Общие условия Remote HMI не выполнены"
+
+            else ->
+                "Неизвестный статус 0x${
+                    "%02X".format(
+                        Locale.US,
+                        status
+                    )
+                }"
+        }
+    }
+
+    private fun negativeResponseToString(
+        nrc: Int
+    ): String {
+
+        return when (
+            nrc
+        ) {
+
+            0x21 ->
+                "busyRepeatRequest"
+
+            0x22 ->
+                "conditionsNotCorrect"
+
+            0x31 ->
+                "requestOutOfRange"
+
+            0x33 ->
+                "securityAccessDenied"
+
+            0x7E ->
+                "subFunctionNotSupportedInActiveSession"
+
+            else ->
+                "NRC 0x${
+                    "%02X".format(
+                        Locale.US,
+                        nrc
+                    )
+                }"
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun writeDescriptorCompat(
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+        value: ByteArray
+    ): Boolean {
+
+        return if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.TIRAMISU
+        ) {
+
+            gatt.writeDescriptor(
+                descriptor,
+                value
+            ) ==
+                BluetoothGatt.GATT_SUCCESS
+
+        } else {
+
+            @Suppress("DEPRECATION")
+            descriptor.value =
+                value
+
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(
+                descriptor
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun writeCharacteristicCompat(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray
@@ -1457,15 +1627,12 @@ class DtcoBluetoothDiagnostic(
             Build.VERSION_CODES.TIRAMISU
         ) {
 
-            val result =
-                gatt.writeCharacteristic(
-                    characteristic,
-                    value,
-                    BluetoothGattCharacteristic
-                        .WRITE_TYPE_NO_RESPONSE
-                )
-
-            result ==
+            gatt.writeCharacteristic(
+                characteristic,
+                value,
+                BluetoothGattCharacteristic
+                    .WRITE_TYPE_NO_RESPONSE
+            ) ==
                 BluetoothGatt.GATT_SUCCESS
 
         } else {
@@ -1484,269 +1651,6 @@ class DtcoBluetoothDiagnostic(
                 characteristic
             )
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun writeCccd(
-        gatt: BluetoothGatt,
-        descriptor: BluetoothGattDescriptor,
-        value: ByteArray
-    ): Boolean {
-
-        return if (
-            Build.VERSION.SDK_INT >=
-            Build.VERSION_CODES.TIRAMISU
-        ) {
-
-            val result =
-                gatt.writeDescriptor(
-                    descriptor,
-                    value
-                )
-
-            result ==
-                BluetoothGatt.GATT_SUCCESS
-
-        } else {
-
-            @Suppress("DEPRECATION")
-            descriptor.value =
-                value
-
-            @Suppress("DEPRECATION")
-            gatt.writeDescriptor(
-                descriptor
-            )
-        }
-    }
-
-    /*
-     * ============================================================
-     * RX
-     * ============================================================
-     */
-    private fun handleIncoming(
-        characteristic: BluetoothGattCharacteristic,
-        value: ByteArray
-    ) {
-
-        val uuid =
-            characteristic.uuid
-
-        val label =
-            characteristicLabel(
-                uuid
-            )
-
-        appendLog(
-            ""
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "RX FROM DTCO"
-        )
-
-        appendLog(
-            "Source: $label"
-        )
-
-        appendLog(
-            "UUID: $uuid"
-        )
-
-        appendLog(
-            "Length: ${value.size} byte(s)"
-        )
-
-        appendLog(
-            "HEX: ${bytesToHex(value)}"
-        )
-
-        /*
-         * Credits имеют INTEGER 0..255,
-         * то есть ожидаем один байт.
-         */
-        if (
-            uuid ==
-            UUID_DIAGNOSTICS_CREDITS ||
-            uuid ==
-            UUID_DOWNLOAD_CREDITS
-        ) {
-
-            handleReceivedCredits(
-                uuid,
-                value
-            )
-
-        } else {
-
-            val ascii =
-                bytesToReadableAscii(
-                    value
-                )
-
-            if (
-                ascii.isNotBlank()
-            ) {
-
-                appendLog(
-                    "ASCII: $ascii"
-                )
-            }
-        }
-
-        appendLog(
-            "========================================"
-        )
-    }
-
-    private fun handleReceivedCredits(
-        uuid: UUID,
-        value: ByteArray
-    ) {
-
-        if (
-            value.isEmpty()
-        ) {
-
-            appendLog(
-                "Credit indication EMPTY."
-            )
-
-            return
-        }
-
-        val credit =
-            value[0].toInt() and 0xFF
-
-        val channel =
-
-            if (
-                uuid ==
-                UUID_DIAGNOSTICS_CREDITS
-            ) {
-
-                diagnosticsCreditsReceived =
-                    true
-
-                "DIAGNOSTICS"
-
-            } else {
-
-                downloadCreditsReceived =
-                    true
-
-                "DOWNLOAD"
-            }
-
-        appendLog(
-            "CREDITS RX CHANNEL = $channel"
-        )
-
-        appendLog(
-            "CREDITS RX VALUE = $credit"
-        )
-
-        when (
-            credit
-        ) {
-
-            0xFF -> {
-
-                appendLog(
-                    "RESULT: CONNECTION REJECTED BY DTCO"
-                )
-
-                appendLog(
-                    "0xFF означает отказ/разрыв flow-control."
-                )
-            }
-
-            0 -> {
-
-                appendLog(
-                    "RESULT: credit = 0"
-                )
-
-                appendLog(
-                    "Передача FIFO пока не разрешена."
-                )
-            }
-
-            else -> {
-
-                appendLog(
-                    "RESULT: FLOW CONTROL ACCEPTED"
-                )
-
-                appendLog(
-                    "DTCO разрешил до $credit outgoing packet(s)."
-                )
-
-                appendLog(
-                    "FIFO всё равно НЕ отправляем в этой версии."
-                )
-            }
-        }
-    }
-
-    private fun appendHandshakeStatus() {
-
-        appendLog(
-            ""
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "CREDITS HANDSHAKE STATUS"
-        )
-
-        appendLog(
-            "Diagnostics TX = $diagnosticsCreditsSent"
-        )
-
-        appendLog(
-            "Diagnostics RX = $diagnosticsCreditsReceived"
-        )
-
-        appendLog(
-            "Download TX = $downloadCreditsSent"
-        )
-
-        appendLog(
-            "Download RX = $downloadCreditsReceived"
-        )
-
-        if (
-            diagnosticsCreditsReceived ||
-            downloadCreditsReceived
-        ) {
-
-            appendLog(
-                "DTCO ответил на flow-control handshake."
-            )
-
-        } else {
-
-            appendLog(
-                "Пока Credits indication от DTCO нет."
-            )
-        }
-
-        appendLog(
-            "FIFO-команд отправлено: 0"
-        )
-
-        appendLog(
-            "========================================"
-        )
     }
 
     private fun characteristicLabel(
@@ -1770,10 +1674,10 @@ class DtcoBluetoothDiagnostic(
                 "Download Credits"
 
             UUID_EXTRA_NOTIFY ->
-                "Unknown service NOTIFY"
+                "Extra NOTIFY"
 
             else ->
-                "Unknown characteristic"
+                "Unknown"
         }
     }
 
@@ -1799,236 +1703,6 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    private fun bytesToReadableAscii(
-        bytes: ByteArray
-    ): String {
-
-        if (
-            bytes.isEmpty()
-        ) {
-
-            return ""
-        }
-
-        val builder =
-            StringBuilder()
-
-        bytes.forEach {
-
-            val code =
-                it.toInt() and 0xFF
-
-            if (
-                code in 32..126
-            ) {
-
-                builder.append(
-                    code.toChar()
-                )
-
-            } else {
-
-                builder.append(
-                    '.'
-                )
-            }
-        }
-
-        return builder.toString()
-    }
-
-    private fun dumpGattMap(
-        gatt: BluetoothGatt,
-        source: String
-    ) {
-
-        val services =
-
-            try {
-
-                gatt.services
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "dumpGattMap",
-                    e
-                )
-
-                emptyList()
-            }
-
-        appendLog(
-            ""
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "GATT MAP — $source"
-        )
-
-        appendLog(
-            "SERVICES = ${services.size}"
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        services.forEachIndexed {
-                serviceIndex,
-                service ->
-
-            dumpService(
-                serviceIndex,
-                service
-            )
-        }
-
-        appendLog(
-            ""
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "GATT MAP COMPLETE"
-        )
-
-        appendLog(
-            "Карта водителя НЕ читалась."
-        )
-
-        appendLog(
-            "Карта водителя НЕ изменялась."
-        )
-
-        appendLog(
-            "DTCO данные НЕ изменялись."
-        )
-
-        appendLog(
-            "========================================"
-        )
-    }
-
-    private fun dumpService(
-        serviceIndex: Int,
-        service: BluetoothGattService
-    ) {
-
-        appendLog(
-            ""
-        )
-
-        appendLog(
-            "######## SERVICE [$serviceIndex] ########"
-        )
-
-        appendLog(
-            "Service UUID: ${service.uuid}"
-        )
-
-        appendLog(
-            "Type: ${serviceTypeToString(service.type)}"
-        )
-
-        appendLog(
-            "Instance ID: ${service.instanceId}"
-        )
-
-        val characteristics =
-
-            try {
-
-                service.characteristics
-
-            } catch (
-                _: Throwable
-            ) {
-
-                emptyList()
-            }
-
-        appendLog(
-            "Characteristics: ${characteristics.size}"
-        )
-
-        characteristics.forEachIndexed {
-                characteristicIndex,
-                characteristic ->
-
-            appendLog(
-                "  ------------------------------------"
-            )
-
-            appendLog(
-                "  CHARACTERISTIC [$serviceIndex.$characteristicIndex]"
-            )
-
-            appendLog(
-                "  UUID: ${characteristic.uuid}"
-            )
-
-            appendLog(
-                "  Properties HEX: 0x${
-                    characteristic.properties
-                        .toString(16)
-                        .uppercase(Locale.US)
-                }"
-            )
-
-            appendLog(
-                "  Properties: ${
-                    characteristicPropertiesToString(
-                        characteristic.properties
-                    )
-                }"
-            )
-
-            val descriptors =
-
-                try {
-
-                    characteristic.descriptors
-
-                } catch (
-                    _: Throwable
-                ) {
-
-                    emptyList()
-                }
-
-            appendLog(
-                "  Descriptors: ${descriptors.size}"
-            )
-
-            descriptors.forEachIndexed {
-                    descriptorIndex,
-                    descriptor ->
-
-                appendLog(
-                    "    DESCRIPTOR [$serviceIndex.$characteristicIndex.$descriptorIndex]"
-                )
-
-                appendLog(
-                    "    UUID: ${descriptor.uuid}"
-                )
-            }
-        }
-
-        appendLog(
-            "######## END SERVICE [$serviceIndex] ########"
-        )
-    }
-
     @SuppressLint("MissingPermission")
     private fun appendDeviceInfo(
         device: BluetoothDevice
@@ -2044,35 +1718,17 @@ class DtcoBluetoothDiagnostic(
 
         appendLog(
             "Bond state: ${
-                try {
-
-                    bondStateToString(
-                        device.bondState
-                    )
-
-                } catch (
-                    _: Throwable
-                ) {
-
-                    "Недоступно"
-                }
+                bondStateToString(
+                    device.bondState
+                )
             }"
         )
 
         appendLog(
             "Тип Bluetooth: ${
-                try {
-
-                    deviceTypeToString(
-                        device.type
-                    )
-
-                } catch (
-                    _: Throwable
-                ) {
-
-                    "Недоступно"
-                }
+                deviceTypeToString(
+                    device.type
+                )
             }"
         )
 
@@ -2084,9 +1740,6 @@ class DtcoBluetoothDiagnostic(
     fun disconnect() {
 
         subscriptionQueue.clear()
-
-        subscriptionInProgress =
-            false
 
         connected =
             false
@@ -2156,7 +1809,7 @@ class DtcoBluetoothDiagnostic(
         String {
 
         return logLines.joinToString(
-            separator = "\n"
+            "\n"
         )
     }
 
@@ -2220,17 +1873,10 @@ class DtcoBluetoothDiagnostic(
 
         mainHandler.post {
 
-            try {
-
-                listener?.onConnectionStateChanged(
-                    isConnected,
-                    deviceName
-                )
-
-            } catch (
-                _: Throwable
-            ) {
-            }
+            listener?.onConnectionStateChanged(
+                isConnected,
+                deviceName
+            )
         }
     }
 
@@ -2329,9 +1975,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothDevice.DEVICE_TYPE_DUAL ->
                 "DUAL"
 
-            BluetoothDevice.DEVICE_TYPE_UNKNOWN ->
-                "UNKNOWN"
-
             else ->
                 "UNKNOWN($type)"
         }
@@ -2356,9 +1999,6 @@ class DtcoBluetoothDiagnostic(
 
             BluetoothProfile.STATE_DISCONNECTING ->
                 "DISCONNECTING"
-
-            -1 ->
-                "ERROR"
 
             else ->
                 "UNKNOWN($state)"
@@ -2385,138 +2025,17 @@ class DtcoBluetoothDiagnostic(
             BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION ->
                 "GATT_INSUFFICIENT_AUTHENTICATION"
 
-            BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED ->
-                "GATT_REQUEST_NOT_SUPPORTED"
-
             BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION ->
                 "GATT_INSUFFICIENT_ENCRYPTION"
 
-            BluetoothGatt.GATT_INVALID_OFFSET ->
-                "GATT_INVALID_OFFSET"
-
-            BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH ->
-                "GATT_INVALID_ATTRIBUTE_LENGTH"
-
-            BluetoothGatt.GATT_CONNECTION_CONGESTED ->
-                "GATT_CONNECTION_CONGESTED"
+            BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED ->
+                "GATT_REQUEST_NOT_SUPPORTED"
 
             BluetoothGatt.GATT_FAILURE ->
                 "GATT_FAILURE"
 
             else ->
                 "STATUS_$status"
-        }
-    }
-
-    private fun serviceTypeToString(
-        type: Int
-    ): String {
-
-        return when (
-            type
-        ) {
-
-            BluetoothGattService.SERVICE_TYPE_PRIMARY ->
-                "PRIMARY"
-
-            BluetoothGattService.SERVICE_TYPE_SECONDARY ->
-                "SECONDARY"
-
-            else ->
-                "UNKNOWN($type)"
-        }
-    }
-
-    private fun characteristicPropertiesToString(
-        properties: Int
-    ): String {
-
-        val result =
-            mutableListOf<String>()
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_BROADCAST != 0
-        ) {
-            result.add(
-                "BROADCAST"
-            )
-        }
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_READ != 0
-        ) {
-            result.add(
-                "READ"
-            )
-        }
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
-        ) {
-            result.add(
-                "WRITE_NO_RESPONSE"
-            )
-        }
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_WRITE != 0
-        ) {
-            result.add(
-                "WRITE"
-            )
-        }
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
-        ) {
-            result.add(
-                "NOTIFY"
-            )
-        }
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
-        ) {
-            result.add(
-                "INDICATE"
-            )
-        }
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_SIGNED_WRITE != 0
-        ) {
-            result.add(
-                "SIGNED_WRITE"
-            )
-        }
-
-        if (
-            properties and
-            BluetoothGattCharacteristic.PROPERTY_EXTENDED_PROPS != 0
-        ) {
-            result.add(
-                "EXTENDED_PROPS"
-            )
-        }
-
-        return if (
-            result.isEmpty()
-        ) {
-
-            "NONE"
-
-        } else {
-
-            result.joinToString(
-                separator = " | "
-            )
         }
     }
 }
