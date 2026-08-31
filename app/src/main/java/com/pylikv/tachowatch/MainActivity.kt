@@ -3,179 +3,963 @@ package com.pylikv.tachowatch
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
+import android.os.Bundle
+import android.view.Gravity
+import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.concurrent.CopyOnWriteArrayList
 
-/**
- * TachoWatch
- *
- * DTCO Bluetooth diagnostic
- *
- * Версия: BLE-CONNECT-ONLY-1
- *
- * Цель теста:
- *
- * 1. Использовать BLE GATT — как в предыдущих тестах,
- *    где DTCO запрашивал подтверждение подключения.
- *
- * 2. Проверить ТОЛЬКО установление BLE-соединения.
- *
- * 3. НЕ запускать discoverServices().
- *
- * 4. НЕ читать характеристики.
- *
- * 5. НЕ писать никаких данных в тахограф.
- *
- * 6. После CONNECTED удерживать соединение
- *    и каждые несколько секунд фиксировать,
- *    остаётся ли оно активным.
- */
-class DtcoBluetoothDiagnostic(
-    private val context: Context,
-    private val listener: Listener? = null
-) {
-
-    interface Listener {
-
-        fun onLogChanged(
-            fullLog: String
-        )
-
-        fun onConnectionStateChanged(
-            connected: Boolean,
-            deviceName: String?
-        )
-    }
+class MainActivity :
+    AppCompatActivity(),
+    DtcoBluetoothDiagnostic.Listener {
 
     companion object {
 
-        private const val VERSION =
-            "BLE-CONNECT-ONLY-1"
+        private const val COLOR_BG =
+            0xFF0B1118.toInt()
 
-        private const val UI_REFRESH_MS =
-            400L
+        private const val COLOR_CARD =
+            0xFF141D27.toInt()
 
-        private const val HEARTBEAT_MS =
-            3000L
+        private const val COLOR_CARD_ALT =
+            0xFF101821.toInt()
 
-        private const val MAX_LOG_LINES =
-            1200
+        private const val COLOR_TEXT =
+            0xFFF3F7FA.toInt()
+
+        private const val COLOR_MUTED =
+            0xFF9BAAB8.toInt()
+
+        private const val COLOR_BLUE =
+            0xFF2196F3.toInt()
+
+        private const val COLOR_CYAN =
+            0xFF29B6C8.toInt()
+
+        private const val COLOR_GREEN =
+            0xFF42C77A.toInt()
+
+        private const val COLOR_ORANGE =
+            0xFFFFB547.toInt()
+
+        private const val COLOR_RED =
+            0xFFE85D5D.toInt()
+
+        private const val COLOR_BORDER =
+            0xFF263545.toInt()
     }
 
-    private val mainHandler =
-        Handler(
-            Looper.getMainLooper()
-        )
+    private val bluetoothManager by lazy {
 
-    private val logLines =
-        CopyOnWriteArrayList<String>()
+        getSystemService(
+            Context.BLUETOOTH_SERVICE
+        ) as BluetoothManager
+    }
 
-    @Volatile
-    private var currentGatt:
-        BluetoothGatt? = null
+    private val bluetoothAdapter by lazy {
 
-    @Volatile
-    private var currentDevice:
+        bluetoothManager.adapter
+    }
+
+    private lateinit var diagnostic:
+        DtcoBluetoothDiagnostic
+
+    private lateinit var statusDot:
+        View
+
+    private lateinit var statusText:
+        TextView
+
+    private lateinit var deviceText:
+        TextView
+
+    private lateinit var devicesContainer:
+        LinearLayout
+
+    private lateinit var logText:
+        TextView
+
+    private lateinit var connectButton:
+        Button
+
+    private lateinit var disconnectButton:
+        Button
+
+    private lateinit var refreshButton:
+        Button
+
+    private lateinit var clearButton:
+        Button
+
+    private var selectedDevice:
         BluetoothDevice? = null
 
-    @Volatile
-    private var connected =
-        false
+    private val permissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts
+                .RequestMultiplePermissions()
+        ) { result ->
 
-    @Volatile
-    private var stopped =
-        true
-
-    private var connectionStartedAt =
-        0L
-
-    private val uiLoop =
-        object : Runnable {
-
-            override fun run() {
-
-                try {
-
-                    listener?.onLogChanged(
-                        getLog()
-                    )
-
-                } catch (
-                    _: Throwable
-                ) {
+            val granted =
+                result.values.all {
+                    it
                 }
 
-                mainHandler.postDelayed(
-                    this,
-                    UI_REFRESH_MS
+            if (granted) {
+
+                setStatus(
+                    "Bluetooth готов",
+                    COLOR_ORANGE
                 )
+
+                loadBondedDevices()
+
+            } else {
+
+                setStatus(
+                    "Нет разрешения Bluetooth",
+                    COLOR_RED
+                )
+
+                deviceText.text =
+                    "Разрешение Bluetooth не предоставлено"
             }
         }
 
-    private val heartbeatLoop =
-        object : Runnable {
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
 
-            override fun run() {
+        super.onCreate(
+            savedInstanceState
+        )
 
-                if (
-                    stopped
-                ) {
-                    return
-                }
+        window.statusBarColor =
+            COLOR_BG
 
-                if (
-                    connected
-                ) {
+        window.navigationBarColor =
+            COLOR_BG
 
-                    val elapsed =
-                        if (
-                            connectionStartedAt > 0L
-                        ) {
-                            (
-                                System.currentTimeMillis() -
-                                    connectionStartedAt
-                                ) / 1000L
-                        } else {
-                            0L
-                        }
+        diagnostic =
+            DtcoBluetoothDiagnostic(
+                applicationContext,
+                this
+            )
 
-                    appendLog(
-                        "HEARTBEAT: BLE соединение активно, ${elapsed} сек."
-                    )
+        createInterface()
 
-                } else {
+        requestBluetoothPermission()
+    }
 
-                    appendLog(
-                        "HEARTBEAT: BLE пока не CONNECTED"
-                    )
-                }
+    override fun onDestroy() {
 
-                mainHandler.postDelayed(
-                    this,
-                    HEARTBEAT_MS
-                )
-            }
+        if (
+            ::diagnostic.isInitialized
+        ) {
+
+            diagnostic.disconnect()
         }
 
-    init {
+        super.onDestroy()
+    }
 
-        mainHandler.post(
-            uiLoop
+    private fun dp(
+        value: Int
+    ): Int {
+
+        return (
+            value *
+                resources.displayMetrics.density
+            ).toInt()
+    }
+
+    private fun createInterface() {
+
+        val root =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
+
+                setPadding(
+                    dp(16),
+                    dp(18),
+                    dp(16),
+                    dp(18)
+                )
+
+                setBackgroundColor(
+                    COLOR_BG
+                )
+            }
+
+        val title =
+            TextView(this).apply {
+
+                text =
+                    "TachoWatch"
+
+                textSize =
+                    27f
+
+                setTextColor(
+                    COLOR_TEXT
+                )
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+            }
+
+        root.addView(
+            title
+        )
+
+        val subtitle =
+            TextView(this).apply {
+
+                text =
+                    "DTCO Bluetooth diagnostics"
+
+                textSize =
+                    13f
+
+                setTextColor(
+                    COLOR_CYAN
+                )
+
+                setPadding(
+                    0,
+                    dp(2),
+                    0,
+                    0
+                )
+            }
+
+        root.addView(
+            subtitle
+        )
+
+        root.addView(
+            verticalSpace(
+                dp(14)
+            )
+        )
+
+        val statusCard =
+            createCard()
+
+        statusCard.addView(
+            labelText(
+                "СОСТОЯНИЕ СОЕДИНЕНИЯ"
+            )
+        )
+
+        val statusRow =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+
+                setPadding(
+                    0,
+                    dp(10),
+                    0,
+                    0
+                )
+            }
+
+        statusDot =
+            View(this).apply {
+
+                background =
+                    roundedBackground(
+                        COLOR_ORANGE,
+                        dp(20).toFloat()
+                    )
+            }
+
+        statusRow.addView(
+            statusDot,
+            LinearLayout.LayoutParams(
+                dp(10),
+                dp(10)
+            )
+        )
+
+        statusText =
+            TextView(this).apply {
+
+                text =
+                    "Запуск..."
+
+                textSize =
+                    18f
+
+                setTextColor(
+                    COLOR_TEXT
+                )
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                setPadding(
+                    dp(10),
+                    0,
+                    0,
+                    0
+                )
+            }
+
+        statusRow.addView(
+            statusText
+        )
+
+        statusCard.addView(
+            statusRow
+        )
+
+        deviceText =
+            TextView(this).apply {
+
+                text =
+                    "DTCO пока не выбран"
+
+                textSize =
+                    14f
+
+                setTextColor(
+                    COLOR_MUTED
+                )
+
+                setPadding(
+                    0,
+                    dp(8),
+                    0,
+                    0
+                )
+            }
+
+        statusCard.addView(
+            deviceText
+        )
+
+        root.addView(
+            statusCard
+        )
+
+        root.addView(
+            verticalSpace(
+                dp(12)
+            )
+        )
+
+        val deviceCard =
+            createCard()
+
+        deviceCard.addView(
+            labelText(
+                "СОПРЯЖЁННЫЕ BLUETOOTH-УСТРОЙСТВА"
+            )
+        )
+
+        val hint =
+            TextView(this).apply {
+
+                text =
+                    "Выбери DTCO из списка сопряжённых устройств."
+
+                textSize =
+                    13f
+
+                setTextColor(
+                    COLOR_MUTED
+                )
+
+                setPadding(
+                    0,
+                    dp(7),
+                    0,
+                    dp(10)
+                )
+            }
+
+        deviceCard.addView(
+            hint
+        )
+
+        devicesContainer =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+
+        deviceCard.addView(
+            devicesContainer
+        )
+
+        refreshButton =
+            createButton(
+                "Обновить список",
+                COLOR_CARD_ALT
+            )
+
+        refreshButton.setOnClickListener {
+
+            loadBondedDevices()
+        }
+
+        deviceCard.addView(
+            verticalSpace(
+                dp(8)
+            )
+        )
+
+        deviceCard.addView(
+            refreshButton
+        )
+
+        root.addView(
+            deviceCard
+        )
+
+        root.addView(
+            verticalSpace(
+                dp(12)
+            )
+        )
+
+        val controlCard =
+            createCard()
+
+        controlCard.addView(
+            labelText(
+                "ДИАГНОСТИКА BLE"
+            )
+        )
+
+        connectButton =
+            createButton(
+                "Подключиться и начать диагностику",
+                COLOR_BLUE
+            )
+
+        connectButton.isEnabled =
+            false
+
+        connectButton.alpha =
+            0.55f
+
+        connectButton.setOnClickListener {
+
+            val device =
+                selectedDevice
+
+            if (
+                device == null
+            ) {
+
+                setStatus(
+                    "Сначала выбери DTCO",
+                    COLOR_ORANGE
+                )
+
+                return@setOnClickListener
+            }
+
+            setStatus(
+                "Подключение...",
+                COLOR_ORANGE
+            )
+
+            diagnostic.connect(
+                device
+            )
+        }
+
+        disconnectButton =
+            createButton(
+                "Отключиться",
+                COLOR_CARD_ALT
+            )
+
+        disconnectButton.setOnClickListener {
+
+            diagnostic.disconnect()
+
+            setStatus(
+                "Отключено",
+                COLOR_ORANGE
+            )
+        }
+
+        controlCard.addView(
+            verticalSpace(
+                dp(10)
+            )
+        )
+
+        controlCard.addView(
+            connectButton
+        )
+
+        controlCard.addView(
+            verticalSpace(
+                dp(8)
+            )
+        )
+
+        controlCard.addView(
+            disconnectButton
+        )
+
+        root.addView(
+            controlCard
+        )
+
+        root.addView(
+            verticalSpace(
+                dp(12)
+            )
+        )
+
+        val logCard =
+            createCard()
+
+        val logHeader =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        logHeader.addView(
+            labelText(
+                "ДИАГНОСТИЧЕСКИЙ ЖУРНАЛ"
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        clearButton =
+            createSmallButton(
+                "Очистить"
+            )
+
+        clearButton.setOnClickListener {
+
+            diagnostic.clearLog()
+        }
+
+        logHeader.addView(
+            clearButton
+        )
+
+        logCard.addView(
+            logHeader
+        )
+
+        val logScroll =
+            ScrollView(this).apply {
+
+                isFillViewport =
+                    false
+
+                setPadding(
+                    0,
+                    dp(10),
+                    0,
+                    0
+                )
+            }
+
+        logText =
+            TextView(this).apply {
+
+                text =
+                    "Ожидание запуска диагностики..."
+
+                textSize =
+                    12f
+
+                setTextColor(
+                    COLOR_TEXT
+                )
+
+                setTextIsSelectable(
+                    true
+                )
+
+                typeface =
+                    Typeface.MONOSPACE
+
+                setLineSpacing(
+                    0f,
+                    1.12f
+                )
+
+                setPadding(
+                    dp(12),
+                    dp(12),
+                    dp(12),
+                    dp(12)
+                )
+
+                background =
+                    roundedBackground(
+                        COLOR_CARD_ALT,
+                        dp(12).toFloat()
+                    )
+            }
+
+        logScroll.addView(
+            logText
+        )
+
+        logCard.addView(
+            logScroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(360)
+            )
+        )
+
+        root.addView(
+            logCard
+        )
+
+        val pageScroll =
+            ScrollView(this).apply {
+
+                isFillViewport =
+                    true
+
+                setBackgroundColor(
+                    COLOR_BG
+                )
+            }
+
+        pageScroll.addView(
+            root
+        )
+
+        setContentView(
+            pageScroll
         )
     }
 
-    fun hasConnectPermission():
+    private fun requestBluetoothPermission() {
+
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.S
+        ) {
+
+            val granted =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) ==
+                    PackageManager.PERMISSION_GRANTED
+
+            if (
+                !granted
+            ) {
+
+                permissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_CONNECT
+                    )
+                )
+
+                return
+            }
+        }
+
+        loadBondedDevices()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun loadBondedDevices() {
+
+        devicesContainer.removeAllViews()
+
+        if (
+            !hasBluetoothConnectPermission()
+        ) {
+
+            setStatus(
+                "Нет разрешения Bluetooth",
+                COLOR_RED
+            )
+
+            return
+        }
+
+        val adapter =
+            bluetoothAdapter
+
+        if (
+            adapter == null
+        ) {
+
+            setStatus(
+                "Bluetooth не поддерживается",
+                COLOR_RED
+            )
+
+            return
+        }
+
+        if (
+            !adapter.isEnabled
+        ) {
+
+            setStatus(
+                "Bluetooth выключен",
+                COLOR_RED
+            )
+
+            deviceText.text =
+                "Включи Bluetooth на телефоне"
+
+            return
+        }
+
+        val devices =
+            try {
+
+                adapter
+                    .bondedDevices
+                    .sortedBy {
+
+                        try {
+
+                            it.name ?: ""
+
+                        } catch (
+                            _: SecurityException
+                        ) {
+
+                            ""
+                        }
+                    }
+
+            } catch (
+                _: SecurityException
+            ) {
+
+                emptyList()
+            }
+
+        if (
+            devices.isEmpty()
+        ) {
+
+            setStatus(
+                "Нет сопряжённых устройств",
+                COLOR_ORANGE
+            )
+
+            deviceText.text =
+                "DTCO не найден среди сопряжённых устройств"
+
+            return
+        }
+
+        var dtcoFound =
+            false
+
+        devices.forEach {
+                device ->
+
+            val name =
+                safeDeviceName(
+                    device
+                )
+
+            val isDtco =
+                name.contains(
+                    "DTCO",
+                    ignoreCase = true
+                )
+
+            if (
+                isDtco
+            ) {
+
+                dtcoFound =
+                    true
+            }
+
+            val button =
+                createButton(
+                    if (
+                        isDtco
+                    ) {
+                        "DTCO: $name"
+                    } else {
+                        name
+                    },
+                    if (
+                        isDtco
+                    ) {
+                        COLOR_BLUE
+                    } else {
+                        COLOR_CARD_ALT
+                    }
+                )
+
+            button.setOnClickListener {
+
+                selectedDevice =
+                    device
+
+                deviceText.text =
+                    "Выбран: $name\n${safeDeviceAddress(device)}"
+
+                connectButton.isEnabled =
+                    true
+
+                connectButton.alpha =
+                    1f
+
+                setStatus(
+                    "DTCO выбран",
+                    COLOR_ORANGE
+                )
+            }
+
+            devicesContainer.addView(
+                button
+            )
+
+            devicesContainer.addView(
+                verticalSpace(
+                    dp(6)
+                )
+            )
+        }
+
+        if (
+            dtcoFound
+        ) {
+
+            setStatus(
+                "DTCO найден",
+                COLOR_ORANGE
+            )
+
+        } else {
+
+            setStatus(
+                "Сопряжённые устройства загружены",
+                COLOR_ORANGE
+            )
+        }
+    }
+
+    override fun onLogChanged(
+        fullLog: String
+    ) {
+
+        runOnUiThread {
+
+            if (
+                ::logText.isInitialized
+            ) {
+
+                logText.text =
+                    if (
+                        fullLog.isBlank()
+                    ) {
+                        "Журнал пуст."
+                    } else {
+                        fullLog
+                    }
+            }
+        }
+    }
+
+    override fun onConnectionStateChanged(
+        connected: Boolean,
+        deviceName: String?
+    ) {
+
+        runOnUiThread {
+
+            if (
+                connected
+            ) {
+
+                setStatus(
+                    "Подключено",
+                    COLOR_GREEN
+                )
+
+                deviceText.text =
+                    "Подключено к ${deviceName ?: "DTCO"}"
+
+            } else {
+
+                setStatus(
+                    "Отключено",
+                    COLOR_ORANGE
+                )
+            }
+        }
+    }
+
+    private fun setStatus(
+        text: String,
+        color: Int
+    ) {
+
+        if (
+            ::statusText.isInitialized
+        ) {
+
+            statusText.text =
+                text
+        }
+
+        if (
+            ::statusDot.isInitialized
+        ) {
+
+            statusDot.background =
+                roundedBackground(
+                    color,
+                    dp(20).toFloat()
+                )
+        }
+    }
+
+    private fun hasBluetoothConnectPermission():
         Boolean {
 
         return if (
@@ -184,7 +968,7 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             ContextCompat.checkSelfPermission(
-                context,
+                this,
                 Manifest.permission.BLUETOOTH_CONNECT
             ) ==
                 PackageManager.PERMISSION_GRANTED
@@ -192,639 +976,6 @@ class DtcoBluetoothDiagnostic(
         } else {
 
             true
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    fun connect(
-        device: BluetoothDevice
-    ) {
-
-        if (
-            !hasConnectPermission()
-        ) {
-
-            appendLog(
-                "ОШИБКА: нет разрешения BLUETOOTH_CONNECT"
-            )
-
-            notifyConnectionState(
-                false,
-                safeDeviceName(
-                    device
-                )
-            )
-
-            return
-        }
-
-        closeGatt()
-
-        logLines.clear()
-
-        stopped =
-            false
-
-        connected =
-            false
-
-        connectionStartedAt =
-            0L
-
-        currentDevice =
-            device
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "TachoWatch — диагностика DTCO"
-        )
-
-        appendLog(
-            "Версия: $VERSION"
-        )
-
-        appendLog(
-            "Режим: BLE GATT"
-        )
-
-        appendLog(
-            "discoverServices(): ОТКЛЮЧЕН"
-        )
-
-        appendLog(
-            "Чтение характеристик: ОТКЛЮЧЕНО"
-        )
-
-        appendLog(
-            "Запись в DTCO: ОТКЛЮЧЕНА"
-        )
-
-        appendLog(
-            "Команды DTCO: НЕ отправляются"
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        appendDeviceInfo(
-            device
-        )
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "STEP 1: создаём BLE GATT соединение"
-        )
-
-        appendLog(
-            "Ожидаем callback onConnectionStateChange()"
-        )
-
-        appendLog(
-            "Если DTCO покажет запрос подтверждения — подтвердить."
-        )
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        mainHandler.removeCallbacks(
-            heartbeatLoop
-        )
-
-        mainHandler.postDelayed(
-            heartbeatLoop,
-            HEARTBEAT_MS
-        )
-
-        try {
-
-            val gatt =
-
-                if (
-                    Build.VERSION.SDK_INT >=
-                    Build.VERSION_CODES.M
-                ) {
-
-                    appendLog(
-                        "connectGatt(autoConnect=false, TRANSPORT_LE)"
-                    )
-
-                    device.connectGatt(
-                        context,
-                        false,
-                        gattCallback,
-                        BluetoothDevice.TRANSPORT_LE
-                    )
-
-                } else {
-
-                    appendLog(
-                        "connectGatt(autoConnect=false)"
-                    )
-
-                    device.connectGatt(
-                        context,
-                        false,
-                        gattCallback
-                    )
-                }
-
-            currentGatt =
-                gatt
-
-            if (
-                gatt == null
-            ) {
-
-                appendLog(
-                    "ОШИБКА: connectGatt() вернул null"
-                )
-
-                notifyConnectionState(
-                    false,
-                    safeDeviceName(
-                        device
-                    )
-                )
-
-            } else {
-
-                appendLog(
-                    "BluetoothGatt создан."
-                )
-
-                appendLog(
-                    "Ждём фактического CONNECTED..."
-                )
-            }
-
-        } catch (
-            e: Throwable
-        ) {
-
-            appendThrowable(
-                "connectGatt",
-                e
-            )
-
-            connected =
-                false
-
-            notifyConnectionState(
-                false,
-                safeDeviceName(
-                    device
-                )
-            )
-        }
-    }
-
-    private val gattCallback =
-        object :
-            BluetoothGattCallback() {
-
-            @SuppressLint("MissingPermission")
-            override fun onConnectionStateChange(
-                gatt: BluetoothGatt,
-                status: Int,
-                newState: Int
-            ) {
-
-                appendLog(
-                    "----------------------------------------"
-                )
-
-                appendLog(
-                    "CALLBACK: onConnectionStateChange"
-                )
-
-                appendLog(
-                    "status = $status (${gattStatusToString(status)})"
-                )
-
-                appendLog(
-                    "newState = $newState (${profileStateToString(newState)})"
-                )
-
-                appendLog(
-                    "device = ${safeDeviceName(gatt.device)}"
-                )
-
-                when (
-                    newState
-                ) {
-
-                    BluetoothProfile.STATE_CONNECTED -> {
-
-                        connected =
-                            true
-
-                        connectionStartedAt =
-                            System.currentTimeMillis()
-
-                        appendLog(
-                            "========================================"
-                        )
-
-                        appendLog(
-                            "BLE GATT CONNECTED"
-                        )
-
-                        appendLog(
-                            "Соединение с DTCO установлено."
-                        )
-
-                        appendLog(
-                            "ВАЖНО: discoverServices() НЕ запускаем."
-                        )
-
-                        appendLog(
-                            "Никакие данные DTCO не читаем."
-                        )
-
-                        appendLog(
-                            "Никакие данные DTCO не отправляем."
-                        )
-
-                        appendLog(
-                            "Теперь просто удерживаем соединение."
-                        )
-
-                        appendLog(
-                            "========================================"
-                        )
-
-                        notifyConnectionState(
-                            true,
-                            safeDeviceName(
-                                gatt.device
-                            )
-                        )
-                    }
-
-                    BluetoothProfile.STATE_DISCONNECTED -> {
-
-                        val wasConnected =
-                            connected
-
-                        connected =
-                            false
-
-                        appendLog(
-                            "========================================"
-                        )
-
-                        appendLog(
-                            "BLE GATT DISCONNECTED"
-                        )
-
-                        if (
-                            wasConnected
-                        ) {
-
-                            val duration =
-                                if (
-                                    connectionStartedAt > 0L
-                                ) {
-                                    (
-                                        System.currentTimeMillis() -
-                                            connectionStartedAt
-                                        ) / 1000L
-                                } else {
-                                    0L
-                                }
-
-                            appendLog(
-                                "До отключения соединение держалось: ${duration} сек."
-                            )
-
-                        } else {
-
-                            appendLog(
-                                "CONNECTED до этого не был получен."
-                            )
-                        }
-
-                        appendLog(
-                            "Последний status = $status (${gattStatusToString(status)})"
-                        )
-
-                        appendLog(
-                            "========================================"
-                        )
-
-                        notifyConnectionState(
-                            false,
-                            safeDeviceName(
-                                gatt.device
-                            )
-                        )
-                    }
-
-                    BluetoothProfile.STATE_CONNECTING -> {
-
-                        appendLog(
-                            "BLE состояние: CONNECTING"
-                        )
-                    }
-
-                    BluetoothProfile.STATE_DISCONNECTING -> {
-
-                        appendLog(
-                            "BLE состояние: DISCONNECTING"
-                        )
-                    }
-
-                    else -> {
-
-                        appendLog(
-                            "Неизвестное состояние BLE: $newState"
-                        )
-                    }
-                }
-            }
-        }
-
-    @SuppressLint("MissingPermission")
-    private fun appendDeviceInfo(
-        device: BluetoothDevice
-    ) {
-
-        appendLog(
-            "Устройство: ${safeDeviceName(device)}"
-        )
-
-        appendLog(
-            "Адрес: ${safeDeviceAddress(device)}"
-        )
-
-        val bond =
-
-            try {
-
-                bondStateToString(
-                    device.bondState
-                )
-
-            } catch (
-                _: Throwable
-            ) {
-
-                "Недоступно"
-            }
-
-        appendLog(
-            "Bond state: $bond"
-        )
-
-        val type =
-
-            try {
-
-                deviceTypeToString(
-                    device.type
-                )
-
-            } catch (
-                _: Throwable
-            ) {
-
-                "Недоступно"
-            }
-
-        appendLog(
-            "Тип Bluetooth: $type"
-        )
-
-        appendLog(
-            "Android API: ${Build.VERSION.SDK_INT}"
-        )
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "Сохранённые UUID Android:"
-        )
-
-        try {
-
-            val uuids =
-                device.uuids
-
-            if (
-                uuids.isNullOrEmpty()
-            ) {
-
-                appendLog(
-                    "UUID: список пуст / null"
-                )
-
-            } else {
-
-                uuids.forEachIndexed {
-                        index,
-                        parcelUuid ->
-
-                    appendLog(
-                        "UUID[$index]: ${parcelUuid.uuid}"
-                    )
-                }
-            }
-
-        } catch (
-            e: Throwable
-        ) {
-
-            appendThrowable(
-                "Чтение UUID",
-                e
-            )
-        }
-    }
-
-    fun disconnect() {
-
-        stopped =
-            true
-
-        connected =
-            false
-
-        connectionStartedAt =
-            0L
-
-        mainHandler.removeCallbacks(
-            heartbeatLoop
-        )
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "Ручное отключение диагностики."
-        )
-
-        closeGatt()
-
-        notifyConnectionState(
-            false,
-            currentDevice?.let {
-                safeDeviceName(
-                    it
-                )
-            }
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun closeGatt() {
-
-        val gatt =
-            currentGatt
-
-        currentGatt =
-            null
-
-        if (
-            gatt != null
-        ) {
-
-            try {
-
-                gatt.disconnect()
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "gatt.disconnect",
-                    e
-                )
-            }
-
-            try {
-
-                gatt.close()
-
-            } catch (
-                e: Throwable
-            ) {
-
-                appendThrowable(
-                    "gatt.close",
-                    e
-                )
-            }
-        }
-    }
-
-    fun clearLog() {
-
-        logLines.clear()
-
-        appendLog(
-            "Журнал очищен."
-        )
-    }
-
-    fun getLog():
-        String {
-
-        return logLines.joinToString(
-            separator = "\n"
-        )
-    }
-
-    private fun notifyConnectionState(
-        isConnected: Boolean,
-        deviceName: String?
-    ) {
-
-        mainHandler.post {
-
-            try {
-
-                listener?.onConnectionStateChanged(
-                    isConnected,
-                    deviceName
-                )
-
-            } catch (
-                _: Throwable
-            ) {
-            }
-        }
-    }
-
-    private fun appendLog(
-        message: String
-    ) {
-
-        val timestamp =
-            SimpleDateFormat(
-                "HH:mm:ss.SSS",
-                Locale.getDefault()
-            ).format(
-                Date()
-            )
-
-        logLines.add(
-            "[$timestamp] $message"
-        )
-
-        while (
-            logLines.size >
-            MAX_LOG_LINES
-        ) {
-
-            try {
-
-                logLines.removeAt(
-                    0
-                )
-
-            } catch (
-                _: Throwable
-            ) {
-
-                break
-            }
-        }
-    }
-
-    private fun appendThrowable(
-        place: String,
-        throwable: Throwable
-    ) {
-
-        appendLog(
-            "ОШИБКА [$place]"
-        )
-
-        appendLog(
-            "Тип: ${throwable.javaClass.name}"
-        )
-
-        appendLog(
-            "Сообщение: ${throwable.message ?: "(без сообщения)"}"
-        )
-
-        throwable.cause?.let {
-
-            appendLog(
-                "Причина: ${it.javaClass.name}: ${it.message ?: "(без сообщения)"}"
-            )
         }
     }
 
@@ -839,7 +990,7 @@ class DtcoBluetoothDiagnostic(
                 ?: "Без имени"
 
         } catch (
-            _: Throwable
+            _: SecurityException
         ) {
 
             "Нет доступа"
@@ -856,116 +1007,205 @@ class DtcoBluetoothDiagnostic(
             device.address
 
         } catch (
-            _: Throwable
+            _: SecurityException
         ) {
 
             "Нет доступа"
         }
     }
 
-    private fun bondStateToString(
-        state: Int
-    ): String {
+    private fun createCard():
+        LinearLayout {
 
-        return when (
-            state
-        ) {
+        return LinearLayout(this).apply {
 
-            BluetoothDevice.BOND_NONE ->
-                "BOND_NONE"
+            orientation =
+                LinearLayout.VERTICAL
 
-            BluetoothDevice.BOND_BONDING ->
-                "BOND_BONDING"
+            setPadding(
+                dp(16),
+                dp(14),
+                dp(16),
+                dp(14)
+            )
 
-            BluetoothDevice.BOND_BONDED ->
-                "BOND_BONDED"
-
-            else ->
-                "UNKNOWN($state)"
+            background =
+                cardBackground(
+                    dp(18).toFloat()
+                )
         }
     }
 
-    private fun deviceTypeToString(
-        type: Int
-    ): String {
+    private fun labelText(
+        text: String
+    ): TextView {
 
-        return when (
-            type
-        ) {
+        return TextView(this).apply {
 
-            BluetoothDevice.DEVICE_TYPE_CLASSIC ->
-                "CLASSIC"
+            this.text =
+                text
 
-            BluetoothDevice.DEVICE_TYPE_LE ->
-                "LE"
+            textSize =
+                12f
 
-            BluetoothDevice.DEVICE_TYPE_DUAL ->
-                "DUAL"
+            setTextColor(
+                COLOR_MUTED
+            )
 
-            BluetoothDevice.DEVICE_TYPE_UNKNOWN ->
-                "UNKNOWN"
-
-            else ->
-                "UNKNOWN($type)"
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
         }
     }
 
-    private fun profileStateToString(
-        state: Int
-    ): String {
+    private fun createButton(
+        text: String,
+        backgroundColor: Int
+    ): Button {
 
-        return when (
-            state
-        ) {
+        return Button(this).apply {
 
-            BluetoothProfile.STATE_DISCONNECTED ->
-                "DISCONNECTED"
+            this.text =
+                text
 
-            BluetoothProfile.STATE_CONNECTING ->
-                "CONNECTING"
+            textSize =
+                14f
 
-            BluetoothProfile.STATE_CONNECTED ->
-                "CONNECTED"
+            setTextColor(
+                COLOR_TEXT
+            )
 
-            BluetoothProfile.STATE_DISCONNECTING ->
-                "DISCONNECTING"
+            isAllCaps =
+                false
 
-            else ->
-                "UNKNOWN"
+            background =
+                roundedBackground(
+                    backgroundColor,
+                    dp(12).toFloat(),
+                    COLOR_BORDER
+                )
+
+            setPadding(
+                dp(12),
+                dp(10),
+                dp(12),
+                dp(10)
+            )
         }
     }
 
-    private fun gattStatusToString(
-        status: Int
-    ): String {
+    private fun createSmallButton(
+        text: String
+    ): Button {
 
-        return when (
-            status
-        ) {
+        return Button(this).apply {
 
-            BluetoothGatt.GATT_SUCCESS ->
-                "GATT_SUCCESS"
+            this.text =
+                text
 
-            8 ->
-                "GATT_CONN_TIMEOUT / status 8"
+            textSize =
+                12f
 
-            19 ->
-                "GATT_CONN_TERMINATE_PEER_USER / status 19"
+            setTextColor(
+                COLOR_TEXT
+            )
 
-            22 ->
-                "GATT_CONN_TERMINATE_LOCAL_HOST / status 22"
+            isAllCaps =
+                false
 
-            62 ->
-                "GATT_CONN_FAIL_ESTABLISH / status 62"
+            minHeight =
+                0
 
-            133 ->
-                "GATT_ERROR / status 133"
+            minimumHeight =
+                0
 
-            257 ->
-                "GATT_FAILURE / status 257"
+            minWidth =
+                0
 
-            else ->
-                "status $status"
+            minimumWidth =
+                0
+
+            setPadding(
+                dp(10),
+                dp(5),
+                dp(10),
+                dp(5)
+            )
+
+            background =
+                roundedBackground(
+                    COLOR_CARD_ALT,
+                    dp(10).toFloat(),
+                    COLOR_BORDER
+                )
+        }
+    }
+
+    private fun verticalSpace(
+        height: Int
+    ): View {
+
+        return View(this).apply {
+
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    1,
+                    height
+                )
+        }
+    }
+
+    private fun cardBackground(
+        radius: Float
+    ): GradientDrawable {
+
+        return GradientDrawable().apply {
+
+            shape =
+                GradientDrawable.RECTANGLE
+
+            cornerRadius =
+                radius
+
+            setColor(
+                COLOR_CARD
+            )
+
+            setStroke(
+                dp(1),
+                COLOR_BORDER
+            )
+        }
+    }
+
+    private fun roundedBackground(
+        color: Int,
+        radius: Float,
+        strokeColor: Int? = null
+    ): GradientDrawable {
+
+        return GradientDrawable().apply {
+
+            shape =
+                GradientDrawable.RECTANGLE
+
+            cornerRadius =
+                radius
+
+            setColor(
+                color
+            )
+
+            if (
+                strokeColor != null
+            ) {
+
+                setStroke(
+                    dp(1),
+                    strokeColor
+                )
+            }
         }
     }
 }
