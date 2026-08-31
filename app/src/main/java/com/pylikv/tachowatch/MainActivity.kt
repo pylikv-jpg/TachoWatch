@@ -68,6 +68,7 @@ class MainActivity :
     }
 
     private val bluetoothAdapter by lazy {
+
         bluetoothManager.adapter
     }
 
@@ -88,9 +89,6 @@ class MainActivity :
 
     private lateinit var logText:
         TextView
-
-    private lateinit var logScroll:
-        ScrollView
 
     private lateinit var connectButton:
         Button
@@ -645,7 +643,7 @@ class MainActivity :
             logHeader
         )
 
-        logScroll =
+        val logScroll =
             ScrollView(this).apply {
 
                 isFillViewport =
@@ -969,25 +967,6 @@ class MainActivity :
                     } else {
                         fullLog
                     }
-
-                if (
-                    ::logScroll.isInitialized
-                ) {
-
-                    logScroll.post {
-
-                        try {
-
-                            logScroll.fullScroll(
-                                View.FOCUS_DOWN
-                            )
-
-                        } catch (
-                            _: Throwable
-                        ) {
-                        }
-                    }
-                }
             }
         }
     }
