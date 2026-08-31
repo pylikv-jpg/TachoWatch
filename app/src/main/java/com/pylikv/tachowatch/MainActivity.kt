@@ -10,8 +10,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -60,23 +58,15 @@ class MainActivity :
 
         private const val COLOR_BORDER =
             0xFF263545.toInt()
-
-        private const val AUTO_GATT_DELAY_MS =
-            2500L
     }
 
-    private val mainHandler =
-        Handler(Looper.getMainLooper())
-
     private val bluetoothManager by lazy {
-
         getSystemService(
             Context.BLUETOOTH_SERVICE
         ) as BluetoothManager
     }
 
     private val bluetoothAdapter by lazy {
-
         bluetoothManager.adapter
     }
 
@@ -97,6 +87,9 @@ class MainActivity :
 
     private lateinit var logText:
         TextView
+
+    private lateinit var logScroll:
+        ScrollView
 
     private lateinit var connectButton:
         Button
@@ -175,10 +168,6 @@ class MainActivity :
 
     override fun onDestroy() {
 
-        mainHandler.removeCallbacksAndMessages(
-            null
-        )
-
         if (
             ::diagnostic.isInitialized
         ) {
@@ -208,15 +197,36 @@ class MainActivity :
                     LinearLayout.VERTICAL
 
                 setPadding(
-                    dp(16),
-                    dp(18),
-                    dp(16),
-                    dp(18)
+                    dp(12),
+                    dp(10),
+                    dp(12),
+                    dp(10)
                 )
 
                 setBackgroundColor(
                     COLOR_BG
                 )
+            }
+
+        /*
+         * ЗАГОЛОВОК
+         */
+
+        val titleRow =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        val titleBlock =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
             }
 
         val title =
@@ -226,7 +236,7 @@ class MainActivity :
                     "TachoWatch"
 
                 textSize =
-                    27f
+                    24f
 
                 setTextColor(
                     COLOR_TEXT
@@ -238,7 +248,7 @@ class MainActivity :
                 )
             }
 
-        root.addView(
+        titleBlock.addView(
             title
         )
 
@@ -249,40 +259,46 @@ class MainActivity :
                     "DTCO Bluetooth diagnostics — AUTO GATT"
 
                 textSize =
-                    13f
+                    12f
 
                 setTextColor(
                     COLOR_CYAN
                 )
-
-                setPadding(
-                    0,
-                    dp(2),
-                    0,
-                    0
-                )
             }
 
-        root.addView(
+        titleBlock.addView(
             subtitle
+        )
+
+        titleRow.addView(
+            titleBlock,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        root.addView(
+            titleRow
         )
 
         root.addView(
             verticalSpace(
-                dp(14)
+                dp(8)
             )
         )
+
+        /*
+         * СТАТУС
+         */
 
         val statusCard =
-            createCard()
-
-        statusCard.addView(
-            labelText(
-                "СОСТОЯНИЕ СОЕДИНЕНИЯ"
+            createCard(
+                dp(12)
             )
-        )
 
-        val statusRow =
+        val statusTopRow =
             LinearLayout(this).apply {
 
                 orientation =
@@ -290,14 +306,18 @@ class MainActivity :
 
                 gravity =
                     Gravity.CENTER_VERTICAL
-
-                setPadding(
-                    0,
-                    dp(10),
-                    0,
-                    0
-                )
             }
+
+        statusTopRow.addView(
+            labelText(
+                "СОЕДИНЕНИЕ"
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
 
         statusDot =
             View(this).apply {
@@ -309,7 +329,7 @@ class MainActivity :
                     )
             }
 
-        statusRow.addView(
+        statusTopRow.addView(
             statusDot,
             LinearLayout.LayoutParams(
                 dp(10),
@@ -324,7 +344,7 @@ class MainActivity :
                     "Запуск..."
 
                 textSize =
-                    18f
+                    15f
 
                 setTextColor(
                     COLOR_TEXT
@@ -336,19 +356,19 @@ class MainActivity :
                 )
 
                 setPadding(
-                    dp(10),
+                    dp(8),
                     0,
                     0,
                     0
                 )
             }
 
-        statusRow.addView(
+        statusTopRow.addView(
             statusText
         )
 
         statusCard.addView(
-            statusRow
+            statusTopRow
         )
 
         deviceText =
@@ -358,7 +378,7 @@ class MainActivity :
                     "DTCO пока не выбран"
 
                 textSize =
-                    14f
+                    12f
 
                 setTextColor(
                     COLOR_MUTED
@@ -366,10 +386,13 @@ class MainActivity :
 
                 setPadding(
                     0,
-                    dp(8),
+                    dp(5),
                     0,
                     0
                 )
+
+                maxLines =
+                    2
             }
 
         statusCard.addView(
@@ -382,43 +405,79 @@ class MainActivity :
 
         root.addView(
             verticalSpace(
-                dp(12)
+                dp(7)
             )
         )
+
+        /*
+         * СОПРЯЖЁННЫЕ УСТРОЙСТВА
+         *
+         * Теперь блок ограничен по высоте.
+         * Видно примерно 3 устройства.
+         * Если устройств больше —
+         * прокручивается только этот блок.
+         */
 
         val deviceCard =
-            createCard()
+            createCard(
+                dp(10)
+            )
 
-        deviceCard.addView(
+        val deviceHeader =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        deviceHeader.addView(
             labelText(
-                "СОПРЯЖЁННЫЕ BLUETOOTH-УСТРОЙСТВА"
+                "СОПРЯЖЁННЫЕ УСТРОЙСТВА"
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
             )
         )
 
-        val hint =
-            TextView(this).apply {
+        refreshButton =
+            createSmallButton(
+                "Обновить"
+            )
 
-                text =
-                    "Выбери DTCO из списка сопряжённых устройств."
+        refreshButton.setOnClickListener {
 
-                textSize =
-                    13f
+            loadBondedDevices()
+        }
 
-                setTextColor(
-                    COLOR_MUTED
-                )
+        deviceHeader.addView(
+            refreshButton
+        )
+
+        deviceCard.addView(
+            deviceHeader
+        )
+
+        val devicesScroll =
+            ScrollView(this).apply {
+
+                isFillViewport =
+                    false
+
+                isNestedScrollingEnabled =
+                    true
 
                 setPadding(
                     0,
-                    dp(7),
+                    dp(5),
                     0,
-                    dp(10)
+                    0
                 )
             }
-
-        deviceCard.addView(
-            hint
-        )
 
         devicesContainer =
             LinearLayout(this).apply {
@@ -427,29 +486,16 @@ class MainActivity :
                     LinearLayout.VERTICAL
             }
 
-        deviceCard.addView(
+        devicesScroll.addView(
             devicesContainer
         )
 
-        refreshButton =
-            createButton(
-                "Обновить список",
-                COLOR_CARD_ALT
-            )
-
-        refreshButton.setOnClickListener {
-
-            loadBondedDevices()
-        }
-
         deviceCard.addView(
-            verticalSpace(
-                dp(8)
+            devicesScroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(145)
             )
-        )
-
-        deviceCard.addView(
-            refreshButton
         )
 
         root.addView(
@@ -458,67 +504,65 @@ class MainActivity :
 
         root.addView(
             verticalSpace(
-                dp(12)
+                dp(7)
             )
         )
+
+        /*
+         * УПРАВЛЕНИЕ
+         */
 
         val controlCard =
-            createCard()
+            createCard(
+                dp(10)
+            )
 
-        controlCard.addView(
+        val controlHeader =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        controlHeader.addView(
             labelText(
                 "ДИАГНОСТИКА BLE / GATT"
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
             )
         )
 
-        val safeHint =
+        val safeText =
             TextView(this).apply {
 
                 text =
-                    "Без записи в карту водителя и без записи в DTCO."
+                    "БЕЗ ЗАПИСИ"
 
                 textSize =
-                    13f
+                    11f
 
                 setTextColor(
                     COLOR_GREEN
                 )
 
-                setPadding(
-                    0,
-                    dp(7),
-                    0,
-                    dp(4)
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
                 )
             }
 
-        controlCard.addView(
-            safeHint
+        controlHeader.addView(
+            safeText
         )
 
-        val autoHint =
-            TextView(this).apply {
-
-                text =
-                    "GATT-проверка запускается автоматически через 2,5 секунды после подключения."
-
-                textSize =
-                    12f
-
-                setTextColor(
-                    COLOR_MUTED
-                )
-
-                setPadding(
-                    0,
-                    dp(3),
-                    0,
-                    dp(5)
-                )
-            }
-
         controlCard.addView(
-            autoHint
+            controlHeader
         )
 
         connectButton =
@@ -550,31 +594,18 @@ class MainActivity :
                 return@setOnClickListener
             }
 
-            mainHandler.removeCallbacksAndMessages(
-                null
-            )
-
             setStatus(
                 "Подключение...",
                 COLOR_ORANGE
             )
 
+            /*
+             * В BLE-GATT-AUTO-2
+             * автоматические проверки запускаются
+             * внутри DtcoBluetoothDiagnostic.
+             */
             diagnostic.connect(
                 device
-            )
-
-            mainHandler.postDelayed(
-                {
-
-                    setStatus(
-                        "Автоматическая проверка GATT...",
-                        COLOR_ORANGE
-                    )
-
-                    diagnostic.manualGattCheck()
-
-                },
-                AUTO_GATT_DELAY_MS
             )
         }
 
@@ -608,10 +639,6 @@ class MainActivity :
 
         disconnectButton.setOnClickListener {
 
-            mainHandler.removeCallbacksAndMessages(
-                null
-            )
-
             diagnostic.disconnect()
 
             setStatus(
@@ -622,7 +649,7 @@ class MainActivity :
 
         controlCard.addView(
             verticalSpace(
-                dp(10)
+                dp(6)
             )
         )
 
@@ -632,22 +659,43 @@ class MainActivity :
 
         controlCard.addView(
             verticalSpace(
-                dp(8)
+                dp(5)
+            )
+        )
+
+        val secondButtonRow =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+            }
+
+        secondButtonRow.addView(
+            manualGattButton,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        secondButtonRow.addView(
+            horizontalSpace(
+                dp(6)
+            )
+        )
+
+        secondButtonRow.addView(
+            disconnectButton,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
             )
         )
 
         controlCard.addView(
-            manualGattButton
-        )
-
-        controlCard.addView(
-            verticalSpace(
-                dp(8)
-            )
-        )
-
-        controlCard.addView(
-            disconnectButton
+            secondButtonRow
         )
 
         root.addView(
@@ -656,12 +704,24 @@ class MainActivity :
 
         root.addView(
             verticalSpace(
-                dp(12)
+                dp(7)
             )
         )
 
+        /*
+         * ДИАГНОСТИЧЕСКИЙ ЖУРНАЛ
+         *
+         * Ключевое изменение:
+         * журнал получает ВСЁ оставшееся
+         * пространство экрана.
+         *
+         * Внешнего ScrollView страницы больше нет.
+         */
+
         val logCard =
-            createCard()
+            createCard(
+                dp(10)
+            )
 
         val logHeader =
             LinearLayout(this).apply {
@@ -702,15 +762,24 @@ class MainActivity :
             logHeader
         )
 
-        val logScroll =
+        logScroll =
             ScrollView(this).apply {
 
                 isFillViewport =
                     false
 
+                isNestedScrollingEnabled =
+                    true
+
+                isVerticalScrollBarEnabled =
+                    true
+
+                isScrollbarFadingEnabled =
+                    false
+
                 setPadding(
                     0,
-                    dp(10),
+                    dp(5),
                     0,
                     0
                 )
@@ -723,7 +792,7 @@ class MainActivity :
                     "Ожидание запуска диагностики..."
 
                 textSize =
-                    12f
+                    11.5f
 
                 setTextColor(
                     COLOR_TEXT
@@ -738,20 +807,20 @@ class MainActivity :
 
                 setLineSpacing(
                     0f,
-                    1.12f
+                    1.08f
                 )
 
                 setPadding(
-                    dp(12),
-                    dp(12),
-                    dp(12),
-                    dp(12)
+                    dp(10),
+                    dp(10),
+                    dp(10),
+                    dp(10)
                 )
 
                 background =
                     roundedBackground(
                         COLOR_CARD_ALT,
-                        dp(12).toFloat()
+                        dp(10).toFloat()
                     )
             }
 
@@ -763,31 +832,33 @@ class MainActivity :
             logScroll,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(420)
+                0,
+                1f
             )
         )
 
+        /*
+         * Журнал растягивается
+         * на всё свободное пространство.
+         */
+
         root.addView(
-            logCard
+            logCard,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
         )
 
-        val pageScroll =
-            ScrollView(this).apply {
-
-                isFillViewport =
-                    true
-
-                setBackgroundColor(
-                    COLOR_BG
-                )
-            }
-
-        pageScroll.addView(
-            root
-        )
+        /*
+         * ВАЖНО:
+         * root ставим прямо на экран.
+         * Никакого внешнего ScrollView.
+         */
 
         setContentView(
-            pageScroll
+            root
         )
     }
 
@@ -864,7 +935,7 @@ class MainActivity :
             )
 
             deviceText.text =
-                "Включи Bluetooth на телефоне"
+                "Включи Bluetooth"
 
             return
         }
@@ -874,19 +945,33 @@ class MainActivity :
 
                 adapter
                     .bondedDevices
-                    .sortedBy {
+                    .sortedWith(
+                        compareByDescending<BluetoothDevice> {
 
-                        try {
+                            val name =
+                                try {
+                                    it.name ?: ""
+                                } catch (
+                                    _: SecurityException
+                                ) {
+                                    ""
+                                }
 
-                            it.name ?: ""
+                            name.contains(
+                                "DTCO",
+                                ignoreCase = true
+                            )
+                        }.thenBy {
 
-                        } catch (
-                            _: SecurityException
-                        ) {
-
-                            ""
+                            try {
+                                it.name ?: ""
+                            } catch (
+                                _: SecurityException
+                            ) {
+                                ""
+                            }
                         }
-                    }
+                    )
 
             } catch (
                 _: SecurityException
@@ -905,7 +990,7 @@ class MainActivity :
             )
 
             deviceText.text =
-                "DTCO не найден среди сопряжённых устройств"
+                "DTCO не найден"
 
             return
         }
@@ -936,7 +1021,7 @@ class MainActivity :
             }
 
             val button =
-                createButton(
+                createDeviceButton(
                     if (
                         isDtco
                     ) {
@@ -959,7 +1044,7 @@ class MainActivity :
                     device
 
                 deviceText.text =
-                    "Выбран: $name\n${safeDeviceAddress(device)}"
+                    "Выбран: $name   ${safeDeviceAddress(device)}"
 
                 connectButton.isEnabled =
                     true
@@ -985,7 +1070,7 @@ class MainActivity :
 
             devicesContainer.addView(
                 verticalSpace(
-                    dp(6)
+                    dp(4)
                 )
             )
         }
@@ -1002,7 +1087,7 @@ class MainActivity :
         } else {
 
             setStatus(
-                "Сопряжённые устройства загружены",
+                "Устройства загружены",
                 COLOR_ORANGE
             )
         }
@@ -1017,6 +1102,14 @@ class MainActivity :
             if (
                 ::logText.isInitialized
             ) {
+
+                /*
+                 * Только меняем текст.
+                 *
+                 * Автоматической прокрутки НЕТ.
+                 * Положение журнала пользователь
+                 * выбирает сам.
+                 */
 
                 logText.text =
                     if (
@@ -1139,8 +1232,9 @@ class MainActivity :
         }
     }
 
-    private fun createCard():
-        LinearLayout {
+    private fun createCard(
+        padding: Int
+    ): LinearLayout {
 
         return LinearLayout(this).apply {
 
@@ -1148,15 +1242,15 @@ class MainActivity :
                 LinearLayout.VERTICAL
 
             setPadding(
-                dp(16),
-                dp(14),
-                dp(16),
-                dp(14)
+                padding,
+                padding,
+                padding,
+                padding
             )
 
             background =
                 cardBackground(
-                    dp(18).toFloat()
+                    dp(16).toFloat()
                 )
         }
     }
@@ -1171,7 +1265,7 @@ class MainActivity :
                 text
 
             textSize =
-                12f
+                11.5f
 
             setTextColor(
                 COLOR_MUTED
@@ -1195,7 +1289,7 @@ class MainActivity :
                 text
 
             textSize =
-                14f
+                13f
 
             setTextColor(
                 COLOR_TEXT
@@ -1204,24 +1298,31 @@ class MainActivity :
             isAllCaps =
                 false
 
+            minHeight =
+                0
+
+            minimumHeight =
+                0
+
             background =
                 roundedBackground(
                     backgroundColor,
-                    dp(12).toFloat(),
+                    dp(10).toFloat(),
                     COLOR_BORDER
                 )
 
             setPadding(
-                dp(12),
                 dp(10),
-                dp(12),
-                dp(10)
+                dp(7),
+                dp(10),
+                dp(7)
             )
         }
     }
 
-    private fun createSmallButton(
-        text: String
+    private fun createDeviceButton(
+        text: String,
+        backgroundColor: Int
     ): Button {
 
         return Button(this).apply {
@@ -1245,6 +1346,47 @@ class MainActivity :
             minimumHeight =
                 0
 
+            background =
+                roundedBackground(
+                    backgroundColor,
+                    dp(9).toFloat(),
+                    COLOR_BORDER
+                )
+
+            setPadding(
+                dp(8),
+                dp(4),
+                dp(8),
+                dp(4)
+            )
+        }
+    }
+
+    private fun createSmallButton(
+        text: String
+    ): Button {
+
+        return Button(this).apply {
+
+            this.text =
+                text
+
+            textSize =
+                11f
+
+            setTextColor(
+                COLOR_TEXT
+            )
+
+            isAllCaps =
+                false
+
+            minHeight =
+                0
+
+            minimumHeight =
+                0
+
             minWidth =
                 0
 
@@ -1252,16 +1394,16 @@ class MainActivity :
                 0
 
             setPadding(
-                dp(10),
-                dp(5),
-                dp(10),
-                dp(5)
+                dp(9),
+                dp(4),
+                dp(9),
+                dp(4)
             )
 
             background =
                 roundedBackground(
                     COLOR_CARD_ALT,
-                    dp(10).toFloat(),
+                    dp(9).toFloat(),
                     COLOR_BORDER
                 )
         }
@@ -1277,6 +1419,20 @@ class MainActivity :
                 LinearLayout.LayoutParams(
                     1,
                     height
+                )
+        }
+    }
+
+    private fun horizontalSpace(
+        width: Int
+    ): View {
+
+        return View(this).apply {
+
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    width,
+                    1
                 )
         }
     }
