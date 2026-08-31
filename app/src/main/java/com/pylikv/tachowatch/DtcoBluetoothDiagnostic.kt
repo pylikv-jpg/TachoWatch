@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
@@ -18,10 +19,8 @@ import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 
 class DtcoBluetoothDiagnostic(
     private val context: Context,
@@ -43,10 +42,78 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "BLE-GATT-AUTO-2"
+            "BLE-GATT-SUBSCRIBE-1"
 
         private const val MAX_LOG_LINES =
-            2500
+            3000
+
+        private val UUID_CCCD =
+            UUID.fromString(
+                "00002902-0000-1000-8000-00805f9b34fb"
+            )
+
+        /*
+         * OFFICIAL SMART TACHOGRAPH V2
+         * DIAGNOSTICS SERVICE
+         */
+        private val UUID_DIAGNOSTICS_SERVICE =
+            UUID.fromString(
+                "fa213def-aef4-475c-bcea-0a8d69073efc"
+            )
+
+        private val UUID_DIAGNOSTICS_FIFO =
+            UUID.fromString(
+                "e413960c-75ba-4ca9-8a67-99bc052a1b13"
+            )
+
+        private val UUID_DIAGNOSTICS_CREDITS =
+            UUID.fromString(
+                "e168d1a6-304f-42b4-ab96-4cd1d4efebd9"
+            )
+
+        /*
+         * OFFICIAL SMART TACHOGRAPH V2
+         * DOWNLOAD SERVICE
+         */
+        private val UUID_DOWNLOAD_SERVICE =
+            UUID.fromString(
+                "eef90782-55dd-4388-b80b-695aba7a69b5"
+            )
+
+        private val UUID_DOWNLOAD_FIFO =
+            UUID.fromString(
+                "29d3a479-1592-47df-80a4-afa742d369bb"
+            )
+
+        private val UUID_DOWNLOAD_CREDITS =
+            UUID.fromString(
+                "db9c4128-bff3-41fe-a306-fb6f9a8aeb2d"
+            )
+
+        /*
+         * ТРЕТИЙ СЕРВИС, ОБНАРУЖЕННЫЙ НА DTCO.
+         * Назначение пока не утверждаем.
+         */
+        private val UUID_EXTRA_SERVICE =
+            UUID.fromString(
+                "36ab9731-5701-489a-943a-5e16a9dd3183"
+            )
+
+        private val UUID_EXTRA_NOTIFY =
+            UUID.fromString(
+                "c9446e2e-527f-48eb-bbd4-f3c5e79ee716"
+            )
+    }
+
+    private data class SubscriptionItem(
+        val label: String,
+        val characteristic: BluetoothGattCharacteristic,
+        val mode: SubscriptionMode
+    )
+
+    private enum class SubscriptionMode {
+        INDICATE,
+        NOTIFY
     }
 
     private val mainHandler =
@@ -62,8 +129,8 @@ class DtcoBluetoothDiagnostic(
     private val logLines =
         CopyOnWriteArrayList<String>()
 
-    private var scheduler:
-        ScheduledExecutorService? = null
+    private val subscriptionQueue =
+        ArrayDeque<SubscriptionItem>()
 
     @Volatile
     private var currentGatt:
@@ -79,6 +146,10 @@ class DtcoBluetoothDiagnostic(
 
     @Volatile
     private var servicesDiscovered =
+        false
+
+    @Volatile
+    private var subscriptionInProgress =
         false
 
     fun hasConnectPermission():
@@ -117,11 +188,10 @@ class DtcoBluetoothDiagnostic(
             return
         }
 
-        stopScheduler()
-
         closeGatt()
 
         logLines.clear()
+        subscriptionQueue.clear()
 
         currentDevice =
             device
@@ -130,6 +200,9 @@ class DtcoBluetoothDiagnostic(
             false
 
         servicesDiscovered =
+            false
+
+        subscriptionInProgress =
             false
 
         appendLog(
@@ -153,11 +226,23 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Запись в карту водителя: ЗАПРЕЩЕНА"
+            "Запись в карту водителя: НЕТ"
         )
 
         appendLog(
-            "Запись в DTCO: ЗАПРЕЩЕНА"
+            "Изменение данных DTCO: НЕТ"
+        )
+
+        appendLog(
+            "Чтение содержимого карты: НЕТ"
+        )
+
+        appendLog(
+            "FIFO-команды: НЕ отправляются"
+        )
+
+        appendLog(
+            "Credits: НЕ отправляются"
         )
 
         appendLog(
@@ -165,23 +250,11 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "writeDescriptor(): НЕ используется"
+            "Разрешена только настройка BLE CCCD"
         )
 
         appendLog(
-            "Чтение содержимого карты: НЕ выполняется"
-        )
-
-        appendLog(
-            "Команды карте водителя: НЕ отправляются"
-        )
-
-        appendLog(
-            "Команды изменения DTCO: НЕ отправляются"
-        )
-
-        appendLog(
-            "Разрешено только BLE/GATT connection + service discovery"
+            "для INDICATE / NOTIFY."
         )
 
         appendLog(
@@ -246,27 +319,6 @@ class DtcoBluetoothDiagnostic(
                 }"
             )
 
-            if (
-                gatt == null
-            ) {
-
-                appendLog(
-                    "ОШИБКА: connectGatt вернул NULL."
-                )
-
-                return
-            }
-
-            appendLog(
-                "AUTO CHECK #1 назначен через 2 секунды."
-            )
-
-            appendLog(
-                "AUTO CHECK #2 назначен через 5 секунд."
-            )
-
-            startAutomaticChecks()
-
         } catch (
             e: Throwable
         ) {
@@ -278,99 +330,11 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    private fun startAutomaticChecks() {
-
-        stopScheduler()
-
-        val executor =
-            Executors.newSingleThreadScheduledExecutor()
-
-        scheduler =
-            executor
-
-        executor.schedule(
-            {
-
-                try {
-
-                    automaticGattCheck(
-                        1
-                    )
-
-                } catch (
-                    e: Throwable
-                ) {
-
-                    appendThrowable(
-                        "AUTO CHECK #1",
-                        e
-                    )
-                }
-
-            },
-            2,
-            TimeUnit.SECONDS
-        )
-
-        executor.schedule(
-            {
-
-                try {
-
-                    automaticGattCheck(
-                        2
-                    )
-
-                } catch (
-                    e: Throwable
-                ) {
-
-                    appendThrowable(
-                        "AUTO CHECK #2",
-                        e
-                    )
-                }
-
-            },
-            5,
-            TimeUnit.SECONDS
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun automaticGattCheck(
-        number: Int
-    ) {
-
-        appendLog(
-            ""
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "AUTO GATT CHECK #$number"
-        )
-
-        appendLog(
-            "Thread: ${Thread.currentThread().name}"
-        )
-
-        appendLog(
-            "========================================"
-        )
-
-        performGattCheck(
-            "AUTO #$number"
-        )
-    }
-
     /*
-     * Оставляем ручную функцию совместимой с MainActivity.
-     * Даже если кнопка не работает, сборка не сломается.
+     * Совместимость с кнопкой
+     * "Проверить GATT сейчас".
      */
+    @SuppressLint("MissingPermission")
     fun manualGattCheck() {
 
         appendLog(
@@ -389,27 +353,6 @@ class DtcoBluetoothDiagnostic(
             "========================================"
         )
 
-        performGattCheck(
-            "MANUAL"
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun performGattCheck(
-        source: String
-    ) {
-
-        if (
-            !hasConnectPermission()
-        ) {
-
-            appendLog(
-                "$source: нет BLUETOOTH_CONNECT"
-            )
-
-            return
-        }
-
         val device =
             currentDevice
 
@@ -421,35 +364,13 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             appendLog(
-                "$source: currentDevice = NULL"
+                "currentDevice = NULL"
             )
 
             return
         }
 
-        appendLog(
-            "Device: ${safeDeviceName(device)}"
-        )
-
-        appendLog(
-            "Address: ${safeDeviceAddress(device)}"
-        )
-
-        appendLog(
-            "Bond state: ${
-                try {
-                    bondStateToString(
-                        device.bondState
-                    )
-                } catch (
-                    _: Throwable
-                ) {
-                    "UNKNOWN"
-                }
-            }"
-        )
-
-        val managerState =
+        val state =
 
             try {
 
@@ -463,7 +384,7 @@ class DtcoBluetoothDiagnostic(
             ) {
 
                 appendThrowable(
-                    "BluetoothManager.getConnectionState",
+                    "getConnectionState",
                     e
                 )
 
@@ -472,15 +393,15 @@ class DtcoBluetoothDiagnostic(
 
         appendLog(
             "Android GATT state = " +
-                "$managerState (${profileStateToString(managerState)})"
+                "$state (${profileStateToString(state)})"
         )
 
         appendLog(
-            "Internal connected flag = $connected"
+            "Internal connected = $connected"
         )
 
         appendLog(
-            "Internal servicesDiscovered flag = $servicesDiscovered"
+            "servicesDiscovered = $servicesDiscovered"
         )
 
         if (
@@ -498,130 +419,60 @@ class DtcoBluetoothDiagnostic(
             "currentGatt = EXISTS"
         )
 
-        val servicesBefore =
+        val services =
 
             try {
 
                 gatt.services
 
             } catch (
-                e: Throwable
+                _: Throwable
             ) {
-
-                appendThrowable(
-                    "gatt.services BEFORE",
-                    e
-                )
 
                 emptyList()
             }
 
         appendLog(
-            "Services BEFORE discoverServices(): ${servicesBefore.size}"
+            "Services currently available = ${services.size}"
         )
 
         if (
-            servicesBefore.isNotEmpty()
+            services.isNotEmpty()
         ) {
-
-            appendLog(
-                "Сервисы уже доступны."
-            )
-
-            servicesDiscovered =
-                true
 
             dumpGattMap(
                 gatt,
-                "$source / ALREADY AVAILABLE"
+                "MANUAL"
             )
-
-            return
-        }
-
-        appendLog(
-            "$source: вызываем discoverServices()"
-        )
-
-        appendLog(
-            "Это только запрос структуры GATT."
-        )
-
-        appendLog(
-            "WRITE операций нет."
-        )
-
-        try {
-
-            val result =
-                gatt.discoverServices()
 
             appendLog(
-                "discoverServices() returned = $result"
+                "Повторная проверка подписок..."
             )
 
-            if (
-                result
-            ) {
-
-                appendLog(
-                    "Android принял запрос service discovery."
-                )
-
-                appendLog(
-                    "Ожидаем onServicesDiscovered()."
-                )
-
-            } else {
-
-                appendLog(
-                    "Android отказался запускать service discovery."
-                )
-            }
-
-        } catch (
-            e: Throwable
-        ) {
-
-            appendThrowable(
-                "$source discoverServices",
-                e
+            prepareSubscriptions(
+                gatt
             )
-        }
 
-        val servicesAfter =
+        } else {
 
             try {
 
-                gatt.services
+                val result =
+                    gatt.discoverServices()
+
+                appendLog(
+                    "discoverServices() returned = $result"
+                )
 
             } catch (
                 e: Throwable
             ) {
 
                 appendThrowable(
-                    "gatt.services AFTER",
+                    "manual discoverServices",
                     e
                 )
-
-                emptyList()
             }
-
-        appendLog(
-            "Services immediately AFTER call: ${servicesAfter.size}"
-        )
-
-        if (
-            servicesAfter.isNotEmpty()
-        ) {
-
-            servicesDiscovered =
-                true
-
-            dumpGattMap(
-                gatt,
-                "$source / AFTER CALL"
-            )
         }
     }
 
@@ -669,6 +520,9 @@ class DtcoBluetoothDiagnostic(
                         connected =
                             true
 
+                        currentGatt =
+                            gatt
+
                         appendLog(
                             "BLE GATT CONNECTED"
                         )
@@ -680,17 +534,17 @@ class DtcoBluetoothDiagnostic(
                             )
                         )
 
-                        appendLog(
-                            "CALLBACK: пробуем discoverServices()"
-                        )
-
                         try {
+
+                            appendLog(
+                                "STEP 2: discoverServices()"
+                            )
 
                             val result =
                                 gatt.discoverServices()
 
                             appendLog(
-                                "CALLBACK discoverServices() returned = $result"
+                                "discoverServices() returned = $result"
                             )
 
                         } catch (
@@ -698,7 +552,7 @@ class DtcoBluetoothDiagnostic(
                         ) {
 
                             appendThrowable(
-                                "callback discoverServices",
+                                "discoverServices",
                                 e
                             )
                         }
@@ -721,6 +575,14 @@ class DtcoBluetoothDiagnostic(
                     BluetoothProfile.STATE_DISCONNECTED -> {
 
                         connected =
+                            false
+
+                        servicesDiscovered =
+                            false
+
+                        subscriptionQueue.clear()
+
+                        subscriptionInProgress =
                             false
 
                         appendLog(
@@ -775,12 +637,131 @@ class DtcoBluetoothDiagnostic(
                         "CALLBACK"
                     )
 
+                    appendLog(
+                        ""
+                    )
+
+                    appendLog(
+                        "STEP 3: настройка INDICATE / NOTIFY"
+                    )
+
+                    prepareSubscriptions(
+                        gatt
+                    )
+
                 } else {
 
                     appendLog(
                         "SERVICE DISCOVERY ERROR"
                     )
                 }
+            }
+
+            override fun onDescriptorWrite(
+                gatt: BluetoothGatt,
+                descriptor: BluetoothGattDescriptor,
+                status: Int
+            ) {
+
+                val characteristic =
+                    descriptor.characteristic
+
+                appendLog(
+                    ""
+                )
+
+                appendLog(
+                    "CALLBACK: onDescriptorWrite"
+                )
+
+                appendLog(
+                    "Characteristic: ${characteristic.uuid}"
+                )
+
+                appendLog(
+                    "Descriptor: ${descriptor.uuid}"
+                )
+
+                appendLog(
+                    "status = $status (${gattStatusToString(status)})"
+                )
+
+                subscriptionInProgress =
+                    false
+
+                if (
+                    status ==
+                    BluetoothGatt.GATT_SUCCESS
+                ) {
+
+                    appendLog(
+                        "CCCD настроен успешно."
+                    )
+
+                } else {
+
+                    appendLog(
+                        "CCCD настройка завершилась ошибкой."
+                    )
+                }
+
+                /*
+                 * BLE GATT требует последовательных операций.
+                 * Запускаем следующую подписку только после callback.
+                 */
+                mainHandler.postDelayed(
+                    {
+                        subscribeNext(
+                            gatt
+                        )
+                    },
+                    120L
+                )
+            }
+
+            @Deprecated(
+                "Legacy callback required for older Android"
+            )
+            override fun onCharacteristicChanged(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic
+            ) {
+
+                if (
+                    Build.VERSION.SDK_INT <
+                    Build.VERSION_CODES.TIRAMISU
+                ) {
+
+                    val value =
+                        try {
+
+                            characteristic.value
+                                ?: byteArrayOf()
+
+                        } catch (
+                            _: Throwable
+                        ) {
+
+                            byteArrayOf()
+                        }
+
+                    handleIncoming(
+                        characteristic,
+                        value
+                    )
+                }
+            }
+
+            override fun onCharacteristicChanged(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                value: ByteArray
+            ) {
+
+                handleIncoming(
+                    characteristic,
+                    value
+                )
             }
 
             override fun onServiceChanged(
@@ -792,6 +773,520 @@ class DtcoBluetoothDiagnostic(
                 )
             }
         }
+
+    /*
+     * Формируем очередь подписок.
+     * В characteristic value ничего НЕ записываем.
+     */
+    @SuppressLint("MissingPermission")
+    private fun prepareSubscriptions(
+        gatt: BluetoothGatt
+    ) {
+
+        subscriptionQueue.clear()
+        subscriptionInProgress = false
+
+        addSubscription(
+            gatt,
+            UUID_DIAGNOSTICS_SERVICE,
+            UUID_DIAGNOSTICS_FIFO,
+            "Diagnostics FIFO",
+            SubscriptionMode.INDICATE
+        )
+
+        addSubscription(
+            gatt,
+            UUID_DIAGNOSTICS_SERVICE,
+            UUID_DIAGNOSTICS_CREDITS,
+            "Diagnostics Credits",
+            SubscriptionMode.INDICATE
+        )
+
+        addSubscription(
+            gatt,
+            UUID_DOWNLOAD_SERVICE,
+            UUID_DOWNLOAD_FIFO,
+            "Download FIFO",
+            SubscriptionMode.INDICATE
+        )
+
+        addSubscription(
+            gatt,
+            UUID_DOWNLOAD_SERVICE,
+            UUID_DOWNLOAD_CREDITS,
+            "Download Credits",
+            SubscriptionMode.INDICATE
+        )
+
+        addSubscription(
+            gatt,
+            UUID_EXTRA_SERVICE,
+            UUID_EXTRA_NOTIFY,
+            "Unknown service NOTIFY",
+            SubscriptionMode.NOTIFY
+        )
+
+        appendLog(
+            "Подписок в очереди: ${subscriptionQueue.size}"
+        )
+
+        if (
+            subscriptionQueue.isEmpty()
+        ) {
+
+            appendLog(
+                "Нет подходящих характеристик."
+            )
+
+            return
+        }
+
+        subscribeNext(
+            gatt
+        )
+    }
+
+    private fun addSubscription(
+        gatt: BluetoothGatt,
+        serviceUuid: UUID,
+        characteristicUuid: UUID,
+        label: String,
+        mode: SubscriptionMode
+    ) {
+
+        val service =
+            gatt.getService(
+                serviceUuid
+            )
+
+        if (
+            service == null
+        ) {
+
+            appendLog(
+                "$label: service NOT FOUND"
+            )
+
+            return
+        }
+
+        val characteristic =
+            service.getCharacteristic(
+                characteristicUuid
+            )
+
+        if (
+            characteristic == null
+        ) {
+
+            appendLog(
+                "$label: characteristic NOT FOUND"
+            )
+
+            return
+        }
+
+        subscriptionQueue.addLast(
+            SubscriptionItem(
+                label = label,
+                characteristic = characteristic,
+                mode = mode
+            )
+        )
+
+        appendLog(
+            "$label: добавлен в очередь."
+        )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun subscribeNext(
+        gatt: BluetoothGatt
+    ) {
+
+        if (
+            subscriptionInProgress
+        ) {
+
+            return
+        }
+
+        if (
+            subscriptionQueue.isEmpty()
+        ) {
+
+            appendLog(
+                ""
+            )
+
+            appendLog(
+                "========================================"
+            )
+
+            appendLog(
+                "SUBSCRIPTION SETUP COMPLETE"
+            )
+
+            appendLog(
+                "Теперь слушаем DTCO."
+            )
+
+            appendLog(
+                "FIFO-команды НЕ отправлялись."
+            )
+
+            appendLog(
+                "Credits НЕ отправлялись."
+            )
+
+            appendLog(
+                "========================================"
+            )
+
+            return
+        }
+
+        val item =
+            subscriptionQueue.removeFirst()
+
+        val characteristic =
+            item.characteristic
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "SUBSCRIBE: ${item.label}"
+        )
+
+        appendLog(
+            "UUID: ${characteristic.uuid}"
+        )
+
+        appendLog(
+            "Mode: ${item.mode}"
+        )
+
+        /*
+         * Локально включаем delivery callback.
+         */
+        val notificationResult =
+
+            try {
+
+                gatt.setCharacteristicNotification(
+                    characteristic,
+                    true
+                )
+
+            } catch (
+                e: Throwable
+            ) {
+
+                appendThrowable(
+                    "setCharacteristicNotification",
+                    e
+                )
+
+                false
+            }
+
+        appendLog(
+            "setCharacteristicNotification(true) = $notificationResult"
+        )
+
+        if (
+            !notificationResult
+        ) {
+
+            appendLog(
+                "Не удалось локально включить подписку."
+            )
+
+            mainHandler.postDelayed(
+                {
+                    subscribeNext(
+                        gatt
+                    )
+                },
+                120L
+            )
+
+            return
+        }
+
+        val descriptor =
+            characteristic.getDescriptor(
+                UUID_CCCD
+            )
+
+        if (
+            descriptor == null
+        ) {
+
+            appendLog(
+                "CCCD 0x2902 NOT FOUND."
+            )
+
+            mainHandler.postDelayed(
+                {
+                    subscribeNext(
+                        gatt
+                    )
+                },
+                120L
+            )
+
+            return
+        }
+
+        val value =
+
+            when (
+                item.mode
+            ) {
+
+                SubscriptionMode.INDICATE ->
+                    BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+
+                SubscriptionMode.NOTIFY ->
+                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            }
+
+        subscriptionInProgress =
+            true
+
+        appendLog(
+            "Пишем только стандартный CCCD 0x2902."
+        )
+
+        appendLog(
+            "Characteristic value НЕ записывается."
+        )
+
+        val started =
+
+            try {
+
+                writeCccd(
+                    gatt,
+                    descriptor,
+                    value
+                )
+
+            } catch (
+                e: Throwable
+            ) {
+
+                appendThrowable(
+                    "write CCCD",
+                    e
+                )
+
+                false
+            }
+
+        appendLog(
+            "CCCD write started = $started"
+        )
+
+        if (
+            !started
+        ) {
+
+            subscriptionInProgress =
+                false
+
+            mainHandler.postDelayed(
+                {
+                    subscribeNext(
+                        gatt
+                    )
+                },
+                150L
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun writeCccd(
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+        value: ByteArray
+    ): Boolean {
+
+        return if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.TIRAMISU
+        ) {
+
+            val result =
+                gatt.writeDescriptor(
+                    descriptor,
+                    value
+                )
+
+            result ==
+                BluetoothGatt.GATT_SUCCESS
+
+        } else {
+
+            @Suppress("DEPRECATION")
+            descriptor.value =
+                value
+
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(
+                descriptor
+            )
+        }
+    }
+
+    private fun handleIncoming(
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray
+    ) {
+
+        val label =
+            characteristicLabel(
+                characteristic.uuid
+            )
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "RX FROM DTCO"
+        )
+
+        appendLog(
+            "Source: $label"
+        )
+
+        appendLog(
+            "UUID: ${characteristic.uuid}"
+        )
+
+        appendLog(
+            "Length: ${value.size} byte(s)"
+        )
+
+        appendLog(
+            "HEX: ${bytesToHex(value)}"
+        )
+
+        val ascii =
+            bytesToReadableAscii(
+                value
+            )
+
+        if (
+            ascii.isNotBlank()
+        ) {
+
+            appendLog(
+                "ASCII: $ascii"
+            )
+        }
+
+        appendLog(
+            "========================================"
+        )
+    }
+
+    private fun characteristicLabel(
+        uuid: UUID
+    ): String {
+
+        return when (
+            uuid
+        ) {
+
+            UUID_DIAGNOSTICS_FIFO ->
+                "Diagnostics FIFO"
+
+            UUID_DIAGNOSTICS_CREDITS ->
+                "Diagnostics Credits"
+
+            UUID_DOWNLOAD_FIFO ->
+                "Download FIFO"
+
+            UUID_DOWNLOAD_CREDITS ->
+                "Download Credits"
+
+            UUID_EXTRA_NOTIFY ->
+                "Unknown service NOTIFY"
+
+            else ->
+                "Unknown characteristic"
+        }
+    }
+
+    private fun bytesToHex(
+        bytes: ByteArray
+    ): String {
+
+        if (
+            bytes.isEmpty()
+        ) {
+
+            return "(empty)"
+        }
+
+        return bytes.joinToString(
+            separator = " "
+        ) {
+
+            "%02X".format(
+                Locale.US,
+                it.toInt() and 0xFF
+            )
+        }
+    }
+
+    private fun bytesToReadableAscii(
+        bytes: ByteArray
+    ): String {
+
+        if (
+            bytes.isEmpty()
+        ) {
+
+            return ""
+        }
+
+        val builder =
+            StringBuilder()
+
+        bytes.forEach {
+
+            val code =
+                it.toInt() and 0xFF
+
+            if (
+                code in 32..126
+            ) {
+
+                builder.append(
+                    code.toChar()
+                )
+
+            } else {
+
+                builder.append(
+                    '.'
+                )
+            }
+        }
+
+        return builder.toString()
+    }
 
     private fun dumpGattMap(
         gatt: BluetoothGatt,
@@ -867,11 +1362,7 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "DTCO НЕ изменялся."
-        )
-
-        appendLog(
-            "WRITE операций НЕ выполнялось."
+            "DTCO данные НЕ изменялись."
         )
 
         appendLog(
@@ -953,14 +1444,6 @@ class DtcoBluetoothDiagnostic(
                 }"
             )
 
-            appendLog(
-                "  Permissions HEX: 0x${
-                    characteristic.permissions
-                        .toString(16)
-                        .uppercase(Locale.US)
-                }"
-            )
-
             val descriptors =
 
                 try {
@@ -988,14 +1471,6 @@ class DtcoBluetoothDiagnostic(
 
                 appendLog(
                     "    UUID: ${descriptor.uuid}"
-                )
-
-                appendLog(
-                    "    Permissions HEX: 0x${
-                        descriptor.permissions
-                            .toString(16)
-                            .uppercase(Locale.US)
-                    }"
                 )
             }
         }
@@ -1055,44 +1530,14 @@ class DtcoBluetoothDiagnostic(
         appendLog(
             "Android API: ${Build.VERSION.SDK_INT}"
         )
-
-        val cached =
-
-            try {
-
-                device.uuids
-
-            } catch (
-                _: Throwable
-            ) {
-
-                null
-            }
-
-        if (
-            cached.isNullOrEmpty()
-        ) {
-
-            appendLog(
-                "Cached UUID: null"
-            )
-
-        } else {
-
-            cached.forEachIndexed {
-                    index,
-                    uuid ->
-
-                appendLog(
-                    "Cached UUID[$index]: ${uuid.uuid}"
-                )
-            }
-        }
     }
 
     fun disconnect() {
 
-        stopScheduler()
+        subscriptionQueue.clear()
+
+        subscriptionInProgress =
+            false
 
         connected =
             false
@@ -1114,24 +1559,6 @@ class DtcoBluetoothDiagnostic(
                 )
             }
         )
-    }
-
-    private fun stopScheduler() {
-
-        val old =
-            scheduler
-
-        scheduler =
-            null
-
-        try {
-
-            old?.shutdownNow()
-
-        } catch (
-            _: Throwable
-        ) {
-        }
     }
 
     @SuppressLint("MissingPermission")
@@ -1219,12 +1646,7 @@ class DtcoBluetoothDiagnostic(
             }
         }
 
-        pushLogToUi()
-    }
-
-    private fun pushLogToUi() {
-
-        val text =
+        val fullLog =
             getLog()
 
         mainHandler.post {
@@ -1232,7 +1654,7 @@ class DtcoBluetoothDiagnostic(
             try {
 
                 listener?.onLogChanged(
-                    text
+                    fullLog
                 )
 
             } catch (
@@ -1467,7 +1889,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_BROADCAST != 0
         ) {
-
             result.add(
                 "BROADCAST"
             )
@@ -1477,7 +1898,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_READ != 0
         ) {
-
             result.add(
                 "READ"
             )
@@ -1487,7 +1907,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
         ) {
-
             result.add(
                 "WRITE_NO_RESPONSE"
             )
@@ -1497,7 +1916,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_WRITE != 0
         ) {
-
             result.add(
                 "WRITE"
             )
@@ -1507,7 +1925,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
         ) {
-
             result.add(
                 "NOTIFY"
             )
@@ -1517,7 +1934,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
         ) {
-
             result.add(
                 "INDICATE"
             )
@@ -1527,7 +1943,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_SIGNED_WRITE != 0
         ) {
-
             result.add(
                 "SIGNED_WRITE"
             )
@@ -1537,7 +1952,6 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_EXTENDED_PROPS != 0
         ) {
-
             result.add(
                 "EXTENDED_PROPS"
             )
