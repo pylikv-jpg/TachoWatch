@@ -21,28 +21,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 
-/**
- * TachoWatch
- *
- * DTCO Bluetooth diagnostics.
- *
- * Версия GATT-SERVICES-6
- *
- * Ключевой эксперимент:
- *
- * Bluetooth callback НЕ запускает:
- * - Handler.postDelayed()
- * - discoverServices()
- * - requestMtu()
- * - gatt.services
- * - READ / WRITE / NOTIFY
- *
- * Callback только записывает состояние в переменные
- * и немедленно завершается.
- *
- * Вся дальнейшая BLE-логика выполняется
- * отдельным рабочим потоком.
- */
 class DtcoBluetoothDiagnostic(
     private val context: Context,
     private val listener: Listener? = null
@@ -154,6 +132,38 @@ class DtcoBluetoothDiagnostic(
     @Volatile
     private var stopped =
         false
+
+    /*
+     * ВАЖНО:
+     * workerLoop объявлен ДО init.
+     * Это исправляет ошибку:
+     * Variable 'workerLoop' must be initialized.
+     */
+    private val workerLoop =
+        object : Runnable {
+
+            override fun run() {
+
+                try {
+
+                    processBleState()
+
+                } catch (
+                    e: Throwable
+                ) {
+
+                    logThrowable(
+                        "BLE WORKER LOOP",
+                        e
+                    )
+                }
+
+                workerHandler.postDelayed(
+                    this,
+                    WORKER_INTERVAL_MS
+                )
+            }
+        }
 
     init {
 
@@ -450,13 +460,9 @@ class DtcoBluetoothDiagnostic(
     }
 
     /*
-     * КРИТИЧЕСКОЕ ОТЛИЧИЕ VERSION 6:
+     * Bluetooth callbacks ничего не запускают.
      *
-     * В Bluetooth callbacks НЕТ log(),
-     * НЕТ Handler.post(),
-     * НЕТ discoverServices().
-     *
-     * Только простое сохранение состояния.
+     * Они только сохраняют состояние.
      */
     private val gattCallback =
         object :
@@ -496,10 +502,6 @@ class DtcoBluetoothDiagnostic(
                     callbackDisconnected =
                         true
                 }
-
-                /*
-                 * CALLBACK ЗАКАНЧИВАЕТСЯ ЗДЕСЬ.
-                 */
             }
 
             override fun onServicesDiscovered(
@@ -518,37 +520,6 @@ class DtcoBluetoothDiagnostic(
 
                 servicesCallbackReceived =
                     true
-
-                /*
-                 * CALLBACK ЗАКАНЧИВАЕТСЯ ЗДЕСЬ.
-                 */
-            }
-        }
-
-    private val workerLoop =
-        object :
-            Runnable {
-
-            override fun run() {
-
-                try {
-
-                    processBleState()
-
-                } catch (
-                    e: Throwable
-                ) {
-
-                    logThrowable(
-                        "BLE WORKER LOOP",
-                        e
-                    )
-                }
-
-                workerHandler.postDelayed(
-                    this,
-                    WORKER_INTERVAL_MS
-                )
             }
         }
 
@@ -1094,7 +1065,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_BROADCAST != 0
         ) {
-
             result +=
                 "BROADCAST"
         }
@@ -1104,7 +1074,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_READ != 0
         ) {
-
             result +=
                 "READ"
         }
@@ -1114,7 +1083,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_WRITE_NO_RESPONSE != 0
         ) {
-
             result +=
                 "WRITE_NO_RESPONSE"
         }
@@ -1124,7 +1092,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_WRITE != 0
         ) {
-
             result +=
                 "WRITE"
         }
@@ -1134,7 +1101,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_NOTIFY != 0
         ) {
-
             result +=
                 "NOTIFY"
         }
@@ -1144,7 +1110,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_INDICATE != 0
         ) {
-
             result +=
                 "INDICATE"
         }
@@ -1154,7 +1119,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_SIGNED_WRITE != 0
         ) {
-
             result +=
                 "SIGNED_WRITE"
         }
@@ -1164,7 +1128,6 @@ class DtcoBluetoothDiagnostic(
             BluetoothGattCharacteristic
                 .PROPERTY_EXTENDED_PROPS != 0
         ) {
-
             result +=
                 "EXTENDED"
         }
@@ -1197,16 +1160,13 @@ class DtcoBluetoothDiagnostic(
 
             BluetoothGattService
                 .SERVICE_TYPE_PRIMARY ->
-
                 "PRIMARY"
 
             BluetoothGattService
                 .SERVICE_TYPE_SECONDARY ->
-
                 "SECONDARY"
 
             else ->
-
                 "UNKNOWN($type)"
         }
     }
@@ -1243,26 +1203,21 @@ class DtcoBluetoothDiagnostic(
 
             BluetoothDevice
                 .DEVICE_TYPE_CLASSIC ->
-
                 "CLASSIC"
 
             BluetoothDevice
                 .DEVICE_TYPE_LE ->
-
                 "LE"
 
             BluetoothDevice
                 .DEVICE_TYPE_DUAL ->
-
                 "DUAL"
 
             BluetoothDevice
                 .DEVICE_TYPE_UNKNOWN ->
-
                 "UNKNOWN"
 
             else ->
-
                 "UNKNOWN($type)"
         }
     }
@@ -1277,26 +1232,21 @@ class DtcoBluetoothDiagnostic(
 
             BluetoothProfile
                 .STATE_DISCONNECTED ->
-
                 "DISCONNECTED"
 
             BluetoothProfile
                 .STATE_CONNECTING ->
-
                 "CONNECTING"
 
             BluetoothProfile
                 .STATE_CONNECTED ->
-
                 "CONNECTED"
 
             BluetoothProfile
                 .STATE_DISCONNECTING ->
-
                 "DISCONNECTING"
 
             else ->
-
                 "UNKNOWN($state)"
         }
     }
@@ -1402,7 +1352,7 @@ class DtcoBluetoothDiagnostic(
                     (
                         cause.message
                             ?: "<нет>"
-                        )
+                    )
             )
         }
     }
