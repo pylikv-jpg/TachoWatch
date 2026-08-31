@@ -27,9 +27,7 @@ class DtcoBluetoothDiagnostic(
 
     interface Listener {
 
-        fun onLogChanged(
-            fullLog: String
-        )
+        fun onLogChanged(fullLog: String)
 
         fun onConnectionStateChanged(
             connected: Boolean,
@@ -40,25 +38,17 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "BLE-GATT-WATCHDOG-1"
+            "BLE-GATT-MANUAL-1"
 
         private const val UI_REFRESH_MS =
             400L
-
-        private const val WATCHDOG_MS =
-            1000L
-
-        private const val MAX_WATCHDOG_SECONDS =
-            20
 
         private const val MAX_LOG_LINES =
             2500
     }
 
     private val mainHandler =
-        Handler(
-            Looper.getMainLooper()
-        )
+        Handler(Looper.getMainLooper())
 
     private val bluetoothManager =
         context.getSystemService(
@@ -69,34 +59,20 @@ class DtcoBluetoothDiagnostic(
         CopyOnWriteArrayList<String>()
 
     @Volatile
-    private var currentGatt:
-        BluetoothGatt? = null
+    private var currentGatt: BluetoothGatt? =
+        null
 
     @Volatile
-    private var currentDevice:
-        BluetoothDevice? = null
+    private var currentDevice: BluetoothDevice? =
+        null
 
     @Volatile
     private var connected =
         false
 
     @Volatile
-    private var stopped =
-        true
-
-    @Volatile
-    private var serviceDiscoveryStarted =
-        false
-
-    @Volatile
     private var servicesDiscovered =
         false
-
-    private var watchdogSeconds =
-        0
-
-    private var connectionStartedAt =
-        0L
 
     private val uiLoop =
         object : Runnable {
@@ -109,184 +85,12 @@ class DtcoBluetoothDiagnostic(
                         getLog()
                     )
 
-                } catch (
-                    _: Throwable
-                ) {
+                } catch (_: Throwable) {
                 }
 
                 mainHandler.postDelayed(
                     this,
                     UI_REFRESH_MS
-                )
-            }
-        }
-
-    private val watchdogLoop =
-        object : Runnable {
-
-            @SuppressLint("MissingPermission")
-            override fun run() {
-
-                if (
-                    stopped
-                ) {
-                    return
-                }
-
-                watchdogSeconds++
-
-                val device =
-                    currentDevice
-
-                val gatt =
-                    currentGatt
-
-                appendLog(
-                    "WATCHDOG ${watchdogSeconds}s"
-                )
-
-                if (
-                    device == null
-                ) {
-
-                    appendLog(
-                        "WATCHDOG: currentDevice = null"
-                    )
-
-                } else {
-
-                    try {
-
-                        val state =
-                            bluetoothManager.getConnectionState(
-                                device,
-                                BluetoothProfile.GATT
-                            )
-
-                        appendLog(
-                            "WATCHDOG: BluetoothManager GATT state = " +
-                                "$state (${profileStateToString(state)})"
-                        )
-
-                        if (
-                            state ==
-                            BluetoothProfile.STATE_CONNECTED
-                        ) {
-
-                            if (
-                                !connected
-                            ) {
-
-                                appendLog(
-                                    "WATCHDOG: Android уже считает GATT CONNECTED."
-                                )
-
-                                appendLog(
-                                    "WATCHDOG: callback CONNECTED ранее не получен."
-                                )
-
-                                connected =
-                                    true
-
-                                connectionStartedAt =
-                                    System.currentTimeMillis()
-
-                                notifyConnectionState(
-                                    true,
-                                    safeDeviceName(
-                                        device
-                                    )
-                                )
-                            }
-
-                            if (
-                                !serviceDiscoveryStarted &&
-                                !servicesDiscovered
-                            ) {
-
-                                if (
-                                    gatt != null
-                                ) {
-
-                                    appendLog(
-                                        "WATCHDOG: запускаем discoverServices() вручную."
-                                    )
-
-                                    startServiceDiscovery(
-                                        gatt,
-                                        "WATCHDOG"
-                                    )
-
-                                } else {
-
-                                    appendLog(
-                                        "WATCHDOG: BluetoothGatt = null, discoverServices невозможен."
-                                    )
-                                }
-                            }
-                        }
-
-                    } catch (
-                        e: Throwable
-                    ) {
-
-                        appendThrowable(
-                            "WATCHDOG getConnectionState",
-                            e
-                        )
-                    }
-                }
-
-                if (
-                    servicesDiscovered
-                ) {
-
-                    appendLog(
-                        "WATCHDOG: GATT MAP уже получен."
-                    )
-
-                    appendLog(
-                        "WATCHDOG остановлен."
-                    )
-
-                    return
-                }
-
-                if (
-                    watchdogSeconds >=
-                    MAX_WATCHDOG_SECONDS
-                ) {
-
-                    appendLog(
-                        "========================================"
-                    )
-
-                    appendLog(
-                        "WATCHDOG завершён после $MAX_WATCHDOG_SECONDS сек."
-                    )
-
-                    appendLog(
-                        "servicesDiscovered = $servicesDiscovered"
-                    )
-
-                    appendLog(
-                        "serviceDiscoveryStarted = $serviceDiscoveryStarted"
-                    )
-
-                    appendLog(
-                        "connected = $connected"
-                    )
-
-                    appendLog(
-                        "========================================"
-                    )
-
-                    return
-                }
-
-                mainHandler.postDelayed(
-                    this,
-                    WATCHDOG_MS
                 )
             }
         }
@@ -298,8 +102,7 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
-    fun hasConnectPermission():
-        Boolean {
+    fun hasConnectPermission(): Boolean {
 
         return if (
             Build.VERSION.SDK_INT >=
@@ -323,19 +126,10 @@ class DtcoBluetoothDiagnostic(
         device: BluetoothDevice
     ) {
 
-        if (
-            !hasConnectPermission()
-        ) {
+        if (!hasConnectPermission()) {
 
             appendLog(
-                "ОШИБКА: нет разрешения BLUETOOTH_CONNECT"
-            )
-
-            notifyConnectionState(
-                false,
-                safeDeviceName(
-                    device
-                )
+                "ОШИБКА: нет BLUETOOTH_CONNECT"
             )
 
             return
@@ -345,26 +139,14 @@ class DtcoBluetoothDiagnostic(
 
         logLines.clear()
 
-        stopped =
-            false
+        currentDevice =
+            device
 
         connected =
             false
 
-        serviceDiscoveryStarted =
-            false
-
         servicesDiscovered =
             false
-
-        watchdogSeconds =
-            0
-
-        connectionStartedAt =
-            0L
-
-        currentDevice =
-            device
 
         appendLog(
             "========================================"
@@ -391,6 +173,10 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
+            "Запись в DTCO: ЗАПРЕЩЕНА"
+        )
+
+        appendLog(
             "writeCharacteristic(): НЕ используется"
         )
 
@@ -399,19 +185,19 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Команды изменения DTCO: НЕ отправляются"
-        )
-
-        appendLog(
-            "Команды карты водителя: НЕ отправляются"
-        )
-
-        appendLog(
             "Чтение содержимого карты: НЕ выполняется"
         )
 
         appendLog(
-            "Разрешено только BLE/GATT connection + service discovery"
+            "Команды карте водителя: НЕ отправляются"
+        )
+
+        appendLog(
+            "Команды изменения DTCO: НЕ отправляются"
+        )
+
+        appendLog(
+            "Разрешено: BLE connection + GATT service discovery"
         )
 
         appendLog(
@@ -427,23 +213,7 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "STEP 1: запускаем connectGatt()"
-        )
-
-        appendLog(
-            "После запуска включится WATCHDOG."
-        )
-
-        appendLog(
-            "Если callback CONNECTED потеряется,"
-        )
-
-        appendLog(
-            "WATCHDOG проверит состояние через BluetoothManager."
-        )
-
-        appendLog(
-            "----------------------------------------"
+            "STEP 1: connectGatt()"
         )
 
         try {
@@ -456,7 +226,7 @@ class DtcoBluetoothDiagnostic(
                 ) {
 
                     appendLog(
-                        "connectGatt(autoConnect=false, TRANSPORT_LE)"
+                        "connectGatt(false, TRANSPORT_LE)"
                     )
 
                     device.connectGatt(
@@ -469,7 +239,7 @@ class DtcoBluetoothDiagnostic(
                 } else {
 
                     appendLog(
-                        "connectGatt(autoConnect=false)"
+                        "connectGatt(false)"
                     )
 
                     device.connectGatt(
@@ -482,42 +252,274 @@ class DtcoBluetoothDiagnostic(
             currentGatt =
                 gatt
 
-            if (
-                gatt == null
-            ) {
+            appendLog(
+                "BluetoothGatt object: " +
+                    if (gatt != null) {
+                        "CREATED"
+                    } else {
+                        "NULL"
+                    }
+            )
 
-                appendLog(
-                    "ОШИБКА: connectGatt() вернул null"
-                )
+            appendLog(
+                "Теперь можно нажать «Проверить GATT сейчас»."
+            )
 
-            } else {
-
-                appendLog(
-                    "BluetoothGatt создан."
-                )
-
-                appendLog(
-                    "Ожидаем callback или WATCHDOG..."
-                )
-            }
-
-        } catch (
-            e: Throwable
-        ) {
+        } catch (e: Throwable) {
 
             appendThrowable(
                 "connectGatt",
                 e
             )
         }
+    }
 
-        mainHandler.removeCallbacks(
-            watchdogLoop
+    /*
+     * РУЧНАЯ ПРОВЕРКА.
+     *
+     * Никакой записи.
+     * Никаких команд карте.
+     * Никакого изменения DTCO.
+     *
+     * Только:
+     * 1. состояние Android GATT;
+     * 2. проверка уже известных services;
+     * 3. discoverServices().
+     */
+    @SuppressLint("MissingPermission")
+    fun manualGattCheck() {
+
+        appendLog(
+            ""
         )
 
-        mainHandler.postDelayed(
-            watchdogLoop,
-            WATCHDOG_MS
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "MANUAL GATT CHECK"
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        if (!hasConnectPermission()) {
+
+            appendLog(
+                "ОШИБКА: нет BLUETOOTH_CONNECT"
+            )
+
+            return
+        }
+
+        val device =
+            currentDevice
+
+        val gatt =
+            currentGatt
+
+        if (device == null) {
+
+            appendLog(
+                "currentDevice = NULL"
+            )
+
+            appendLog(
+                "Сначала выбери DTCO и нажми подключение."
+            )
+
+            return
+        }
+
+        appendLog(
+            "Device: ${safeDeviceName(device)}"
+        )
+
+        appendLog(
+            "Address: ${safeDeviceAddress(device)}"
+        )
+
+        appendLog(
+            "Bond: ${
+                try {
+                    bondStateToString(
+                        device.bondState
+                    )
+                } catch (_: Throwable) {
+                    "UNKNOWN"
+                }
+            }"
+        )
+
+        val managerState =
+
+            try {
+
+                bluetoothManager.getConnectionState(
+                    device,
+                    BluetoothProfile.GATT
+                )
+
+            } catch (e: Throwable) {
+
+                appendThrowable(
+                    "BluetoothManager.getConnectionState",
+                    e
+                )
+
+                -1
+            }
+
+        appendLog(
+            "Android GATT state = " +
+                "$managerState (${profileStateToString(managerState)})"
+        )
+
+        if (gatt == null) {
+
+            appendLog(
+                "currentGatt = NULL"
+            )
+
+            appendLog(
+                "discoverServices невозможен."
+            )
+
+            appendLog(
+                "========================================"
+            )
+
+            return
+        }
+
+        appendLog(
+            "currentGatt = EXISTS"
+        )
+
+        /*
+         * Сначала смотрим, нет ли уже сервисов
+         * в локальном объекте BluetoothGatt.
+         */
+        val existingServices =
+
+            try {
+
+                gatt.services
+
+            } catch (e: Throwable) {
+
+                appendThrowable(
+                    "gatt.services BEFORE discovery",
+                    e
+                )
+
+                emptyList()
+            }
+
+        appendLog(
+            "Services BEFORE discoverServices(): " +
+                existingServices.size
+        )
+
+        if (existingServices.isNotEmpty()) {
+
+            appendLog(
+                "GATT services уже присутствуют."
+            )
+
+            servicesDiscovered =
+                true
+
+            dumpGattMap(
+                gatt,
+                "CACHED/AVAILABLE"
+            )
+
+            return
+        }
+
+        appendLog(
+            "STEP 2: ручной discoverServices()"
+        )
+
+        appendLog(
+            "Операций записи НЕТ."
+        )
+
+        try {
+
+            val result =
+                gatt.discoverServices()
+
+            appendLog(
+                "discoverServices() returned = $result"
+            )
+
+            if (result) {
+
+                appendLog(
+                    "Запрос service discovery принят Android."
+                )
+
+                appendLog(
+                    "Ожидаем onServicesDiscovered()."
+                )
+
+            } else {
+
+                appendLog(
+                    "Android НЕ запустил service discovery."
+                )
+            }
+
+        } catch (e: Throwable) {
+
+            appendThrowable(
+                "manual discoverServices",
+                e
+            )
+        }
+
+        /*
+         * Ещё раз смотрим локальную GATT-базу.
+         * Это НЕ чтение карты.
+         */
+        val afterServices =
+
+            try {
+
+                gatt.services
+
+            } catch (e: Throwable) {
+
+                appendThrowable(
+                    "gatt.services AFTER discovery call",
+                    e
+                )
+
+                emptyList()
+            }
+
+        appendLog(
+            "Services immediately AFTER call: " +
+                afterServices.size
+        )
+
+        if (afterServices.isNotEmpty()) {
+
+            servicesDiscovered =
+                true
+
+            dumpGattMap(
+                gatt,
+                "AVAILABLE AFTER MANUAL CALL"
+            )
+        }
+
+        appendLog(
+            "========================================"
         )
     }
 
@@ -533,7 +535,7 @@ class DtcoBluetoothDiagnostic(
             ) {
 
                 appendLog(
-                    "----------------------------------------"
+                    ""
                 )
 
                 appendLog(
@@ -548,36 +550,15 @@ class DtcoBluetoothDiagnostic(
                     "newState = $newState (${profileStateToString(newState)})"
                 )
 
-                appendLog(
-                    "device = ${safeDeviceName(gatt.device)}"
-                )
-
-                when (
-                    newState
-                ) {
+                when (newState) {
 
                     BluetoothProfile.STATE_CONNECTED -> {
 
                         connected =
                             true
 
-                        connectionStartedAt =
-                            System.currentTimeMillis()
-
-                        appendLog(
-                            "========================================"
-                        )
-
                         appendLog(
                             "BLE GATT CONNECTED"
-                        )
-
-                        appendLog(
-                            "CALLBACK CONNECTED получен штатно."
-                        )
-
-                        appendLog(
-                            "========================================"
                         )
 
                         notifyConnectionState(
@@ -587,13 +568,28 @@ class DtcoBluetoothDiagnostic(
                             )
                         )
 
-                        if (
-                            !serviceDiscoveryStarted
-                        ) {
+                        /*
+                         * Автоматически тоже пробуем.
+                         * Только service discovery.
+                         */
+                        try {
 
-                            startServiceDiscovery(
-                                gatt,
-                                "CALLBACK"
+                            appendLog(
+                                "AUTO: discoverServices()"
+                            )
+
+                            val result =
+                                gatt.discoverServices()
+
+                            appendLog(
+                                "AUTO discoverServices returned = $result"
+                            )
+
+                        } catch (e: Throwable) {
+
+                            appendThrowable(
+                                "AUTO discoverServices",
+                                e
                             )
                         }
                     }
@@ -604,19 +600,7 @@ class DtcoBluetoothDiagnostic(
                             false
 
                         appendLog(
-                            "========================================"
-                        )
-
-                        appendLog(
                             "BLE GATT DISCONNECTED"
-                        )
-
-                        appendLog(
-                            "status = $status (${gattStatusToString(status)})"
-                        )
-
-                        appendLog(
-                            "========================================"
                         )
 
                         notifyConnectionState(
@@ -630,14 +614,14 @@ class DtcoBluetoothDiagnostic(
                     BluetoothProfile.STATE_CONNECTING -> {
 
                         appendLog(
-                            "BLE состояние: CONNECTING"
+                            "BLE GATT CONNECTING"
                         )
                     }
 
                     BluetoothProfile.STATE_DISCONNECTING -> {
 
                         appendLog(
-                            "BLE состояние: DISCONNECTING"
+                            "BLE GATT DISCONNECTING"
                         )
                     }
                 }
@@ -647,6 +631,10 @@ class DtcoBluetoothDiagnostic(
                 gatt: BluetoothGatt,
                 status: Int
             ) {
+
+                appendLog(
+                    ""
+                )
 
                 appendLog(
                     "========================================"
@@ -661,29 +649,27 @@ class DtcoBluetoothDiagnostic(
                 )
 
                 if (
-                    status !=
+                    status ==
                     BluetoothGatt.GATT_SUCCESS
                 ) {
 
-                    appendLog(
-                        "ОШИБКА SERVICE DISCOVERY"
+                    servicesDiscovered =
+                        true
+
+                    dumpGattMap(
+                        gatt,
+                        "CALLBACK"
                     )
 
-                    serviceDiscoveryStarted =
-                        false
+                } else {
 
                     appendLog(
-                        "========================================"
+                        "SERVICE DISCOVERY ERROR"
                     )
-
-                    return
                 }
 
-                servicesDiscovered =
-                    true
-
-                dumpGattMap(
-                    gatt
+                appendLog(
+                    "========================================"
                 )
             }
 
@@ -697,91 +683,21 @@ class DtcoBluetoothDiagnostic(
             }
         }
 
-    @SuppressLint("MissingPermission")
-    private fun startServiceDiscovery(
+    private fun dumpGattMap(
         gatt: BluetoothGatt,
         source: String
     ) {
 
-        if (
-            serviceDiscoveryStarted ||
-            servicesDiscovered
-        ) {
-            return
-        }
-
-        appendLog(
-            "----------------------------------------"
-        )
-
-        appendLog(
-            "$source: STEP 2 — discoverServices()"
-        )
-
-        appendLog(
-            "Это только получение структуры BLE GATT."
-        )
-
-        appendLog(
-            "Никаких WRITE-команд нет."
-        )
-
-        try {
-
-            val started =
-                gatt.discoverServices()
-
-            serviceDiscoveryStarted =
-                started
-
-            appendLog(
-                "discoverServices() returned: $started"
-            )
-
-            if (
-                started
-            ) {
-
-                appendLog(
-                    "Ожидаем onServicesDiscovered..."
-                )
-
-            } else {
-
-                appendLog(
-                    "discoverServices() не стартовал."
-                )
-            }
-
-        } catch (
-            e: Throwable
-        ) {
-
-            serviceDiscoveryStarted =
-                false
-
-            appendThrowable(
-                "discoverServices",
-                e
-            )
-        }
-    }
-
-    private fun dumpGattMap(
-        gatt: BluetoothGatt
-    ) {
-
         val services =
+
             try {
 
                 gatt.services
 
-            } catch (
-                e: Throwable
-            ) {
+            } catch (e: Throwable) {
 
                 appendThrowable(
-                    "gatt.services",
+                    "dumpGattMap",
                     e
                 )
 
@@ -789,15 +705,19 @@ class DtcoBluetoothDiagnostic(
             }
 
         appendLog(
+            ""
+        )
+
+        appendLog(
             "========================================"
         )
 
         appendLog(
-            "GATT MAP"
+            "GATT MAP — $source"
         )
 
         appendLog(
-            "Services found: ${services.size}"
+            "SERVICES = ${services.size}"
         )
 
         appendLog(
@@ -823,19 +743,19 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Всего services: ${services.size}"
+            "Карта водителя НЕ читалась."
         )
 
         appendLog(
-            "Данные карты НЕ читались."
+            "Карта водителя НЕ изменялась."
         )
 
         appendLog(
-            "Данные карты НЕ изменялись."
+            "DTCO НЕ изменялся."
         )
 
         appendLog(
-            "Никаких WRITE операций не было."
+            "WRITE операций НЕ выполнялось."
         )
 
         appendLog(
@@ -861,21 +781,20 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Service type: ${serviceTypeToString(service.type)}"
+            "Type: ${serviceTypeToString(service.type)}"
         )
 
         appendLog(
-            "Service instanceId: ${service.instanceId}"
+            "Instance ID: ${service.instanceId}"
         )
 
         val characteristics =
+
             try {
 
                 service.characteristics
 
-            } catch (
-                _: Throwable
-            ) {
+            } catch (_: Throwable) {
 
                 emptyList()
             }
@@ -889,7 +808,7 @@ class DtcoBluetoothDiagnostic(
                 characteristic ->
 
             appendLog(
-                "  --------------------------------------"
+                "  ------------------------------------"
             )
 
             appendLog(
@@ -901,27 +820,33 @@ class DtcoBluetoothDiagnostic(
             )
 
             appendLog(
-                "  properties HEX: 0x" +
+                "  Properties HEX: 0x" +
                     characteristic.properties
                         .toString(16)
                         .uppercase(Locale.US)
             )
 
             appendLog(
-                "  properties: " +
+                "  Properties: " +
                     characteristicPropertiesToString(
                         characteristic.properties
                     )
             )
 
+            appendLog(
+                "  Permissions HEX: 0x" +
+                    characteristic.permissions
+                        .toString(16)
+                        .uppercase(Locale.US)
+            )
+
             val descriptors =
+
                 try {
 
                     characteristic.descriptors
 
-                } catch (
-                    _: Throwable
-                ) {
+                } catch (_: Throwable) {
 
                     emptyList()
                 }
@@ -940,6 +865,13 @@ class DtcoBluetoothDiagnostic(
 
                 appendLog(
                     "    UUID: ${descriptor.uuid}"
+                )
+
+                appendLog(
+                    "    Permissions HEX: 0x" +
+                        descriptor.permissions
+                            .toString(16)
+                            .uppercase(Locale.US)
                 )
             }
         }
@@ -968,9 +900,7 @@ class DtcoBluetoothDiagnostic(
                     bondStateToString(
                         device.bondState
                     )
-                } catch (
-                    _: Throwable
-                ) {
+                } catch (_: Throwable) {
                     "Недоступно"
                 }
             }"
@@ -982,9 +912,7 @@ class DtcoBluetoothDiagnostic(
                     deviceTypeToString(
                         device.type
                     )
-                } catch (
-                    _: Throwable
-                ) {
+                } catch (_: Throwable) {
                     "Недоступно"
                 }
             }"
@@ -994,63 +922,43 @@ class DtcoBluetoothDiagnostic(
             "Android API: ${Build.VERSION.SDK_INT}"
         )
 
-        appendLog(
-            "----------------------------------------"
-        )
+        val cached =
 
-        try {
+            try {
 
-            val uuids =
                 device.uuids
 
-            if (
-                uuids.isNullOrEmpty()
-            ) {
+            } catch (_: Throwable) {
 
-                appendLog(
-                    "Cached UUID: null"
-                )
-
-            } else {
-
-                uuids.forEachIndexed {
-                        index,
-                        uuid ->
-
-                    appendLog(
-                        "Cached UUID[$index]: ${uuid.uuid}"
-                    )
-                }
+                null
             }
 
-        } catch (
-            e: Throwable
-        ) {
+        if (cached.isNullOrEmpty()) {
 
-            appendThrowable(
-                "Cached UUID",
-                e
+            appendLog(
+                "Cached UUID: null"
             )
+
+        } else {
+
+            cached.forEachIndexed {
+                    index,
+                    uuid ->
+
+                appendLog(
+                    "Cached UUID[$index]: ${uuid.uuid}"
+                )
+            }
         }
     }
 
     fun disconnect() {
 
-        stopped =
-            true
-
         connected =
-            false
-
-        serviceDiscoveryStarted =
             false
 
         servicesDiscovered =
             false
-
-        mainHandler.removeCallbacks(
-            watchdogLoop
-        )
 
         appendLog(
             "Ручное отключение."
@@ -1061,9 +969,7 @@ class DtcoBluetoothDiagnostic(
         notifyConnectionState(
             false,
             currentDevice?.let {
-                safeDeviceName(
-                    it
-                )
+                safeDeviceName(it)
             }
         )
     }
@@ -1077,26 +983,20 @@ class DtcoBluetoothDiagnostic(
         currentGatt =
             null
 
-        if (
-            gatt != null
-        ) {
+        if (gatt != null) {
 
             try {
 
                 gatt.disconnect()
 
-            } catch (
-                _: Throwable
-            ) {
+            } catch (_: Throwable) {
             }
 
             try {
 
                 gatt.close()
 
-            } catch (
-                _: Throwable
-            ) {
+            } catch (_: Throwable) {
             }
         }
     }
@@ -1110,8 +1010,7 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
-    fun getLog():
-        String {
+    fun getLog(): String {
 
         return logLines.joinToString(
             separator = "\n"
@@ -1132,9 +1031,7 @@ class DtcoBluetoothDiagnostic(
                     deviceName
                 )
 
-            } catch (
-                _: Throwable
-            ) {
+            } catch (_: Throwable) {
             }
         }
     }
@@ -1162,13 +1059,9 @@ class DtcoBluetoothDiagnostic(
 
             try {
 
-                logLines.removeAt(
-                    0
-                )
+                logLines.removeAt(0)
 
-            } catch (
-                _: Throwable
-            ) {
+            } catch (_: Throwable) {
 
                 break
             }
@@ -1203,9 +1096,7 @@ class DtcoBluetoothDiagnostic(
             device.name
                 ?: "Без имени"
 
-        } catch (
-            _: Throwable
-        ) {
+        } catch (_: Throwable) {
 
             "Нет доступа"
         }
@@ -1220,9 +1111,7 @@ class DtcoBluetoothDiagnostic(
 
             device.address
 
-        } catch (
-            _: Throwable
-        ) {
+        } catch (_: Throwable) {
 
             "Нет доступа"
         }
@@ -1232,9 +1121,7 @@ class DtcoBluetoothDiagnostic(
         state: Int
     ): String {
 
-        return when (
-            state
-        ) {
+        return when (state) {
 
             BluetoothDevice.BOND_NONE ->
                 "BOND_NONE"
@@ -1254,9 +1141,7 @@ class DtcoBluetoothDiagnostic(
         type: Int
     ): String {
 
-        return when (
-            type
-        ) {
+        return when (type) {
 
             BluetoothDevice.DEVICE_TYPE_CLASSIC ->
                 "CLASSIC"
@@ -1279,9 +1164,7 @@ class DtcoBluetoothDiagnostic(
         state: Int
     ): String {
 
-        return when (
-            state
-        ) {
+        return when (state) {
 
             BluetoothProfile.STATE_DISCONNECTED ->
                 "DISCONNECTED"
@@ -1295,6 +1178,9 @@ class DtcoBluetoothDiagnostic(
             BluetoothProfile.STATE_DISCONNECTING ->
                 "DISCONNECTING"
 
+            -1 ->
+                "ERROR"
+
             else ->
                 "UNKNOWN($state)"
         }
@@ -1304,9 +1190,7 @@ class DtcoBluetoothDiagnostic(
         status: Int
     ): String {
 
-        return when (
-            status
-        ) {
+        return when (status) {
 
             BluetoothGatt.GATT_SUCCESS ->
                 "GATT_SUCCESS"
@@ -1347,9 +1231,7 @@ class DtcoBluetoothDiagnostic(
         type: Int
     ): String {
 
-        return when (
-            type
-        ) {
+        return when (type) {
 
             BluetoothGattService.SERVICE_TYPE_PRIMARY ->
                 "PRIMARY"
@@ -1373,77 +1255,59 @@ class DtcoBluetoothDiagnostic(
             properties and
             BluetoothGattCharacteristic.PROPERTY_BROADCAST != 0
         ) {
-            result.add(
-                "BROADCAST"
-            )
+            result.add("BROADCAST")
         }
 
         if (
             properties and
             BluetoothGattCharacteristic.PROPERTY_READ != 0
         ) {
-            result.add(
-                "READ"
-            )
+            result.add("READ")
         }
 
         if (
             properties and
             BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
         ) {
-            result.add(
-                "WRITE_NO_RESPONSE"
-            )
+            result.add("WRITE_NO_RESPONSE")
         }
 
         if (
             properties and
             BluetoothGattCharacteristic.PROPERTY_WRITE != 0
         ) {
-            result.add(
-                "WRITE"
-            )
+            result.add("WRITE")
         }
 
         if (
             properties and
             BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
         ) {
-            result.add(
-                "NOTIFY"
-            )
+            result.add("NOTIFY")
         }
 
         if (
             properties and
             BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
         ) {
-            result.add(
-                "INDICATE"
-            )
+            result.add("INDICATE")
         }
 
         if (
             properties and
             BluetoothGattCharacteristic.PROPERTY_SIGNED_WRITE != 0
         ) {
-            result.add(
-                "SIGNED_WRITE"
-            )
+            result.add("SIGNED_WRITE")
         }
 
         if (
             properties and
             BluetoothGattCharacteristic.PROPERTY_EXTENDED_PROPS != 0
         ) {
-            result.add(
-                "EXTENDED_PROPS"
-            )
+            result.add("EXTENDED_PROPS")
         }
 
-        return if (
-            result.isEmpty()
-        ) {
+        return if (result.isEmpty()) {
 
             "NONE"
 
