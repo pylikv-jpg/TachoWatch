@@ -7,7 +7,6 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.pm.PackageManager
@@ -41,10 +40,10 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "BLE-RHMI-D1-ACTIVITY-1"
+            "BLE-RHMI-BASIC-DATA-1"
 
         private const val MAX_LOG_LINES =
-            5000
+            6000
 
         private const val INITIAL_CREDITS =
             1
@@ -106,15 +105,55 @@ class DtcoBluetoothDiagnostic(
         val mode: SubscriptionMode
     )
 
+    private data class BasicReadRequest(
+        val did: Int,
+        val name: String,
+        val expectedLength: Int
+    )
+
+    private val basicRequests =
+        listOf(
+            BasicReadRequest(
+                did = 0xF903,
+                name = "Driver1WorkingState",
+                expectedLength = 1
+            ),
+            BasicReadRequest(
+                did = 0xF923,
+                name = "Driver1ContinuousDrivingTime",
+                expectedLength = 2
+            ),
+            BasicReadRequest(
+                did = 0xF925,
+                name = "Driver1CumulativeBreakTime",
+                expectedLength = 2
+            ),
+            BasicReadRequest(
+                did = 0xF927,
+                name = "Driver1CurrentDurationOfSelectedActivity",
+                expectedLength = 2
+            ),
+            BasicReadRequest(
+                did = 0xF938,
+                name = "Driver1CumulatedDrivingTimePreviousAndCurrentWeek",
+                expectedLength = 2
+            ),
+            BasicReadRequest(
+                did = 0xF99A,
+                name = "Driver1CurrentDailyDrivingTime",
+                expectedLength = 2
+            ),
+            BasicReadRequest(
+                did = 0xF99B,
+                name = "Driver1CurrentWeeklyDrivingTime",
+                expectedLength = 2
+            )
+        )
+
     private val mainHandler =
         Handler(
             Looper.getMainLooper()
         )
-
-    private val bluetoothManager =
-        context.getSystemService(
-            Context.BLUETOOTH_SERVICE
-        ) as BluetoothManager
 
     private val logLines =
         CopyOnWriteArrayList<String>()
@@ -159,10 +198,6 @@ class DtcoBluetoothDiagnostic(
         false
 
     @Volatile
-    private var openPositiveResponseReceived =
-        false
-
-    @Volatile
     private var statusRequestSent =
         false
 
@@ -171,12 +206,23 @@ class DtcoBluetoothDiagnostic(
         Int? = null
 
     @Volatile
-    private var activityRequestSent =
+    private var basicReadStarted =
         false
 
     @Volatile
-    private var driver1WorkingState:
+    private var basicReadIndex =
+        0
+
+    @Volatile
+    private var waitingForBasicResponse =
+        false
+
+    @Volatile
+    private var currentBasicDid:
         Int? = null
+
+    private val basicResults =
+        linkedMapOf<Int, String>()
 
     fun hasConnectPermission():
         Boolean {
@@ -218,6 +264,7 @@ class DtcoBluetoothDiagnostic(
 
         logLines.clear()
         subscriptionQueue.clear()
+        basicResults.clear()
 
         currentDevice =
             device
@@ -243,19 +290,22 @@ class DtcoBluetoothDiagnostic(
         openRequestSent =
             false
 
-        openPositiveResponseReceived =
-            false
-
         statusRequestSent =
             false
 
         finalRhmiStatus =
             null
 
-        activityRequestSent =
+        basicReadStarted =
             false
 
-        driver1WorkingState =
+        basicReadIndex =
+            0
+
+        waitingForBasicResponse =
+            false
+
+        currentBasicDid =
             null
 
         appendLog(
@@ -275,19 +325,19 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "READ-ONLY TEST"
+            "READ-ONLY BASIC DATA TEST"
         )
 
         appendLog(
-            "Карта водителя: ЗАПИСИ НЕТ"
+            "Запись в карту водителя: НЕТ"
         )
 
         appendLog(
-            "Деятельность водителя: ИЗМЕНЕНИЯ НЕТ"
+            "Изменение деятельности: НЕТ"
         )
 
         appendLog(
-            "DTCO: ИЗМЕНЕНИЯ ДАННЫХ НЕТ"
+            "Изменение данных DTCO: НЕТ"
         )
 
         appendLog(
@@ -295,15 +345,11 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "После открытия RHMI читаем только:"
+            "Читаем 7 параметров Driver 1"
         )
 
         appendLog(
-            "Driver1WorkingState DID F903"
-        )
-
-        appendLog(
-            "UDS ReadDataByIdentifier = 22 F9 03"
+            "через UDS ReadDataByIdentifier."
         )
 
         appendLog(
@@ -396,14 +442,6 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Open request sent = $openRequestSent"
-        )
-
-        appendLog(
-            "Open positive response = $openPositiveResponseReceived"
-        )
-
-        appendLog(
             "RHMI status = ${
                 finalRhmiStatus?.let {
                     "0x${
@@ -417,15 +455,19 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Activity request sent = $activityRequestSent"
+            "Basic read started = $basicReadStarted"
         )
 
         appendLog(
-            "Driver1WorkingState = ${
-                driver1WorkingState?.let {
-                    "$it (${driverActivityToString(it)})"
-                } ?: "UNKNOWN"
-            }"
+            "Basic read index = $basicReadIndex / ${basicRequests.size}"
+        )
+
+        appendLog(
+            "Waiting response = $waitingForBasicResponse"
+        )
+
+        appendLog(
+            "Results = ${basicResults.size}"
         )
 
         appendLog(
@@ -536,6 +578,9 @@ class DtcoBluetoothDiagnostic(
                             false
 
                         servicesDiscovered =
+                            false
+
+                        waitingForBasicResponse =
                             false
 
                         appendLog(
@@ -997,11 +1042,9 @@ class DtcoBluetoothDiagnostic(
 
             mainHandler.postDelayed(
                 {
-
                     subscribeNext(
                         gatt
                     )
-
                 },
                 100L
             )
@@ -1024,11 +1067,9 @@ class DtcoBluetoothDiagnostic(
 
             mainHandler.postDelayed(
                 {
-
                     subscribeNext(
                         gatt
                     )
-
                 },
                 100L
             )
@@ -1090,11 +1131,9 @@ class DtcoBluetoothDiagnostic(
 
             mainHandler.postDelayed(
                 {
-
                     subscribeNext(
                         gatt
                     )
-
                 },
                 120L
             )
@@ -1372,26 +1411,26 @@ class DtcoBluetoothDiagnostic(
             return
         }
 
-        /*
-         * После открытия RHMI и получения
-         * статуса 0x10 ждём credit для F903.
-         */
         if (
             finalRhmiStatus ==
             0x10 &&
-            diagnosticsTxCredits > 0 &&
-            !activityRequestSent
+            basicReadStarted &&
+            !waitingForBasicResponse &&
+            basicReadIndex <
+            basicRequests.size &&
+            diagnosticsTxCredits >
+            0
         ) {
 
             mainHandler.postDelayed(
                 {
 
-                    sendDriver1ActivityRequest(
+                    sendCurrentBasicRequest(
                         gatt
                     )
 
                 },
-                250L
+                200L
             )
         }
     }
@@ -1403,10 +1442,6 @@ class DtcoBluetoothDiagnostic(
         if (
             value.isEmpty()
         ) {
-
-            appendLog(
-                "Download Credits EMPTY"
-            )
 
             return
         }
@@ -1428,10 +1463,6 @@ class DtcoBluetoothDiagnostic(
         }
 
         appendLog(
-            "Download TX Credits = $downloadTxCredits"
-        )
-
-        appendLog(
             "Download FIFO НЕ используем."
         )
     }
@@ -1442,19 +1473,10 @@ class DtcoBluetoothDiagnostic(
     ) {
 
         if (
-            openRequestSent
+            openRequestSent ||
+            diagnosticsTxCredits <=
+            0
         ) {
-
-            return
-        }
-
-        if (
-            diagnosticsTxCredits <= 0
-        ) {
-
-            appendLog(
-                "OPEN RHMI: нет Diagnostics Credits."
-            )
 
             return
         }
@@ -1462,18 +1484,7 @@ class DtcoBluetoothDiagnostic(
         val fifo =
             getDiagnosticsFifo(
                 gatt
-            )
-
-        if (
-            fifo == null
-        ) {
-
-            appendLog(
-                "Diagnostics FIFO NOT FOUND"
-            )
-
-            return
-        }
+            ) ?: return
 
         val packet =
             byteArrayOf(
@@ -1505,14 +1516,6 @@ class DtcoBluetoothDiagnostic(
             "Transport packet: ${bytesToHex(packet)}"
         )
 
-        appendLog(
-            "Карта водителя НЕ изменяется."
-        )
-
-        appendLog(
-            "Деятельность НЕ изменяется."
-        )
-
         val started =
             writeCharacteristicCompat(
                 gatt,
@@ -1533,11 +1536,6 @@ class DtcoBluetoothDiagnostic(
 
             diagnosticsTxCredits -=
                 1
-
-            appendLog(
-                "Remaining Diagnostics TX Credits = " +
-                    diagnosticsTxCredits
-            )
         }
 
         appendLog(
@@ -1587,23 +1585,28 @@ class DtcoBluetoothDiagnostic(
         )
 
         /*
-         * OpenRHMISession:
-         * positive = 71 01 F2 11
+         * OpenRHMISession positive.
          */
         if (
-            appData.size >= 4 &&
-            (appData[0].toInt() and 0xFF) ==
+            appData.size >=
+            4 &&
+            unsigned(
+                appData[0]
+            ) ==
             0x71 &&
-            (appData[1].toInt() and 0xFF) ==
+            unsigned(
+                appData[1]
+            ) ==
             0x01 &&
-            (appData[2].toInt() and 0xFF) ==
+            unsigned(
+                appData[2]
+            ) ==
             0xF2 &&
-            (appData[3].toInt() and 0xFF) ==
+            unsigned(
+                appData[3]
+            ) ==
             0x11
         ) {
-
-            openPositiveResponseReceived =
-                true
 
             appendLog(
                 ""
@@ -1624,7 +1627,7 @@ class DtcoBluetoothDiagnostic(
             mainHandler.postDelayed(
                 {
 
-                    grantDiagnosticsCreditForStatus(
+                    grantCreditForRhmiStatus(
                         gatt
                     )
 
@@ -1636,26 +1639,36 @@ class DtcoBluetoothDiagnostic(
         }
 
         /*
-         * GetRHMISessionStatus:
-         * positive = 71 03 F2 11 XX
+         * RHMI status.
          */
         if (
-            appData.size >= 5 &&
-            (appData[0].toInt() and 0xFF) ==
+            appData.size >=
+            5 &&
+            unsigned(
+                appData[0]
+            ) ==
             0x71 &&
-            (appData[1].toInt() and 0xFF) ==
+            unsigned(
+                appData[1]
+            ) ==
             0x03 &&
-            (appData[2].toInt() and 0xFF) ==
+            unsigned(
+                appData[2]
+            ) ==
             0xF2 &&
-            (appData[3].toInt() and 0xFF) ==
+            unsigned(
+                appData[3]
+            ) ==
             0x11
         ) {
 
-            val rhmiStatus =
-                appData[4].toInt() and 0xFF
+            val status =
+                unsigned(
+                    appData[4]
+                )
 
             finalRhmiStatus =
-                rhmiStatus
+                status
 
             appendLog(
                 ""
@@ -1667,9 +1680,8 @@ class DtcoBluetoothDiagnostic(
 
             appendLog(
                 "RHMIsessionStatus HEX = ${
-                    "%02X".format(
-                        Locale.US,
-                        rhmiStatus
+                    hexByte(
+                        status
                     )
                 }"
             )
@@ -1677,13 +1689,17 @@ class DtcoBluetoothDiagnostic(
             appendLog(
                 "Meaning = ${
                     rhmiStatusToString(
-                        rhmiStatus
+                        status
                     )
                 }"
             )
 
+            appendLog(
+                "***************************************"
+            )
+
             if (
-                rhmiStatus ==
+                status ==
                 0x10
             ) {
 
@@ -1695,18 +1711,10 @@ class DtcoBluetoothDiagnostic(
                     ">>> REMOTE HMI SESSION OPENED <<<"
                 )
 
-                appendLog(
-                    "Следующий шаг: READ-ONLY F903."
-                )
-
-                /*
-                 * Даём DTCO один credit для ответа
-                 * на чтение Driver1WorkingState.
-                 */
                 mainHandler.postDelayed(
                     {
 
-                        grantDiagnosticsCreditForActivity(
+                        startBasicReads(
                             gatt
                         )
 
@@ -1715,108 +1723,77 @@ class DtcoBluetoothDiagnostic(
                 )
             }
 
-            appendLog(
-                "***************************************"
-            )
-
             return
         }
 
         /*
-         * ReadDataByIdentifier F903:
-         *
-         * request:
-         * 22 F9 03
-         *
-         * positive:
-         * 62 F9 03 XX
+         * ReadDataByIdentifier positive.
          */
         if (
-            appData.size >= 4 &&
-            (appData[0].toInt() and 0xFF) ==
-            0x62 &&
-            (appData[1].toInt() and 0xFF) ==
-            0xF9 &&
-            (appData[2].toInt() and 0xFF) ==
-            0x03
+            appData.size >=
+            3 &&
+            unsigned(
+                appData[0]
+            ) ==
+            0x62
         ) {
 
-            val state =
-                appData[3].toInt() and 0xFF
-
-            driver1WorkingState =
-                state
-
-            appendLog(
-                ""
-            )
-
-            appendLog(
-                "*********************************************"
-            )
-
-            appendLog(
-                "DRIVER 1 WORKING STATE RECEIVED"
-            )
-
-            appendLog(
-                "DID = F903"
-            )
-
-            appendLog(
-                "RAW HEX = ${
-                    "%02X".format(
-                        Locale.US,
-                        state
+            val did =
+                (
+                    unsigned(
+                        appData[1]
+                    ) shl 8
+                    ) or
+                    unsigned(
+                        appData[2]
                     )
-                }"
-            )
 
-            appendLog(
-                "VALUE = $state"
-            )
+            val data =
+                if (
+                    appData.size >
+                    3
+                ) {
 
-            appendLog(
-                "ACTIVITY = ${
-                    driverActivityToString(
-                        state
+                    appData.copyOfRange(
+                        3,
+                        appData.size
                     )
-                }"
-            )
 
-            appendLog(
-                "*********************************************"
-            )
+                } else {
 
-            appendLog(
-                ""
-            )
+                    byteArrayOf()
+                }
 
-            appendLog(
-                ">>> FIRST DRIVER DATA READ SUCCESS <<<"
-            )
-
-            appendLog(
-                "Карта/DTCO при этом НЕ изменялись."
+            handleBasicPositiveResponse(
+                gatt,
+                did,
+                data
             )
 
             return
         }
 
         /*
-         * UDS negative response
+         * UDS negative response.
          */
         if (
-            appData.size >= 3 &&
-            (appData[0].toInt() and 0xFF) ==
+            appData.size >=
+            3 &&
+            unsigned(
+                appData[0]
+            ) ==
             0x7F
         ) {
 
             val originalService =
-                appData[1].toInt() and 0xFF
+                unsigned(
+                    appData[1]
+                )
 
             val nrc =
-                appData[2].toInt() and 0xFF
+                unsigned(
+                    appData[2]
+                )
 
             appendLog(
                 ""
@@ -1828,8 +1805,7 @@ class DtcoBluetoothDiagnostic(
 
             appendLog(
                 "Original service = ${
-                    "%02X".format(
-                        Locale.US,
+                    hexByte(
                         originalService
                     )
                 }"
@@ -1837,8 +1813,7 @@ class DtcoBluetoothDiagnostic(
 
             appendLog(
                 "NRC = ${
-                    "%02X".format(
-                        Locale.US,
+                    hexByte(
                         nrc
                     )
                 }"
@@ -1852,23 +1827,58 @@ class DtcoBluetoothDiagnostic(
                 }"
             )
 
+            if (
+                waitingForBasicResponse
+            ) {
+
+                val failedDid =
+                    currentBasicDid
+
+                if (
+                    failedDid !=
+                    null
+                ) {
+
+                    basicResults[
+                        failedDid
+                    ] =
+                        "NOT AVAILABLE / NRC ${
+                            hexByte(
+                                nrc
+                            )
+                        }"
+                }
+
+                waitingForBasicResponse =
+                    false
+
+                currentBasicDid =
+                    null
+
+                basicReadIndex +=
+                    1
+
+                mainHandler.postDelayed(
+                    {
+
+                        prepareNextBasicRequest(
+                            gatt
+                        )
+
+                    },
+                    300L
+                )
+            }
+
             appendLog(
                 "***************************************"
             )
         }
     }
 
-    private fun grantDiagnosticsCreditForStatus(
+    private fun grantCreditForRhmiStatus(
         gatt: BluetoothGatt
     ) {
-
-        appendLog(
-            ""
-        )
-
-        appendLog(
-            "STEP 7A: grant Diagnostics RX credit"
-        )
 
         sendCredit(
             gatt,
@@ -1880,9 +1890,9 @@ class DtcoBluetoothDiagnostic(
         mainHandler.postDelayed(
             {
 
-                trySendRhmiStatusRequest(
+                trySendRhmiStatus(
                     gatt,
-                    attempt = 1
+                    1
                 )
 
             },
@@ -1890,7 +1900,7 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
-    private fun trySendRhmiStatusRequest(
+    private fun trySendRhmiStatus(
         gatt: BluetoothGatt,
         attempt: Int
     ) {
@@ -1920,21 +1930,16 @@ class DtcoBluetoothDiagnostic(
         ) {
 
             appendLog(
-                "STATUS REQUEST: TX Credit не получен."
+                "RHMI STATUS: TX Credit не получен."
             )
 
             return
         }
 
-        appendLog(
-            "STATUS REQUEST: ждём Diagnostics Credit " +
-                "(attempt $attempt)"
-        )
-
         mainHandler.postDelayed(
             {
 
-                trySendRhmiStatusRequest(
+                trySendRhmiStatus(
                     gatt,
                     attempt + 1
                 )
@@ -1950,20 +1955,10 @@ class DtcoBluetoothDiagnostic(
     ) {
 
         if (
-            statusRequestSent
-        ) {
-
-            return
-        }
-
-        if (
+            statusRequestSent ||
             diagnosticsTxCredits <=
             0
         ) {
-
-            appendLog(
-                "STATUS REQUEST: нет TX Credits."
-            )
 
             return
         }
@@ -1971,19 +1966,7 @@ class DtcoBluetoothDiagnostic(
         val fifo =
             getDiagnosticsFifo(
                 gatt
-            )
-
-        if (
-            fifo ==
-            null
-        ) {
-
-            appendLog(
-                "Diagnostics FIFO NOT FOUND"
-            )
-
-            return
-        }
+            ) ?: return
 
         val packet =
             byteArrayOf(
@@ -2000,19 +1983,7 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "========================================"
-        )
-
-        appendLog(
-            "STEP 7B: GET RHMI SESSION STATUS"
-        )
-
-        appendLog(
-            "Application: 31 03 F2 11"
-        )
-
-        appendLog(
-            "Transport packet: ${bytesToHex(packet)}"
+            "STEP 7: GET RHMI SESSION STATUS"
         )
 
         val started =
@@ -2023,7 +1994,7 @@ class DtcoBluetoothDiagnostic(
             )
 
         appendLog(
-            "Diagnostics FIFO write started = $started"
+            "FIFO write started = $started"
         )
 
         if (
@@ -2035,34 +2006,37 @@ class DtcoBluetoothDiagnostic(
 
             diagnosticsTxCredits -=
                 1
-
-            appendLog(
-                "Remaining Diagnostics TX Credits = " +
-                    diagnosticsTxCredits
-            )
         }
-
-        appendLog(
-            "========================================"
-        )
     }
 
     /*
      * ============================================================
-     * DRIVER 1 ACTIVITY — DID F903
+     * BASIC DATA READING
      * ============================================================
      */
 
-    private fun grantDiagnosticsCreditForActivity(
+    private fun startBasicReads(
         gatt: BluetoothGatt
     ) {
 
         if (
-            activityRequestSent
+            basicReadStarted
         ) {
 
             return
         }
+
+        basicReadStarted =
+            true
+
+        basicReadIndex =
+            0
+
+        waitingForBasicResponse =
+            false
+
+        currentBasicDid =
+            null
 
         appendLog(
             ""
@@ -2073,28 +2047,100 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "STEP 8A: prepare READ F903"
+            "STEP 8: BASIC DRIVER DATA"
         )
 
         appendLog(
-            "Grant one Diagnostics RX credit"
+            "Запросов: ${basicRequests.size}"
         )
+
+        basicRequests.forEachIndexed {
+                index,
+                item ->
+
+            appendLog(
+                "${index + 1}. ${
+                    hexDid(
+                        item.did
+                    )
+                } — ${item.name}"
+            )
+        }
 
         appendLog(
             "========================================"
         )
 
+        prepareNextBasicRequest(
+            gatt
+        )
+    }
+
+    private fun prepareNextBasicRequest(
+        gatt: BluetoothGatt
+    ) {
+
+        if (
+            basicReadIndex >=
+            basicRequests.size
+        ) {
+
+            finishBasicReads()
+
+            return
+        }
+
+        if (
+            waitingForBasicResponse
+        ) {
+
+            return
+        }
+
+        val request =
+            basicRequests[
+                basicReadIndex
+            ]
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "----------------------------------------"
+        )
+
+        appendLog(
+            "PREPARE READ ${basicReadIndex + 1}/${basicRequests.size}"
+        )
+
+        appendLog(
+            "DID = ${hexDid(request.did)}"
+        )
+
+        appendLog(
+            "Name = ${request.name}"
+        )
+
+        appendLog(
+            "Grant one Diagnostics RX credit."
+        )
+
+        /*
+         * Даём DTCO возможность вернуть
+         * один FIFO response.
+         */
         sendCredit(
             gatt,
             UUID_DIAGNOSTICS_SERVICE,
             UUID_DIAGNOSTICS_CREDITS,
-            "Diagnostics-for-F903"
+            "Diagnostics-for-${hexDid(request.did)}"
         )
 
         mainHandler.postDelayed(
             {
 
-                trySendDriver1ActivityRequest(
+                trySendCurrentBasicRequest(
                     gatt,
                     attempt = 1
                 )
@@ -2104,13 +2150,13 @@ class DtcoBluetoothDiagnostic(
         )
     }
 
-    private fun trySendDriver1ActivityRequest(
+    private fun trySendCurrentBasicRequest(
         gatt: BluetoothGatt,
         attempt: Int
     ) {
 
         if (
-            activityRequestSent
+            waitingForBasicResponse
         ) {
 
             return
@@ -2121,7 +2167,7 @@ class DtcoBluetoothDiagnostic(
             0
         ) {
 
-            sendDriver1ActivityRequest(
+            sendCurrentBasicRequest(
                 gatt
             )
 
@@ -2130,54 +2176,73 @@ class DtcoBluetoothDiagnostic(
 
         if (
             attempt >=
-            10
+            12
         ) {
 
+            val request =
+                basicRequests[
+                    basicReadIndex
+                ]
+
             appendLog(
-                "F903 REQUEST: TX Credit не получен."
+                "Нет TX Credit для ${
+                    hexDid(
+                        request.did
+                    )
+                }"
+            )
+
+            basicResults[
+                request.did
+            ] =
+                "NO TX CREDIT"
+
+            basicReadIndex +=
+                1
+
+            mainHandler.postDelayed(
+                {
+
+                    prepareNextBasicRequest(
+                        gatt
+                    )
+
+                },
+                250L
             )
 
             return
         }
 
         appendLog(
-            "F903 REQUEST: ждём Diagnostics Credit " +
+            "Ждём TX Credit для следующего READ " +
                 "(attempt $attempt)"
         )
 
         mainHandler.postDelayed(
             {
 
-                trySendDriver1ActivityRequest(
+                trySendCurrentBasicRequest(
                     gatt,
                     attempt + 1
                 )
 
             },
-            300L
+            250L
         )
     }
 
     @SuppressLint("MissingPermission")
-    private fun sendDriver1ActivityRequest(
+    private fun sendCurrentBasicRequest(
         gatt: BluetoothGatt
     ) {
 
         if (
-            activityRequestSent
+            basicReadIndex >=
+            basicRequests.size
         ) {
 
-            return
-        }
-
-        if (
-            finalRhmiStatus !=
-            0x10
-        ) {
-
-            appendLog(
-                "F903 READ запрещён: RHMI session не OPEN."
-            )
+            finishBasicReads()
 
             return
         }
@@ -2187,47 +2252,46 @@ class DtcoBluetoothDiagnostic(
             0
         ) {
 
-            appendLog(
-                "F903 READ запрещён: нет TX Credits."
-            )
-
             return
         }
+
+        val request =
+            basicRequests[
+                basicReadIndex
+            ]
 
         val fifo =
             getDiagnosticsFifo(
                 gatt
-            )
+            ) ?: return
 
-        if (
-            fifo ==
-            null
-        ) {
+        val didHigh =
+            (
+                request.did shr 8
+                ).toByte()
 
-            appendLog(
-                "Diagnostics FIFO NOT FOUND"
-            )
-
-            return
-        }
+        val didLow =
+            (
+                request.did and
+                    0xFF
+                ).toByte()
 
         /*
-         * Application:
+         * UDS:
          *
-         * 22 F9 03
+         * 22 DID_H DID_L
          *
-         * BLE transport:
+         * Transport:
          *
-         * 01 = total packets
-         * 01 = packet number
+         * 01 01
          */
         val packet =
             byteArrayOf(
                 0x01,
                 0x01,
                 0x22,
-                0xF9.toByte(),
-                0x03
+                didHigh,
+                didLow
             )
 
         appendLog(
@@ -2239,35 +2303,27 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "STEP 8B: READ DRIVER 1 WORKING STATE"
+            "READ ${basicReadIndex + 1}/${basicRequests.size}"
         )
 
         appendLog(
-            "UDS service: ReadDataByIdentifier"
+            "DID = ${hexDid(request.did)}"
         )
 
         appendLog(
-            "DID: F903"
+            "Name = ${request.name}"
         )
 
         appendLog(
-            "Application: 22 F9 03"
+            "Application = 22 ${hexDidSpaced(request.did)}"
         )
 
         appendLog(
-            "Transport packet: ${bytesToHex(packet)}"
+            "Transport = ${bytesToHex(packet)}"
         )
 
         appendLog(
-            "Операция READ-ONLY."
-        )
-
-        appendLog(
-            "Никакой деятельности не меняем."
-        )
-
-        appendLog(
-            "Никаких данных в карту не записываем."
+            "READ-ONLY"
         )
 
         val started =
@@ -2278,24 +2334,238 @@ class DtcoBluetoothDiagnostic(
             )
 
         appendLog(
-            "Diagnostics FIFO write started = $started"
+            "FIFO write started = $started"
         )
 
         if (
             started
         ) {
 
-            activityRequestSent =
-                true
-
             diagnosticsTxCredits -=
                 1
 
-            appendLog(
-                "Remaining Diagnostics TX Credits = " +
-                    diagnosticsTxCredits
+            waitingForBasicResponse =
+                true
+
+            currentBasicDid =
+                request.did
+
+        } else {
+
+            basicResults[
+                request.did
+            ] =
+                "WRITE START FAILED"
+
+            basicReadIndex +=
+                1
+
+            mainHandler.postDelayed(
+                {
+
+                    prepareNextBasicRequest(
+                        gatt
+                    )
+
+                },
+                250L
             )
         }
+
+        appendLog(
+            "========================================"
+        )
+    }
+
+    private fun handleBasicPositiveResponse(
+        gatt: BluetoothGatt,
+        did: Int,
+        data: ByteArray
+    ) {
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "******** BASIC DATA RESPONSE ********"
+        )
+
+        appendLog(
+            "DID = ${hexDid(did)}"
+        )
+
+        appendLog(
+            "DATA HEX = ${bytesToHex(data)}"
+        )
+
+        val result =
+            decodeBasicDid(
+                did,
+                data
+            )
+
+        basicResults[
+            did
+        ] =
+            result
+
+        appendLog(
+            "DECODED = $result"
+        )
+
+        appendLog(
+            "*************************************"
+        )
+
+        if (
+            waitingForBasicResponse &&
+            currentBasicDid ==
+            did
+        ) {
+
+            waitingForBasicResponse =
+                false
+
+            currentBasicDid =
+                null
+
+            basicReadIndex +=
+                1
+
+            mainHandler.postDelayed(
+                {
+
+                    prepareNextBasicRequest(
+                        gatt
+                    )
+
+                },
+                300L
+            )
+        }
+    }
+
+    private fun decodeBasicDid(
+        did: Int,
+        data: ByteArray
+    ): String {
+
+        return when (
+            did
+        ) {
+
+            0xF903 -> {
+
+                if (
+                    data.isEmpty()
+                ) {
+
+                    "EMPTY"
+
+                } else {
+
+                    val activity =
+                        unsigned(
+                            data[0]
+                        )
+
+                    "$activity — ${
+                        driverActivityToString(
+                            activity
+                        )
+                    }"
+                }
+            }
+
+            0xF923,
+            0xF925,
+            0xF927,
+            0xF938,
+            0xF99A,
+            0xF99B -> {
+
+                if (
+                    data.size <
+                    2
+                ) {
+
+                    "INVALID LENGTH ${data.size}"
+
+                } else {
+
+                    val minutes =
+                        decodeUnsigned16(
+                            data[0],
+                            data[1]
+                        )
+
+                    "$minutes min = ${
+                        formatMinutes(
+                            minutes
+                        )
+                    }"
+                }
+            }
+
+            else -> {
+
+                "RAW ${bytesToHex(data)}"
+            }
+        }
+    }
+
+    private fun finishBasicReads() {
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "BASIC DATA READ COMPLETE"
+        )
+
+        appendLog(
+            "========================================"
+        )
+
+        basicRequests.forEach {
+                request ->
+
+            val result =
+                basicResults[
+                    request.did
+                ] ?: "NO RESPONSE"
+
+            appendLog(
+                "${hexDid(request.did)} " +
+                    "${request.name}"
+            )
+
+            appendLog(
+                "  -> $result"
+            )
+        }
+
+        appendLog(
+            "========================================"
+        )
+
+        appendLog(
+            "Запись в карту: 0 операций"
+        )
+
+        appendLog(
+            "Изменение деятельности: 0 операций"
+        )
+
+        appendLog(
+            "Download FIFO: 0 запросов"
+        )
 
         appendLog(
             "========================================"
@@ -2315,6 +2585,41 @@ class DtcoBluetoothDiagnostic(
             ?.getCharacteristic(
                 UUID_DIAGNOSTICS_FIFO
             )
+    }
+
+    private fun decodeUnsigned16(
+        high: Byte,
+        low: Byte
+    ): Int {
+
+        return (
+            unsigned(
+                high
+            ) shl 8
+            ) or
+            unsigned(
+                low
+            )
+    }
+
+    private fun formatMinutes(
+        minutes: Int
+    ): String {
+
+        val hours =
+            minutes /
+                60
+
+        val mins =
+            minutes %
+                60
+
+        return String.format(
+            Locale.US,
+            "%d:%02d",
+            hours,
+            mins
+        )
     }
 
     private fun driverActivityToString(
@@ -2338,7 +2643,7 @@ class DtcoBluetoothDiagnostic(
                 "ВОЖДЕНИЕ"
 
             else ->
-                "НЕИЗВЕСТНОЕ ЗНАЧЕНИЕ ($value)"
+                "НЕИЗВЕСТНО ($value)"
         }
     }
 
@@ -2354,24 +2659,23 @@ class DtcoBluetoothDiagnostic(
                 "Сессия закрыта; открытие возможно"
 
             0x01 ->
-                "Сессия закрыта; ожидается решение пользователя"
+                "Ожидается решение пользователя"
 
             0x10 ->
                 "Remote HMI session ОТКРЫТА"
 
             0x20 ->
-                "Remote HMI отклонена пользователем"
+                "Remote HMI отклонена"
 
             0x21 ->
-                "Используется локальный интерфейс DTCO"
+                "Используется локальный HMI"
 
             0x2F ->
-                "Общие условия Remote HMI не выполнены"
+                "Общие условия RHMI не выполнены"
 
             else ->
-                "Неизвестный статус 0x${
-                    "%02X".format(
-                        Locale.US,
+                "Неизвестный статус ${
+                    hexByte(
                         status
                     )
                 }"
@@ -2405,7 +2709,7 @@ class DtcoBluetoothDiagnostic(
                 "conditionsNotCorrect"
 
             0x31 ->
-                "requestOutOfRange"
+                "requestOutOfRange / DID unavailable"
 
             0x33 ->
                 "securityAccessDenied"
@@ -2414,9 +2718,8 @@ class DtcoBluetoothDiagnostic(
                 "subFunctionNotSupportedInActiveSession"
 
             else ->
-                "NRC 0x${
-                    "%02X".format(
-                        Locale.US,
+                "NRC ${
+                    hexByte(
                         nrc
                     )
                 }"
@@ -2520,6 +2823,51 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
+    private fun unsigned(
+        value: Byte
+    ): Int {
+
+        return value.toInt() and
+            0xFF
+    }
+
+    private fun hexByte(
+        value: Int
+    ): String {
+
+        return "%02X".format(
+            Locale.US,
+            value and
+                0xFF
+        )
+    }
+
+    private fun hexDid(
+        did: Int
+    ): String {
+
+        return "%04X".format(
+            Locale.US,
+            did and
+                0xFFFF
+        )
+    }
+
+    private fun hexDidSpaced(
+        did: Int
+    ): String {
+
+        return "${
+            hexByte(
+                did shr 8
+            )
+        } ${
+            hexByte(
+                did
+            )
+        }"
+    }
+
     private fun bytesToHex(
         bytes: ByteArray
     ): String {
@@ -2537,7 +2885,9 @@ class DtcoBluetoothDiagnostic(
 
             "%02X".format(
                 Locale.US,
-                it.toInt() and 0xFF
+                unsigned(
+                    it
+                )
             )
         }
     }
@@ -2587,6 +2937,9 @@ class DtcoBluetoothDiagnostic(
             false
 
         servicesDiscovered =
+            false
+
+        waitingForBasicResponse =
             false
 
         appendLog(
