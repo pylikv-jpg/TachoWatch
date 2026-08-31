@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.pm.PackageManager
@@ -37,7 +39,7 @@ class DtcoBluetoothDiagnostic(
     companion object {
 
         private const val VERSION =
-            "BLE-CONNECT-ONLY-1"
+            "BLE-GATT-MAP-1"
 
         private const val UI_REFRESH_MS =
             400L
@@ -46,7 +48,7 @@ class DtcoBluetoothDiagnostic(
             3000L
 
         private const val MAX_LOG_LINES =
-            1200
+            2000
     }
 
     private val mainHandler =
@@ -223,19 +225,27 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Режим: BLE GATT"
+            "Режим: BLE GATT SERVICE MAP"
         )
 
         appendLog(
-            "discoverServices(): НЕ запускается"
+            "discoverServices(): ВКЛЮЧЕНО"
         )
 
         appendLog(
-            "Чтение характеристик: НЕ выполняется"
+            "Чтение значений характеристик: ОТКЛЮЧЕНО"
         )
 
         appendLog(
-            "Запись данных в DTCO: ОТКЛЮЧЕНА"
+            "Подписка NOTIFY/INDICATE: ОТКЛЮЧЕНА"
+        )
+
+        appendLog(
+            "Запись характеристик: ОТКЛЮЧЕНА"
+        )
+
+        appendLog(
+            "Запись descriptors: ОТКЛЮЧЕНА"
         )
 
         appendLog(
@@ -259,11 +269,11 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "Если DTCO запросит подтверждение — подтвердить."
+            "После CONNECTED автоматически запустим discoverServices()."
         )
 
         appendLog(
-            "После CONNECTED соединение будет просто удерживаться."
+            "В DTCO ничего записываться не будет."
         )
 
         appendLog(
@@ -363,6 +373,7 @@ class DtcoBluetoothDiagnostic(
         object :
             BluetoothGattCallback() {
 
+            @SuppressLint("MissingPermission")
             override fun onConnectionStateChange(
                 gatt: BluetoothGatt,
                 status: Int,
@@ -414,11 +425,7 @@ class DtcoBluetoothDiagnostic(
                         )
 
                         appendLog(
-                            "discoverServices() намеренно НЕ запускаем."
-                        )
-
-                        appendLog(
-                            "Теперь только удерживаем соединение."
+                            "STEP 2: запускаем discoverServices()"
                         )
 
                         appendLog(
@@ -431,6 +438,40 @@ class DtcoBluetoothDiagnostic(
                                 gatt.device
                             )
                         )
+
+                        try {
+
+                            val started =
+                                gatt.discoverServices()
+
+                            appendLog(
+                                "discoverServices() returned: $started"
+                            )
+
+                            if (
+                                started
+                            ) {
+
+                                appendLog(
+                                    "Ожидаем onServicesDiscovered..."
+                                )
+
+                            } else {
+
+                                appendLog(
+                                    "ОШИБКА: discoverServices() не запустился."
+                                )
+                            }
+
+                        } catch (
+                            e: Throwable
+                        ) {
+
+                            appendThrowable(
+                                "discoverServices",
+                                e
+                            )
+                        }
                     }
 
                     BluetoothProfile.STATE_DISCONNECTED -> {
@@ -514,7 +555,282 @@ class DtcoBluetoothDiagnostic(
                     }
                 }
             }
+
+            override fun onServicesDiscovered(
+                gatt: BluetoothGatt,
+                status: Int
+            ) {
+
+                appendLog(
+                    "========================================"
+                )
+
+                appendLog(
+                    "CALLBACK: onServicesDiscovered"
+                )
+
+                appendLog(
+                    "status = $status (${gattStatusToString(status)})"
+                )
+
+                if (
+                    status != BluetoothGatt.GATT_SUCCESS
+                ) {
+
+                    appendLog(
+                        "ОШИБКА: GATT Service Discovery завершился с ошибкой."
+                    )
+
+                    appendLog(
+                        "========================================"
+                    )
+
+                    return
+                }
+
+                val services =
+                    try {
+
+                        gatt.services
+
+                    } catch (
+                        e: Throwable
+                    ) {
+
+                        appendThrowable(
+                            "gatt.services",
+                            e
+                        )
+
+                        emptyList()
+                    }
+
+                appendLog(
+                    "Найдено GATT services: ${services.size}"
+                )
+
+                appendLog(
+                    "========================================"
+                )
+
+                if (
+                    services.isEmpty()
+                ) {
+
+                    appendLog(
+                        "Список services пуст."
+                    )
+
+                    return
+                }
+
+                services.forEachIndexed {
+                        serviceIndex,
+                        service ->
+
+                    dumpService(
+                        serviceIndex,
+                        service
+                    )
+                }
+
+                appendLog(
+                    "========================================"
+                )
+
+                appendLog(
+                    "GATT MAP ЗАВЕРШЁН"
+                )
+
+                appendLog(
+                    "Всего services: ${services.size}"
+                )
+
+                appendLog(
+                    "Никакие READ/WRITE/NOTIFY операции не выполнялись."
+                )
+
+                appendLog(
+                    "Пришли мне весь журнал начиная с GATT MAP."
+                )
+
+                appendLog(
+                    "========================================"
+                )
+            }
+
+            override fun onServiceChanged(
+                gatt: BluetoothGatt
+            ) {
+
+                super.onServiceChanged(
+                    gatt
+                )
+
+                appendLog(
+                    "CALLBACK: onServiceChanged"
+                )
+
+                appendLog(
+                    "GATT database устройства изменилась."
+                )
+            }
         }
+
+    private fun dumpService(
+        serviceIndex: Int,
+        service: BluetoothGattService
+    ) {
+
+        appendLog(
+            ""
+        )
+
+        appendLog(
+            "######## SERVICE [$serviceIndex] ########"
+        )
+
+        appendLog(
+            "Service UUID: ${service.uuid}"
+        )
+
+        appendLog(
+            "Service type: ${serviceTypeToString(service.type)}"
+        )
+
+        appendLog(
+            "Service instanceId: ${service.instanceId}"
+        )
+
+        val characteristics =
+            try {
+
+                service.characteristics
+
+            } catch (
+                _: Throwable
+            ) {
+
+                emptyList()
+            }
+
+        appendLog(
+            "Characteristics: ${characteristics.size}"
+        )
+
+        if (
+            characteristics.isEmpty()
+        ) {
+
+            appendLog(
+                "  (характеристик нет)"
+            )
+        }
+
+        characteristics.forEachIndexed {
+                characteristicIndex,
+                characteristic ->
+
+            appendLog(
+                "  --------------------------------------"
+            )
+
+            appendLog(
+                "  CHARACTERISTIC [$serviceIndex.$characteristicIndex]"
+            )
+
+            appendLog(
+                "  UUID: ${characteristic.uuid}"
+            )
+
+            appendLog(
+                "  instanceId: ${characteristic.instanceId}"
+            )
+
+            appendLog(
+                "  properties HEX: 0x${characteristic.properties.toString(16).uppercase(Locale.US)}"
+            )
+
+            appendLog(
+                "  properties: ${characteristicPropertiesToString(characteristic.properties)}"
+            )
+
+            appendLog(
+                "  permissions HEX: 0x${characteristic.permissions.toString(16).uppercase(Locale.US)}"
+            )
+
+            val descriptors =
+                try {
+
+                    characteristic.descriptors
+
+                } catch (
+                    _: Throwable
+                ) {
+
+                    emptyList()
+                }
+
+            appendLog(
+                "  Descriptors: ${descriptors.size}"
+            )
+
+            if (
+                descriptors.isEmpty()
+            ) {
+
+                appendLog(
+                    "    (descriptors нет)"
+                )
+            }
+
+            descriptors.forEachIndexed {
+                    descriptorIndex,
+                    descriptor ->
+
+                appendLog(
+                    "    DESCRIPTOR [$serviceIndex.$characteristicIndex.$descriptorIndex]"
+                )
+
+                appendLog(
+                    "    UUID: ${descriptor.uuid}"
+                )
+
+                appendLog(
+                    "    permissions HEX: 0x${descriptor.permissions.toString(16).uppercase(Locale.US)}"
+                )
+            }
+        }
+
+        val includedServices =
+            try {
+
+                service.includedServices
+
+            } catch (
+                _: Throwable
+            ) {
+
+                emptyList()
+            }
+
+        appendLog(
+            "Included services: ${includedServices.size}"
+        )
+
+        includedServices.forEachIndexed {
+                index,
+                included ->
+
+            appendLog(
+                "  Included[$index]: ${included.uuid}"
+            )
+        }
+
+        appendLog(
+            "######## END SERVICE [$serviceIndex] ########"
+        )
+    }
 
     @SuppressLint("MissingPermission")
     private fun appendDeviceInfo(
@@ -908,26 +1224,147 @@ class DtcoBluetoothDiagnostic(
             BluetoothGatt.GATT_SUCCESS ->
                 "GATT_SUCCESS"
 
-            8 ->
-                "TIMEOUT / status 8"
+            BluetoothGatt.GATT_READ_NOT_PERMITTED ->
+                "GATT_READ_NOT_PERMITTED"
 
-            19 ->
-                "PEER TERMINATED / status 19"
+            BluetoothGatt.GATT_WRITE_NOT_PERMITTED ->
+                "GATT_WRITE_NOT_PERMITTED"
 
-            22 ->
-                "LOCAL HOST TERMINATED / status 22"
+            BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION ->
+                "GATT_INSUFFICIENT_AUTHENTICATION"
 
-            62 ->
-                "FAIL ESTABLISH / status 62"
+            BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED ->
+                "GATT_REQUEST_NOT_SUPPORTED"
 
-            133 ->
-                "GATT_ERROR / status 133"
+            BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION ->
+                "GATT_INSUFFICIENT_ENCRYPTION"
 
-            257 ->
-                "GATT_FAILURE / status 257"
+            BluetoothGatt.GATT_INVALID_OFFSET ->
+                "GATT_INVALID_OFFSET"
+
+            BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH ->
+                "GATT_INVALID_ATTRIBUTE_LENGTH"
+
+            BluetoothGatt.GATT_CONNECTION_CONGESTED ->
+                "GATT_CONNECTION_CONGESTED"
+
+            BluetoothGatt.GATT_FAILURE ->
+                "GATT_FAILURE"
 
             else ->
-                "status $status"
+                "STATUS_$status"
+        }
+    }
+
+    private fun serviceTypeToString(
+        type: Int
+    ): String {
+
+        return when (
+            type
+        ) {
+
+            BluetoothGattService.SERVICE_TYPE_PRIMARY ->
+                "PRIMARY"
+
+            BluetoothGattService.SERVICE_TYPE_SECONDARY ->
+                "SECONDARY"
+
+            else ->
+                "UNKNOWN($type)"
+        }
+    }
+
+    private fun characteristicPropertiesToString(
+        properties: Int
+    ): String {
+
+        val result =
+            mutableListOf<String>()
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_BROADCAST != 0
+        ) {
+            result.add(
+                "BROADCAST"
+            )
+        }
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_READ != 0
+        ) {
+            result.add(
+                "READ"
+            )
+        }
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+        ) {
+            result.add(
+                "WRITE_NO_RESPONSE"
+            )
+        }
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_WRITE != 0
+        ) {
+            result.add(
+                "WRITE"
+            )
+        }
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
+        ) {
+            result.add(
+                "NOTIFY"
+            )
+        }
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+        ) {
+            result.add(
+                "INDICATE"
+            )
+        }
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_SIGNED_WRITE != 0
+        ) {
+            result.add(
+                "SIGNED_WRITE"
+            )
+        }
+
+        if (
+            properties and
+            BluetoothGattCharacteristic.PROPERTY_EXTENDED_PROPS != 0
+        ) {
+            result.add(
+                "EXTENDED_PROPS"
+            )
+        }
+
+        return if (
+            result.isEmpty()
+        ) {
+
+            "NONE"
+
+        } else {
+
+            result.joinToString(
+                separator = " | "
+            )
         }
     }
 }
