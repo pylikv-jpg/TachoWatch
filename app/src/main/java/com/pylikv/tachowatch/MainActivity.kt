@@ -208,10 +208,6 @@ class MainActivity :
                 )
             }
 
-        /*
-         * ЗАГОЛОВОК
-         */
-
         val titleRow =
             LinearLayout(this).apply {
 
@@ -288,10 +284,6 @@ class MainActivity :
                 dp(8)
             )
         )
-
-        /*
-         * СТАТУС
-         */
 
         val statusCard =
             createCard(
@@ -409,15 +401,6 @@ class MainActivity :
             )
         )
 
-        /*
-         * СОПРЯЖЁННЫЕ УСТРОЙСТВА
-         *
-         * Теперь блок ограничен по высоте.
-         * Видно примерно 3 устройства.
-         * Если устройств больше —
-         * прокручивается только этот блок.
-         */
-
         val deviceCard =
             createCard(
                 dp(10)
@@ -508,10 +491,6 @@ class MainActivity :
             )
         )
 
-        /*
-         * УПРАВЛЕНИЕ
-         */
-
         val controlCard =
             createCard(
                 dp(10)
@@ -599,11 +578,6 @@ class MainActivity :
                 COLOR_ORANGE
             )
 
-            /*
-             * В BLE-GATT-AUTO-2
-             * автоматические проверки запускаются
-             * внутри DtcoBluetoothDiagnostic.
-             */
             diagnostic.connect(
                 device
             )
@@ -707,16 +681,6 @@ class MainActivity :
                 dp(7)
             )
         )
-
-        /*
-         * ДИАГНОСТИЧЕСКИЙ ЖУРНАЛ
-         *
-         * Ключевое изменение:
-         * журнал получает ВСЁ оставшееся
-         * пространство экрана.
-         *
-         * Внешнего ScrollView страницы больше нет.
-         */
 
         val logCard =
             createCard(
@@ -837,11 +801,6 @@ class MainActivity :
             )
         )
 
-        /*
-         * Журнал растягивается
-         * на всё свободное пространство.
-         */
-
         root.addView(
             logCard,
             LinearLayout.LayoutParams(
@@ -850,12 +809,6 @@ class MainActivity :
                 1f
             )
         )
-
-        /*
-         * ВАЖНО:
-         * root ставим прямо на экран.
-         * Никакого внешнего ScrollView.
-         */
 
         setContentView(
             root
@@ -1100,25 +1053,100 @@ class MainActivity :
         runOnUiThread {
 
             if (
-                ::logText.isInitialized
+                !::logText.isInitialized ||
+                !::logScroll.isInitialized
             ) {
 
-                /*
-                 * Только меняем текст.
-                 *
-                 * Автоматической прокрутки НЕТ.
-                 * Положение журнала пользователь
-                 * выбирает сам.
-                 */
+                return@runOnUiThread
+            }
 
-                logText.text =
-                    if (
-                        fullLog.isBlank()
-                    ) {
-                        "Журнал пуст."
-                    } else {
-                        fullLog
-                    }
+            val oldScrollY =
+                logScroll.scrollY
+
+            val oldChild =
+                logScroll.getChildAt(
+                    0
+                )
+
+            val oldMaxScroll =
+
+                if (
+                    oldChild != null
+                ) {
+
+                    (
+                        oldChild.height -
+                            logScroll.height
+                        ).coerceAtLeast(
+                        0
+                    )
+
+                } else {
+
+                    0
+                }
+
+            val wasAtBottom =
+                oldMaxScroll <= 0 ||
+                    oldScrollY >=
+                    oldMaxScroll - dp(24)
+
+            logText.text =
+
+                if (
+                    fullLog.isBlank()
+                ) {
+
+                    "Журнал пуст."
+
+                } else {
+
+                    fullLog
+                }
+
+            logScroll.post {
+
+                if (
+                    wasAtBottom
+                ) {
+
+                    logScroll.fullScroll(
+                        View.FOCUS_DOWN
+                    )
+
+                } else {
+
+                    val newChild =
+                        logScroll.getChildAt(
+                            0
+                        )
+
+                    val newMaxScroll =
+
+                        if (
+                            newChild != null
+                        ) {
+
+                            (
+                                newChild.height -
+                                    logScroll.height
+                                ).coerceAtLeast(
+                                0
+                            )
+
+                        } else {
+
+                            0
+                        }
+
+                    logScroll.scrollTo(
+                        0,
+                        oldScrollY.coerceIn(
+                            0,
+                            newMaxScroll
+                        )
+                    )
+                }
             }
         }
     }
