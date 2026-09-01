@@ -109,6 +109,17 @@ class MainActivity :
     private var selectedDevice:
         BluetoothDevice? = null
 
+    /*
+     * Последняя версия полного журнала,
+     * которую мы уже вывели на экран.
+     *
+     * Нужна для того, чтобы НЕ заменять
+     * весь TextView при каждом сообщении,
+     * а добавлять только новые строки.
+     */
+    private var renderedLog =
+        ""
+
     private val permissionLauncher =
         registerForActivityResult(
             ActivityResultContracts
@@ -208,6 +219,10 @@ class MainActivity :
                 )
             }
 
+        /*
+         * ЗАГОЛОВОК
+         */
+
         val titleRow =
             LinearLayout(this).apply {
 
@@ -284,6 +299,10 @@ class MainActivity :
                 dp(8)
             )
         )
+
+        /*
+         * СТАТУС
+         */
 
         val statusCard =
             createCard(
@@ -401,6 +420,10 @@ class MainActivity :
             )
         )
 
+        /*
+         * СОПРЯЖЁННЫЕ УСТРОЙСТВА
+         */
+
         val deviceCard =
             createCard(
                 dp(10)
@@ -491,6 +514,10 @@ class MainActivity :
             )
         )
 
+        /*
+         * УПРАВЛЕНИЕ
+         */
+
         val controlCard =
             createCard(
                 dp(10)
@@ -572,6 +599,21 @@ class MainActivity :
 
                 return@setOnClickListener
             }
+
+            /*
+             * Начинается новый диагностический журнал.
+             * Сбрасываем локальную копию.
+             */
+            renderedLog =
+                ""
+
+            logText.text =
+                ""
+
+            logScroll.scrollTo(
+                0,
+                0
+            )
 
             setStatus(
                 "Подключение...",
@@ -682,6 +724,10 @@ class MainActivity :
             )
         )
 
+        /*
+         * ДИАГНОСТИЧЕСКИЙ ЖУРНАЛ
+         */
+
         val logCard =
             createCard(
                 dp(10)
@@ -715,6 +761,16 @@ class MainActivity :
 
         clearButton.setOnClickListener {
 
+            /*
+             * Сбрасываем также локальную копию,
+             * чтобы следующий журнал строился заново.
+             */
+            renderedLog =
+                ""
+
+            logText.text =
+                ""
+
             diagnostic.clearLog()
         }
 
@@ -741,6 +797,9 @@ class MainActivity :
                 isScrollbarFadingEnabled =
                     false
 
+                isSmoothScrollingEnabled =
+                    false
+
                 setPadding(
                     0,
                     dp(5),
@@ -762,9 +821,23 @@ class MainActivity :
                     COLOR_TEXT
                 )
 
+                /*
+                 * ВАЖНО:
+                 * отключаем выделение текста.
+                 *
+                 * Selectable TextView внутри ScrollView
+                 * может перехватывать жесты и менять
+                 * положение прокрутки.
+                 */
                 setTextIsSelectable(
-                    true
+                    false
                 )
+
+                isFocusable =
+                    false
+
+                isFocusableInTouchMode =
+                    false
 
                 typeface =
                     Typeface.MONOSPACE
@@ -1046,6 +1119,26 @@ class MainActivity :
         }
     }
 
+    /*
+     * КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ЖУРНАЛА.
+     *
+     * DtcoBluetoothDiagnostic присылает каждый раз
+     * весь полный журнал.
+     *
+     * Раньше мы делали:
+     *
+     *     logText.text = fullLog
+     *
+     * То есть Android полностью пересоздавал layout
+     * большого TextView на каждом сообщении.
+     * Из-за этого ScrollView мог сбрасываться.
+     *
+     * Теперь при нормальном росте журнала
+     * мы вычисляем только ДОБАВИВШУЮСЯ часть
+     * и вставляем её через append().
+     *
+     * Старый текст вообще не меняется.
+     */
     override fun onLogChanged(
         fullLog: String
     ) {
@@ -1060,38 +1153,7 @@ class MainActivity :
                 return@runOnUiThread
             }
 
-            val oldScrollY =
-                logScroll.scrollY
-
-            val oldChild =
-                logScroll.getChildAt(
-                    0
-                )
-
-            val oldMaxScroll =
-
-                if (
-                    oldChild != null
-                ) {
-
-                    (
-                        oldChild.height -
-                            logScroll.height
-                        ).coerceAtLeast(
-                        0
-                    )
-
-                } else {
-
-                    0
-                }
-
-            val wasAtBottom =
-                oldMaxScroll <= 0 ||
-                    oldScrollY >=
-                    oldMaxScroll - dp(24)
-
-            logText.text =
+            val newLog =
 
                 if (
                     fullLog.isBlank()
@@ -1104,47 +1166,101 @@ class MainActivity :
                     fullLog
                 }
 
-            logScroll.post {
+            /*
+             * Проверяем, был ли пользователь
+             * у самого низа ДО добавления текста.
+             */
+            val child =
+                logScroll.getChildAt(
+                    0
+                )
+
+            val maxScroll =
 
                 if (
-                    wasAtBottom
+                    child != null
                 ) {
 
-                    logScroll.fullScroll(
-                        View.FOCUS_DOWN
+                    (
+                        child.height -
+                            logScroll.height
+                        ).coerceAtLeast(
+                        0
                     )
 
                 } else {
 
-                    val newChild =
-                        logScroll.getChildAt(
-                            0
-                        )
+                    0
+                }
 
-                    val newMaxScroll =
+            val wasAtBottom =
+                maxScroll <= 0 ||
+                    logScroll.scrollY >=
+                    maxScroll - dp(24)
 
-                        if (
-                            newChild != null
-                        ) {
+            /*
+             * Обычный случай:
+             * новый журнал является продолжением старого.
+             */
+            if (
+                renderedLog.isNotEmpty() &&
+                newLog.startsWith(
+                    renderedLog
+                )
+            ) {
 
-                            (
-                                newChild.height -
-                                    logScroll.height
-                                ).coerceAtLeast(
-                                0
-                            )
+                val addition =
+                    newLog.substring(
+                        renderedLog.length
+                    )
 
-                        } else {
+                if (
+                    addition.isNotEmpty()
+                ) {
 
-                            0
-                        }
+                    logText.append(
+                        addition
+                    )
+                }
 
-                    logScroll.scrollTo(
-                        0,
-                        oldScrollY.coerceIn(
-                            0,
-                            newMaxScroll
-                        )
+                renderedLog =
+                    newLog
+
+            } else {
+
+                /*
+                 * Журнал был очищен,
+                 * запущена новая диагностика
+                 * или произошла другая смена содержимого.
+                 *
+                 * Только в этом случае заменяем
+                 * TextView полностью.
+                 */
+                renderedLog =
+                    newLog
+
+                logText.text =
+                    newLog
+            }
+
+            /*
+             * Если пользователь сам находится
+             * где-то в середине журнала —
+             * НИЧЕГО НЕ ДЕЛАЕМ.
+             *
+             * Его положение ScrollView не меняется.
+             *
+             * Автопрокрутка работает только тогда,
+             * когда пользователь уже был внизу.
+             */
+            if (
+                wasAtBottom
+            ) {
+
+                logScroll.post {
+
+                    logScroll.fullScroll(
+                        View.FOCUS_DOWN
                     )
                 }
             }
