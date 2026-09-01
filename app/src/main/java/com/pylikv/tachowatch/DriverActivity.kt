@@ -39,7 +39,6 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
     private val bluetoothManager by lazy {
         getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     }
-
     private val bluetoothAdapter by lazy { bluetoothManager.adapter }
 
     private lateinit var diagnostic: DtcoBluetoothDiagnostic
@@ -70,10 +69,8 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         window.statusBarColor = COLOR_BG
         window.navigationBarColor = COLOR_BG
-
         diagnostic = DtcoBluetoothDiagnostic(applicationContext, this)
         createInterface()
         requestBluetoothPermission()
@@ -95,35 +92,22 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-
-        val titleBlock = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
+        val titleBlock = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titleBlock.addView(TextView(this).apply {
             text = "TachoWatch"
             textSize = 25f
             setTextColor(COLOR_TEXT)
             setTypeface(typeface, Typeface.BOLD)
         })
-
         titleBlock.addView(TextView(this).apply {
             text = "Экран водителя"
             textSize = 12f
             setTextColor(COLOR_CYAN)
         })
-
-        header.addView(
-            titleBlock,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-
-        val diagnosticsButton = smallButton("Диагностика")
-        diagnosticsButton.setOnClickListener {
-            startActivity(Intent(this, MainActivity::class.java))
-        }
-        header.addView(diagnosticsButton)
-
+        header.addView(titleBlock, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(smallButton("Диагностика").apply {
+            setOnClickListener { startActivity(Intent(this@DriverActivity, MainActivity::class.java)) }
+        })
         root.addView(header)
         root.addView(space(8))
 
@@ -132,12 +116,8 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-
-        statusDot = View(this).apply {
-            background = rounded(COLOR_ORANGE, dp(20).toFloat())
-        }
+        statusDot = View(this).apply { background = rounded(COLOR_ORANGE, dp(20).toFloat()) }
         statusRow.addView(statusDot, LinearLayout.LayoutParams(dp(10), dp(10)))
-
         statusText = TextView(this).apply {
             text = "Поиск DTCO..."
             textSize = 15f
@@ -169,17 +149,11 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         }
         statusCard.addView(space(7))
         statusCard.addView(connectButton)
-
         root.addView(statusCard)
         root.addView(space(8))
 
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-        }
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         val driverCard = card()
         driverCard.addView(label("ВОДИТЕЛЬ"))
@@ -203,11 +177,7 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         driveCard.addView(label("НЕПРЕРЫВНОЕ ВОЖДЕНИЕ"))
         continuousDrivingValue = valueText("—", 34f)
         driveCard.addView(continuousDrivingValue)
-        driveCard.addView(TextView(this).apply {
-            text = "из 4:30"
-            textSize = 13f
-            setTextColor(COLOR_MUTED)
-        })
+        driveCard.addView(subText("из 4:30"))
         content.addView(driveCard)
         content.addView(space(8))
 
@@ -222,40 +192,17 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         twoWeekCard.addView(label("ВОЖДЕНИЕ ЗА ТЕКУЩУЮ + ПРЕДЫДУЩУЮ НЕДЕЛЮ"))
         twoWeekDrivingValue = valueText("—", 34f)
         twoWeekCard.addView(twoWeekDrivingValue)
-        twoWeekCard.addView(TextView(this).apply {
-            text = "из 90:00"
-            textSize = 13f
-            setTextColor(COLOR_MUTED)
-        })
+        twoWeekCard.addView(subText("из 90:00"))
         content.addView(twoWeekCard)
-        content.addView(space(8))
-
-        val infoCard = card(COLOR_CARD_ALT)
-        infoCard.addView(TextView(this).apply {
-            text = "Сейчас экран показывает только подтверждённые данные DTCO. Дневное/сменное вождение, недельное вождение, суточный отдых и начало/конец смены добавим после подтверждения соответствующих DID."
-            textSize = 12f
-            setTextColor(COLOR_MUTED)
-            setLineSpacing(0f, 1.15f)
-        })
-        content.addView(infoCard)
 
         scroll.addView(content)
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-        )
-
+        root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
     }
 
     private fun requestBluetoothPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) !=
-            PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) {
             permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT))
         } else {
@@ -266,7 +213,6 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
     @SuppressLint("MissingPermission")
     private fun findDtco() {
         if (!hasBluetoothPermission()) return
-
         val adapter = bluetoothAdapter
         if (adapter == null || !adapter.isEnabled) {
             setConnectionStatus("Bluetooth выключен", COLOR_ORANGE)
@@ -276,15 +222,10 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
         dtcoDevice = try {
             adapter.bondedDevices.firstOrNull {
-                try {
-                    (it.name ?: "").contains("DTCO", ignoreCase = true)
-                } catch (_: SecurityException) {
-                    false
-                }
+                try { (it.name ?: "").contains("DTCO", ignoreCase = true) }
+                catch (_: SecurityException) { false }
             }
-        } catch (_: SecurityException) {
-            null
-        }
+        } catch (_: SecurityException) { null }
 
         val device = dtcoDevice
         if (device == null) {
@@ -303,6 +244,7 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
     private fun connectToDtco() {
         val device = dtcoDevice ?: return
+        clearDisplayedValues()
         setConnectionStatus("Подключение...", COLOR_ORANGE)
         connectButton.isEnabled = false
         connectButton.alpha = 0.55f
@@ -323,90 +265,102 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
     }
 
     override fun onLogChanged(fullLog: String) {
-        runOnUiThread {
-            parseDriverData(fullLog)
-        }
+        runOnUiThread { parseDriverData(fullLog) }
     }
 
     private fun parseDriverData(log: String) {
-        extractControlTime(log, "F923")?.let { continuousDrivingValue.text = it }
-        extractControlTime(log, "F925")?.let { breakValue.text = it }
-        extractControlTime(log, "F927")?.let { activityDurationValue.text = it }
-        extractControlTime(log, "F938")?.let { twoWeekDrivingValue.text = it }
-
+        extractTimeForDid(log, "F923")?.let { continuousDrivingValue.text = it }
+        extractTimeForDid(log, "F925")?.let { breakValue.text = it }
+        extractTimeForDid(log, "F927")?.let { activityDurationValue.text = it }
+        extractTimeForDid(log, "F938")?.let { twoWeekDrivingValue.text = it }
         extractActivity(log)?.let { activityValue.text = it }
         extractDriverName(log)?.let { driverNameValue.text = it }
     }
 
-    private fun extractControlTime(log: String, did: String): String? {
-        val patterns = listOf(
-            Regex("(?m)^\\s*\\d+ min = ([0-9]+:[0-9]{2})\\s*$"),
-            Regex("(?m)^\\s*DECODED = \\d+ min = ([0-9]+:[0-9]{2})\\s*$")
-        )
-
-        val didPositions = Regex(did).findAll(log).map { it.range.first }.toList()
-        if (didPositions.isEmpty()) return null
-
-        for (position in didPositions.asReversed()) {
-            val end = (position + 450).coerceAtMost(log.length)
+    /*
+     * DtcoBluetoothDiagnostic ставит перед каждой строкой время вида [21:49:44.771].
+     * Поэтому здесь мы намеренно не привязываемся к началу строки, а ищем значение
+     * внутри небольшого блока, начинающегося с нужного DID.
+     */
+    private fun extractTimeForDid(log: String, did: String): String? {
+        val positions = Regex("\\b$did\\b").findAll(log).map { it.range.first }.toList()
+        for (position in positions.asReversed()) {
+            val end = (position + 600).coerceAtMost(log.length)
             val block = log.substring(position, end)
-            patterns.forEach { pattern ->
-                pattern.find(block)?.groupValues?.getOrNull(1)?.let { return it }
-            }
+
+            Regex("(?:DECODED\\s*=\\s*)?(\\d+)\\s+min\\s*=\\s*([0-9]+:[0-9]{2})")
+                .find(block)
+                ?.groupValues
+                ?.getOrNull(2)
+                ?.let { return it }
         }
         return null
     }
 
     private fun extractActivity(log: String): String? {
-        val didPositions = Regex("F903").findAll(log).map { it.range.first }.toList()
-        for (position in didPositions.asReversed()) {
-            val end = (position + 350).coerceAtMost(log.length)
+        val positions = Regex("\\bF903\\b").findAll(log).map { it.range.first }.toList()
+        for (position in positions.asReversed()) {
+            val end = (position + 500).coerceAtMost(log.length)
             val block = log.substring(position, end)
-            val match = Regex("(?m)^\\s*([0-3])\\s*[—-]\\s*(.+?)\\s*$").find(block) ?: continue
-            return when (match.groupValues[1]) {
+
+            val state = Regex("(?:DECODED\\s*=\\s*)?([0-3])\\s*[—-]\\s*(?:ОТДЫХ|ПЕРЕРЫВ|ГОТОВНОСТЬ|РАБОТА|ВОЖДЕНИЕ)")
+                .find(block)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?: continue
+
+            return when (state) {
                 "0" -> "ОТДЫХ / ПЕРЕРЫВ"
                 "1" -> "ГОТОВНОСТЬ"
                 "2" -> "РАБОТА"
                 "3" -> "ВОЖДЕНИЕ"
-                else -> match.groupValues[2].trim()
+                else -> null
             }
         }
         return null
     }
 
     private fun extractDriverName(log: String): String? {
-        val didPositions = Regex("F931").findAll(log).map { it.range.first }.toList()
-        for (position in didPositions.asReversed()) {
-            val end = (position + 750).coerceAtMost(log.length)
+        val positions = Regex("\\bF931\\b").findAll(log).map { it.range.first }.toList()
+        for (position in positions.asReversed()) {
+            val end = (position + 900).coerceAtMost(log.length)
             val block = log.substring(position, end)
-            val match = Regex("ASCII=\\\"([^\\\"]+)\\\"").find(block) ?: continue
-            val value = match.groupValues[1].trim()
-            if (value.isNotBlank()) return value
+            val value = Regex("ASCII=\\\"([^\\\"]+)\\\"")
+                .find(block)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+            if (!value.isNullOrBlank()) return value
         }
         return null
     }
 
+    private fun clearDisplayedValues() {
+        driverNameValue.text = "—"
+        activityValue.text = "—"
+        activityDurationValue.text = "—"
+        continuousDrivingValue.text = "—"
+        breakValue.text = "—"
+        twoWeekDrivingValue.text = "—"
+    }
+
     private fun setConnectionStatus(text: String, color: Int) {
         if (::statusText.isInitialized) statusText.text = text
-        if (::statusDot.isInitialized) {
-            statusDot.background = rounded(color, dp(20).toFloat())
-        }
+        if (::statusDot.isInitialized) statusDot.background = rounded(color, dp(20).toFloat())
     }
 
-    private fun hasBluetoothPermission(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
-            PackageManager.PERMISSION_GRANTED
-    }
+    private fun hasBluetoothPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
-    private fun label(text: String): TextView = TextView(this).apply {
+    private fun label(text: String) = TextView(this).apply {
         this.text = text
         textSize = 11.5f
         setTextColor(COLOR_MUTED)
         setTypeface(typeface, Typeface.BOLD)
     }
 
-    private fun valueText(text: String, size: Float): TextView = TextView(this).apply {
+    private fun valueText(text: String, size: Float) = TextView(this).apply {
         this.text = text
         textSize = size
         setTextColor(COLOR_TEXT)
@@ -414,7 +368,13 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         setPadding(0, dp(2), 0, 0)
     }
 
-    private fun smallButton(text: String): Button = Button(this).apply {
+    private fun subText(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        setTextColor(COLOR_MUTED)
+    }
+
+    private fun smallButton(text: String) = Button(this).apply {
         this.text = text
         textSize = 11f
         isAllCaps = false
@@ -427,25 +387,23 @@ class DriverActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         background = rounded(COLOR_CARD_ALT, dp(9).toFloat(), COLOR_BORDER)
     }
 
-    private fun card(color: Int = COLOR_CARD): LinearLayout = LinearLayout(this).apply {
+    private fun card(color: Int = COLOR_CARD) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(11), dp(12), dp(11))
         background = rounded(color, dp(15).toFloat(), COLOR_BORDER)
     }
 
-    private fun space(height: Int): View = View(this).apply {
+    private fun space(height: Int) = View(this).apply {
         layoutParams = LinearLayout.LayoutParams(1, dp(height))
     }
 
-    private fun rounded(color: Int, radius: Float, strokeColor: Int? = null): GradientDrawable {
-        return GradientDrawable().apply {
+    private fun rounded(color: Int, radius: Float, strokeColor: Int? = null) =
+        GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radius
             setColor(color)
             if (strokeColor != null) setStroke(dp(1), strokeColor)
         }
-    }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
