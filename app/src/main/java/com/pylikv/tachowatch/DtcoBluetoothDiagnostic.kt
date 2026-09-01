@@ -35,60 +35,36 @@ class DtcoBluetoothDiagnostic(
     }
 
     companion object {
-
-        private const val VERSION =
-            "BLE-RHMI-MANDATORY-1"
-
-        private const val MAX_LOG_LINES =
-            7000
-
-        private const val INITIAL_CREDITS =
-            1
+        private const val VERSION = "BLE-RHMI-EXTENDED-READ-2"
+        private const val MAX_LOG_LINES = 7000
+        private const val INITIAL_CREDITS = 1
 
         private val UUID_CCCD =
-            UUID.fromString(
-                "00002902-0000-1000-8000-00805f9b34fb"
-            )
+            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         private val UUID_DIAGNOSTICS_SERVICE =
-            UUID.fromString(
-                "fa213def-aef4-475c-bcea-0a8d69073efc"
-            )
+            UUID.fromString("fa213def-aef4-475c-bcea-0a8d69073efc")
 
         private val UUID_DIAGNOSTICS_FIFO =
-            UUID.fromString(
-                "e413960c-75ba-4ca9-8a67-99bc052a1b13"
-            )
+            UUID.fromString("e413960c-75ba-4ca9-8a67-99bc052a1b13")
 
         private val UUID_DIAGNOSTICS_CREDITS =
-            UUID.fromString(
-                "e168d1a6-304f-42b4-ab96-4cd1d4efebd9"
-            )
+            UUID.fromString("e168d1a6-304f-42b4-ab96-4cd1d4efebd9")
 
         private val UUID_DOWNLOAD_SERVICE =
-            UUID.fromString(
-                "eef90782-55dd-4388-b80b-695aba7a69b5"
-            )
+            UUID.fromString("eef90782-55dd-4388-b80b-695aba7a69b5")
 
         private val UUID_DOWNLOAD_FIFO =
-            UUID.fromString(
-                "29d3a479-1592-47df-80a4-afa742d369bb"
-            )
+            UUID.fromString("29d3a479-1592-47df-80a4-afa742d369bb")
 
         private val UUID_DOWNLOAD_CREDITS =
-            UUID.fromString(
-                "db9c4128-bff3-41fe-a306-fb6f9a8aeb2d"
-            )
+            UUID.fromString("db9c4128-bff3-41fe-a306-fb6f9a8aeb2d")
 
         private val UUID_EXTRA_SERVICE =
-            UUID.fromString(
-                "36ab9731-5701-489a-943a-5e16a9dd3183"
-            )
+            UUID.fromString("36ab9731-5701-489a-943a-5e16a9dd3183")
 
         private val UUID_EXTRA_NOTIFY =
-            UUID.fromString(
-                "c9446e2e-527f-48eb-bbd4-f3c5e79ee716"
-            )
+            UUID.fromString("c9446e2e-527f-48eb-bbd4-f3c5e79ee716")
     }
 
     private enum class SubscriptionMode {
@@ -102,7 +78,9 @@ class DtcoBluetoothDiagnostic(
         MOTION,
         TIME_WARNING,
         DRIVER_CARD,
-        MINUTES
+        MINUTES,
+        COUNTER,
+        RAW
     }
 
     private data class SubscriptionItem(
@@ -117,63 +95,139 @@ class DtcoBluetoothDiagnostic(
         val kind: ValueKind
     )
 
-    private val readRequests =
-        listOf(
+    private val readRequests = listOf(
+        ReadRequest(
+            0xF902,
+            "TachographVehicleSpeed",
+            ValueKind.SPEED
+        ),
 
-            ReadRequest(
-                did = 0xF902,
-                name = "TachographVehicleSpeed",
-                kind = ValueKind.SPEED
-            ),
+        ReadRequest(
+            0xF903,
+            "Driver1WorkingState",
+            ValueKind.ACTIVITY
+        ),
 
-            ReadRequest(
-                did = 0xF903,
-                name = "Driver1WorkingState",
-                kind = ValueKind.ACTIVITY
-            ),
+        ReadRequest(
+            0xF905,
+            "DriveRecognize",
+            ValueKind.MOTION
+        ),
 
-            ReadRequest(
-                did = 0xF905,
-                name = "DriveRecognize",
-                kind = ValueKind.MOTION
-            ),
+        ReadRequest(
+            0xF906,
+            "Driver1TimeRelatedStates",
+            ValueKind.TIME_WARNING
+        ),
 
-            ReadRequest(
-                did = 0xF906,
-                name = "Driver1TimeRelatedStates",
-                kind = ValueKind.TIME_WARNING
-            ),
+        ReadRequest(
+            0xF907,
+            "DriverCardDriver1",
+            ValueKind.DRIVER_CARD
+        ),
 
-            ReadRequest(
-                did = 0xF907,
-                name = "DriverCardDriver1",
-                kind = ValueKind.DRIVER_CARD
-            ),
+        ReadRequest(
+            0xF923,
+            "Driver1ContinuousDrivingTime",
+            ValueKind.MINUTES
+        ),
 
-            ReadRequest(
-                did = 0xF923,
-                name = "Driver1ContinuousDrivingTime",
-                kind = ValueKind.MINUTES
-            ),
+        ReadRequest(
+            0xF925,
+            "Driver1CumulativeBreakTime",
+            ValueKind.MINUTES
+        ),
 
-            ReadRequest(
-                did = 0xF925,
-                name = "Driver1CumulativeBreakTime",
-                kind = ValueKind.MINUTES
-            ),
+        ReadRequest(
+            0xF927,
+            "Driver1CurrentDurationOfSelectedActivity",
+            ValueKind.MINUTES
+        ),
 
-            ReadRequest(
-                did = 0xF927,
-                name = "Driver1CurrentDurationOfSelectedActivity",
-                kind = ValueKind.MINUTES
-            ),
+        ReadRequest(
+            0xF938,
+            "Driver1CumulatedDrivingTimePreviousAndCurrentWeek",
+            ValueKind.MINUTES
+        ),
 
-            ReadRequest(
-                did = 0xF938,
-                name = "Driver1CumulatedDrivingTimePreviousAndCurrentWeek",
-                kind = ValueKind.MINUTES
-            )
+        ReadRequest(
+            0xF997,
+            "Driver1EndOfLastDailyRestPeriod",
+            ValueKind.RAW
+        ),
+
+        ReadRequest(
+            0xF998,
+            "Driver1EndOfLastWeeklyRestPeriod",
+            ValueKind.RAW
+        ),
+
+        ReadRequest(
+            0xF999,
+            "Driver1EndOfSecondLastWeeklyRestPeriod",
+            ValueKind.RAW
+        ),
+
+        ReadRequest(
+            0xF99A,
+            "Driver1CurrentDailyDrivingTime",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF99B,
+            "Driver1CurrentWeeklyDrivingTime",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF99C,
+            "Driver1TimeLeftUntilNewDailyRestPeriod",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF9A0,
+            "Driver1NumberOfTimes9hDailyDrivingTimesExceeded",
+            ValueKind.COUNTER
+        ),
+
+        ReadRequest(
+            0xF9A1,
+            "Driver1TimeLeftUntilNewWeeklyRestPeriod",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF9A2,
+            "Driver1CumulativeUninterruptedRestTime",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF9A3,
+            "Driver1MinimumDailyRest",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF9A4,
+            "Driver1MinimumWeeklyRest",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF9A5,
+            "Driver1MaximumDailyPeriod",
+            ValueKind.MINUTES
+        ),
+
+        ReadRequest(
+            0xF9A6,
+            "Driver1MaximumDailyDrivingTime",
+            ValueKind.MINUTES
         )
+    )
 
     private val mainHandler =
         Handler(
@@ -340,7 +394,7 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "MANDATORY READ-ONLY TEST"
+            "EXTENDED READ-ONLY TEST"
         )
 
         appendLog(
@@ -842,11 +896,6 @@ class DtcoBluetoothDiagnostic(
             SubscriptionMode.INDICATE
         )
 
-        /*
-         * Оставляем уже проверенные подписки,
-         * но содержательных Download-команд
-         * эта версия не отправляет.
-         */
         addSubscription(
             gatt,
             UUID_DOWNLOAD_SERVICE,
@@ -1025,9 +1074,11 @@ class DtcoBluetoothDiagnostic(
 
             mainHandler.postDelayed(
                 {
+
                     subscribeNext(
                         gatt
                     )
+
                 },
                 100L
             )
@@ -1048,9 +1099,11 @@ class DtcoBluetoothDiagnostic(
 
             mainHandler.postDelayed(
                 {
+
                     subscribeNext(
                         gatt
                     )
+
                 },
                 100L
             )
@@ -1110,9 +1163,11 @@ class DtcoBluetoothDiagnostic(
 
             mainHandler.postDelayed(
                 {
+
                     subscribeNext(
                         gatt
                     )
+
                 },
                 120L
             )
@@ -1515,10 +1570,6 @@ class DtcoBluetoothDiagnostic(
             "Application HEX = ${bytesToHex(appData)}"
         )
 
-        /*
-         * OpenRHMISession positive
-         * 71 01 F2 11
-         */
         if (
             appData.size >= 4 &&
             unsigned(appData[0]) == 0x71 &&
@@ -1557,10 +1608,6 @@ class DtcoBluetoothDiagnostic(
             return
         }
 
-        /*
-         * RHMI status positive
-         * 71 03 F2 11 XX
-         */
         if (
             appData.size >= 5 &&
             unsigned(appData[0]) == 0x71 &&
@@ -1622,10 +1669,6 @@ class DtcoBluetoothDiagnostic(
             return
         }
 
-        /*
-         * ReadDataByIdentifier positive
-         * 62 DID_H DID_L DATA...
-         */
         if (
             appData.size >= 3 &&
             unsigned(appData[0]) == 0x62
@@ -1666,9 +1709,6 @@ class DtcoBluetoothDiagnostic(
             return
         }
 
-        /*
-         * UDS negative response
-         */
         if (
             appData.size >= 3 &&
             unsigned(appData[0]) == 0x7F
@@ -1861,12 +1901,6 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    /*
-     * ============================================================
-     * READ-ONLY MANDATORY DATA
-     * ============================================================
-     */
-
     private fun startReads(
         gatt: BluetoothGatt
     ) {
@@ -1896,7 +1930,7 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "STEP 8: MANDATORY DRIVER DATA"
+            "STEP 8: EXTENDED DRIVER DATA"
         )
 
         appendLog(
@@ -2007,6 +2041,16 @@ class DtcoBluetoothDiagnostic(
         }
 
         if (attempt >= 12) {
+
+            if (
+                readIndex >=
+                readRequests.size
+            ) {
+
+                finishReads()
+
+                return
+            }
 
             val request =
                 readRequests[
@@ -2280,40 +2324,9 @@ class DtcoBluetoothDiagnostic(
 
             ValueKind.SPEED -> {
 
-                if (data.size < 2) {
-
-                    "INVALID LENGTH ${data.size}"
-
-                } else {
-
-                    val raw =
-                        decodeUnsigned16(
-                            data[0],
-                            data[1]
-                        )
-
-                    if (raw >= 0xFF00) {
-
-                        "NOT AVAILABLE / RAW ${bytesToHex(data)}"
-
-                    } else if (raw >= 0xFE00) {
-
-                        "ERROR / RAW ${bytesToHex(data)}"
-
-                    } else {
-
-                        val speed =
-                            raw.toDouble() /
-                                256.0
-
-                        String.format(
-                            Locale.US,
-                            "%.3f km/h (raw=%d)",
-                            speed,
-                            raw
-                        )
-                    }
-                }
+                decodeSpeed(
+                    data
+                )
             }
 
             ValueKind.ACTIVITY -> {
@@ -2390,44 +2403,124 @@ class DtcoBluetoothDiagnostic(
 
             ValueKind.MINUTES -> {
 
-                if (data.size < 2) {
+                decodeMinutes(
+                    data
+                )
+            }
 
-                    "INVALID LENGTH ${data.size}"
+            ValueKind.COUNTER -> {
+
+                if (data.isEmpty()) {
+
+                    "EMPTY"
 
                 } else {
 
-                    val minutes =
-                        decodeUnsigned16(
-                            data[0],
-                            data[1]
-                        )
+                    val value =
 
-                    when {
+                        if (
+                            data.size >= 2
+                        ) {
 
-                        minutes >=
-                            0xFF00 -> {
+                            decodeUnsigned16(
+                                data[0],
+                                data[1]
+                            )
 
-                            "NOT AVAILABLE / RAW ${bytesToHex(data)}"
+                        } else {
+
+                            unsigned(
+                                data[0]
+                            )
                         }
 
-                        minutes >=
-                            0xFE00 -> {
-
-                            "ERROR / RAW ${bytesToHex(data)}"
-                        }
-
-                        minutes >=
-                            0xFB00 -> {
-
-                            "SPECIAL INDICATOR / RAW ${bytesToHex(data)}"
-                        }
-
-                        else -> {
-
-                            "$minutes min = ${formatMinutes(minutes)}"
-                        }
-                    }
+                    "$value"
                 }
+            }
+
+            ValueKind.RAW -> {
+
+                "RAW ${bytesToHex(data)} (len=${data.size})"
+            }
+        }
+    }
+
+    private fun decodeSpeed(
+        data: ByteArray
+    ): String {
+
+        if (data.size < 2) {
+
+            return "INVALID LENGTH ${data.size}"
+        }
+
+        val raw =
+            decodeUnsigned16(
+                data[0],
+                data[1]
+            )
+
+        return if (raw >= 0xFF00) {
+
+            "NOT AVAILABLE / RAW ${bytesToHex(data)}"
+
+        } else if (raw >= 0xFE00) {
+
+            "ERROR / RAW ${bytesToHex(data)}"
+
+        } else {
+
+            val speed =
+                raw.toDouble() /
+                    256.0
+
+            String.format(
+                Locale.US,
+                "%.3f km/h (raw=%d)",
+                speed,
+                raw
+            )
+        }
+    }
+
+    private fun decodeMinutes(
+        data: ByteArray
+    ): String {
+
+        if (data.size < 2) {
+
+            return "INVALID LENGTH ${data.size} / RAW ${bytesToHex(data)}"
+        }
+
+        val minutes =
+            decodeUnsigned16(
+                data[0],
+                data[1]
+            )
+
+        return when {
+
+            minutes >=
+                0xFF00 -> {
+
+                "NOT AVAILABLE / RAW ${bytesToHex(data)}"
+            }
+
+            minutes >=
+                0xFE00 -> {
+
+                "ERROR / RAW ${bytesToHex(data)}"
+            }
+
+            minutes >=
+                0xFB00 -> {
+
+                "SPECIAL INDICATOR / RAW ${bytesToHex(data)}"
+            }
+
+            else -> {
+
+                "$minutes min = ${formatMinutes(minutes)}"
             }
         }
     }
@@ -2443,7 +2536,7 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
-            "MANDATORY DATA READ COMPLETE"
+            "EXTENDED DATA READ COMPLETE"
         )
 
         appendLog(
@@ -2529,6 +2622,79 @@ class DtcoBluetoothDiagnostic(
         )
 
         appendLog(
+            ""
+        )
+
+        appendLog(
+            "------ НОВЫЕ OPTIONAL READ-ПАРАМЕТРЫ ------"
+        )
+
+        appendSummaryLine(
+            0xF997,
+            "Конец последнего суточного отдыха"
+        )
+
+        appendSummaryLine(
+            0xF998,
+            "Конец последнего недельного отдыха"
+        )
+
+        appendSummaryLine(
+            0xF999,
+            "Конец предпоследнего недельного отдыха"
+        )
+
+        appendSummaryLine(
+            0xF99A,
+            "Вождение за текущий день"
+        )
+
+        appendSummaryLine(
+            0xF99B,
+            "Вождение за текущую неделю"
+        )
+
+        appendSummaryLine(
+            0xF99C,
+            "Время до нового обязательного суточного отдыха"
+        )
+
+        appendSummaryLine(
+            0xF9A0,
+            "Количество превышений 9 ч дневного вождения"
+        )
+
+        appendSummaryLine(
+            0xF9A1,
+            "Время до нового обязательного недельного отдыха"
+        )
+
+        appendSummaryLine(
+            0xF9A2,
+            "Непрерывный текущий отдых"
+        )
+
+        appendSummaryLine(
+            0xF9A3,
+            "Минимальный требуемый суточный отдых"
+        )
+
+        appendSummaryLine(
+            0xF9A4,
+            "Минимальный требуемый недельный отдых"
+        )
+
+        appendSummaryLine(
+            0xF9A5,
+            "Максимальный дневной период"
+        )
+
+        appendSummaryLine(
+            0xF9A6,
+            "Максимальное дневное время вождения"
+        )
+
+        appendLog(
             "========================================"
         )
 
@@ -2585,11 +2751,6 @@ class DtcoBluetoothDiagnostic(
             )
     }
 
-    /*
-     * F905:
-     * 00 = motion not detected
-     * 01 = motion detected
-     */
     private fun driveRecognizeToString(
         value: Int
     ): String {
@@ -2613,11 +2774,6 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    /*
-     * F907:
-     * 00 = driver card absent
-     * 01 = driver card present
-     */
     private fun driverCardToString(
         value: Int
     ): String {
@@ -2641,70 +2797,47 @@ class DtcoBluetoothDiagnostic(
         }
     }
 
-    /*
-     * F906 Driver1TimeRelatedStates.
-     *
-     * Нормальные значения помещаются
-     * в младшие 4 бита.
-     */
     private fun timeRelatedStateToString(
         value: Int
     ): String {
 
-        return when (value) {
+        return when (
+            value and
+                0x0F
+        ) {
 
             0x00 ->
                 "ПРЕДУПРЕЖДЕНИЙ ПО ВРЕМЕНИ НЕТ"
 
             0x01 ->
-                "ПРЕДУПРЕЖДЕНИЕ: ОКОЛО 15 МИНУТ ДО 4:30"
+                "ОКОЛО 15 МИНУТ ДО 4:30 НЕПРЕРЫВНОГО ВОЖДЕНИЯ"
 
             0x02 ->
                 "4:30 НЕПРЕРЫВНОГО ВОЖДЕНИЯ ДОСТИГНУТО / ПРЕВЫШЕНО"
 
             0x03 ->
-                "ПРЕДУПРЕЖДЕНИЕ ПО ДНЕВНОМУ ВРЕМЕНИ ВОЖДЕНИЯ"
+                "OPTIONAL WARNING #1 — ПРЕДУПРЕЖДЕНИЕ"
 
             0x04 ->
-                "ДНЕВНОЙ ЛИМИТ ВОЖДЕНИЯ ДОСТИГНУТ"
+                "OPTIONAL WARNING #1 — ЛИМИТ ДОСТИГНУТ"
 
             0x05 ->
-                "ПРЕДУПРЕЖДЕНИЕ ПО ДНЕВНОМУ / НЕДЕЛЬНОМУ ОТДЫХУ"
+                "OPTIONAL WARNING #2 — ПРЕДУПРЕЖДЕНИЕ"
 
             0x06 ->
-                "ТРЕБОВАНИЕ ДНЕВНОГО / НЕДЕЛЬНОГО ОТДЫХА ДОСТИГНУТО"
-
-            0x07 ->
-                "ПРЕДУПРЕЖДЕНИЕ ПО НЕДЕЛЬНОМУ ВОЖДЕНИЮ"
-
-            0x08 ->
-                "НЕДЕЛЬНЫЙ ЛИМИТ ВОЖДЕНИЯ ДОСТИГНУТ"
-
-            0x09 ->
-                "ПРЕДУПРЕЖДЕНИЕ ПО ДВУХНЕДЕЛЬНОМУ ВОЖДЕНИЮ"
-
-            0x0A ->
-                "ДВУХНЕДЕЛЬНЫЙ ЛИМИТ ВОЖДЕНИЯ ДОСТИГНУТ"
-
-            0x0B ->
-                "ПРЕДУПРЕЖДЕНИЕ ОБ ИСТЕЧЕНИИ СРОКА КАРТЫ ВОДИТЕЛЯ"
-
-            0x0C ->
-                "ПРЕДУПРЕЖДЕНИЕ О НЕОБХОДИМОСТИ ЗАГРУЗКИ КАРТЫ"
+                "OPTIONAL WARNING #2 — ЛИМИТ ДОСТИГНУТ"
 
             0x0D ->
                 "ДРУГОЕ ПРЕДУПРЕЖДЕНИЕ"
 
-            0x0E,
-            0xFE ->
+            0x0E ->
                 "ERROR INDICATOR"
 
-            0x0F,
-            0xFF ->
+            0x0F ->
                 "NOT AVAILABLE"
 
             else ->
-                "НЕИЗВЕСТНОЕ ЗНАЧЕНИЕ"
+                "RESERVED / НЕРАСШИФРОВАННОЕ ЗНАЧЕНИЕ"
         }
     }
 
@@ -3052,6 +3185,7 @@ class DtcoBluetoothDiagnostic(
         notifyConnectionState(
             false,
             currentDevice?.let {
+
                 safeDeviceName(
                     it
                 )
