@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.*
 import androidx.core.content.ContextCompat
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CopyOnWriteArrayList
@@ -18,17 +20,18 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     }
 
     companion object {
-        private const val VERSION = "BLE-DOWNLOAD-CARD-PROBE-TEST-11E"
+        private const val VERSION = "BLE-DOWNLOAD-CARD-FULL-TEST-11F"
         const val RESULT_MARKER = "===== TEST-11 DOWNLOAD RESULT ====="
-        private const val RESPONSE_TIMEOUT_MS = 5000L
-        private const val PENDING_TIMEOUT_MS = 120000L
+        private const val SHORT_TIMEOUT_MS = 5000L
+        private const val CARD_TIMEOUT_MS = 120000L
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private val SERVICE = UUID.fromString("eef90782-55dd-4388-b80b-695aba7a69b5")
         private val FIFO = UUID.fromString("29d3a479-1592-47df-80a4-afa742d369bb")
         private val CREDITS = UUID.fromString("db9c4128-bff3-41fe-a306-fb6f9a8aeb2d")
     }
 
-    private enum class Stage { IDLE, WAIT_C1, WAIT_50, WAIT_75, WAIT_CARD, DONE }
+    private enum class Stage { IDLE, WAIT_C1, WAIT_50, WAIT_75, WAIT_CARD, WAIT_77, WAIT_C2, DONE }
+
     private val handler = Handler(Looper.getMainLooper())
     private val lines = CopyOnWriteArrayList<String>()
     private var gatt: BluetoothGatt? = null
@@ -42,10 +45,13 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private var finished = false
     private var timeoutToken = 0L
     private var pendingCount = 0
+    private var subMessages = 0
+    private var lastCounter = 0
     private var rxApplication = byteArrayOf()
     private var expectedPackets = 0
     private var lastPacketNo = 0
-    private var firstCardPayload = byteArrayOf()
+    private val cardFile = ByteArrayOutputStream()
+    private var savedPath = ""
 
     fun hasConnectPermission(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -55,16 +61,14 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (!hasConnectPermission()) { log("ОШИБКА: нет BLUETOOTH_CONNECT"); return }
         closeGatt(); reset(); device = d
         log("========================================")
-        log("TachoWatch — TEST-11E RESPONSE PENDING")
+        log("TachoWatch — TEST-11F FULL CARD DOWNLOAD")
         log("Версия: $VERSION")
-        log("Card request = точный Appendix 7: 36 06 01")
-        log("FIX: NRC 0x78 теперь НЕ ошибка; ждём окончательный ответ до 120 секунд")
-        log("Повторный CardDownload при 0x78 НЕ отправляется")
-        log("Цель: получить окончательный SID 76 после responsePending")
-        log("Download UUID=$SERVICE")
-        log("FIFO=$FIFO")
-        log("CREDITS=$CREDITS")
-        log("ВАЖНО: успешный card download может обновить LastCardDownload на карте")
+        log("Card request: 36 06 01")
+        log("NRC 78 = responsePending, ждём финальный ответ")
+        log("SID 76/06: читаем 2-byte MsgC, сохраняем TLV, отправляем SID 83 ACK MsgC+1")
+        log("Финальный sub-message LEN<FF -> RequestTransferExit 37 -> 77 -> StopCommunication 82 -> C2")
+        log("RX credits initial=250")
+        log("ВАЖНО: штатный card download может обновить LastCardDownload/Card_Download на карте")
         log("Деятельность/страны/ручные записи приложение НЕ изменяет")
         log("========================================")
         try {
@@ -78,13 +82,14 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun reset() {
         lines.clear(); connected=false; fifoSub=false; creditSub=false; txCredits=0
         stage=Stage.IDLE; started=false; finished=false; timeoutToken++; pendingCount=0
-        rxApplication=byteArrayOf(); expectedPackets=0; lastPacketNo=0; firstCardPayload=byteArrayOf()
+        subMessages=0; lastCounter=0; rxApplication=byteArrayOf(); expectedPackets=0; lastPacketNo=0
+        cardFile.reset(); savedPath=""
     }
 
     fun manualGattCheck() {
         log("===== MANUAL STATUS =====")
-        log("connected=$connected FIFO=$fifoSub Credits=$creditSub txCredits=$txCredits stage=$stage started=$started finished=$finished pendingCount=$pendingCount")
-        log("rxApplication=${rxApplication.size} expectedPackets=$expectedPackets lastPacketNo=$lastPacketNo firstCardPayload=${firstCardPayload.size}")
+        log("connected=$connected FIFO=$fifoSub Credits=$creditSub txCredits=$txCredits stage=$stage started=$started finished=$finished")
+        log("pendingCount=$pendingCount subMessages=$subMessages lastCounter=$lastCounter cardBytes=${cardFile.size()} savedPath=$savedPath")
     }
 
     private val cb = object : BluetoothGattCallback() {
@@ -110,7 +115,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
             if (u==FIFO) { fifoSub=status==BluetoothGatt.GATT_SUCCESS; handler.postDelayed({if(connected)subscribe(g,CREDITS)},150) }
             else if (u==CREDITS) {
                 creditSub=status==BluetoothGatt.GATT_SUCCESS
-                if(!creditSub) finishFail("CREDITS subscription failed") else handler.postDelayed({if(connected)grantRx(g,20,"INITIAL")},250)
+                if(!creditSub) finishFail("CREDITS subscription failed")
+                else handler.postDelayed({if(connected)grantRx(g,250,"INITIAL")},250)
             }
         }
         @Deprecated("legacy")
@@ -137,7 +143,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
             if(v.isEmpty())return
             val n=u(v[0]); if(n==0xFF){finishFail("FLOW CONTROL REJECTED");return}
             txCredits+=n; log("TX-CREDIT RX +$n => $txCredits")
-            if(!started && txCredits>0){started=true;stage=Stage.WAIT_C1;send(g,startCommunication(),"StartCommunication")}
+            if(!started && txCredits>0){started=true;stage=Stage.WAIT_C1;send(g,startCommunication(),"StartCommunication",SHORT_TIMEOUT_MS)}
             return
         }
         if(c.uuid!=FIFO)return
@@ -153,8 +159,12 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
             if(expectedPackets<=1)finishApplication(g); return
         }
         if(expectedPackets<=1){log("RX TRANSPORT unexpected continuation packet=$packetNo");return}
-        if(packetNo!=lastPacketNo+1){log("RX TRANSPORT packet sequence error expected=${lastPacketNo+1} got=$packetNo");rxApplication=byteArrayOf();expectedPackets=0;lastPacketNo=0;return}
-        rxApplication+=payload; lastPacketNo=packetNo; log("RX TRANSPORT continuation packet=$packetNo/$expectedPackets appTotal=${rxApplication.size}")
+        if(packetNo!=lastPacketNo+1){
+            log("RX TRANSPORT packet sequence error expected=${lastPacketNo+1} got=$packetNo")
+            rxApplication=byteArrayOf();expectedPackets=0;lastPacketNo=0;return
+        }
+        rxApplication+=payload; lastPacketNo=packetNo
+        log("RX TRANSPORT continuation packet=$packetNo/$expectedPackets appTotal=${rxApplication.size}")
         if(packetNo>=expectedPackets)finishApplication(g)
     }
     private fun finishApplication(g:BluetoothGatt){val a=rxApplication;rxApplication=byteArrayOf();expectedPackets=0;lastPacketNo=0;parseKwpFrame(g,a)}
@@ -164,74 +174,110 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         log("RX APP reassembled len=${frame.size} RAW=${hex(frame)}")
         val start=frame.indexOfFirst{u(it)==0x80}; if(start<0){log("RX APP: no KWP 0x80 header");return}
         val kwp=frame.copyOfRange(start,frame.size); if(kwp.size<5){log("RX APP: short KWP frame");return}
-        val len=u(kwp[3]); val total=4+len+1; if(kwp.size<total){log("RX APP: incomplete KWP expected=$total got=${kwp.size}");return}
+        val len=u(kwp[3]); val total=4+len+1
+        if(kwp.size<total){log("RX APP: incomplete KWP expected=$total got=${kwp.size}");return}
         val one=kwp.copyOfRange(0,total); val expected=checksum(one.copyOfRange(0,one.size-1)); val actual=u(one.last())
         log("RX KWP len=$len checksum=${hb(actual)} expected=${hb(expected)} ${if(actual==expected)"OK" else "BAD"}")
-        handleFrame(g,one.copyOfRange(4,4+len),one)
+        if(actual!=expected){finishFail("KWP checksum BAD");return}
+        handleFrame(g,one.copyOfRange(4,4+len),one,len)
     }
 
-    private fun handleFrame(g:BluetoothGatt,data:ByteArray,frame:ByteArray){
+    private fun handleFrame(g:BluetoothGatt,data:ByteArray,frame:ByteArray,kwpLen:Int){
         if(data.isEmpty())return
-        timeoutToken++; val sid=u(data[0]); log("RX SID=0x${hb(sid)} DATA=${hex(data)}")
+        timeoutToken++; val sid=u(data[0]); log("RX SID=0x${hb(sid)} DATA_HEAD=${hex(data.take(16).toByteArray())}${if(data.size>16)" ..." else ""}")
         if(sid==0x7F){
             val req=if(data.size>1)u(data[1]) else 0; val n=if(data.size>2)u(data[2]) else 0
             if(n==0x78 && req==0x36 && stage==Stage.WAIT_CARD){
-                pendingCount++
-                log("*** RESPONSE PENDING *** request SID=0x36 count=$pendingCount")
-                log("DTCO принял CardDownload и ещё готовит данные; продолжаем ждать, повторный запрос НЕ отправляем")
-                schedulePendingTimeout()
-                return
+                pendingCount++; log("*** RESPONSE PENDING *** count=$pendingCount; CardDownload принят, продолжаем ждать")
+                scheduleTimeout("CardDownload after NRC78",Stage.WAIT_CARD,CARD_TIMEOUT_MS); return
             }
             finishFail("NEGATIVE: request SID=0x${hb(req)} NRC=0x${hb(n)} ${nrcName(n)} stage=$stage"); return
         }
         when(stage){
-            Stage.WAIT_C1 -> if(sid==0xC1){log("OK: StartCommunication accepted");stage=Stage.WAIT_50;send(g,startDiagnostic(),"StartDiagnostic 0x10/0x81")}
-            Stage.WAIT_50 -> if(sid==0x50){log("OK: Diagnostic session accepted");stage=Stage.WAIT_75;send(g,requestUpload(),"RequestUpload 0x35")}
+            Stage.WAIT_C1 -> if(sid==0xC1){log("OK: StartCommunication accepted");stage=Stage.WAIT_50;send(g,startDiagnostic(),"StartDiagnostic",SHORT_TIMEOUT_MS)}
+            Stage.WAIT_50 -> if(sid==0x50){log("OK: Diagnostic session accepted");stage=Stage.WAIT_75;send(g,requestUpload(),"RequestUpload",SHORT_TIMEOUT_MS)}
             Stage.WAIT_75 -> if(sid==0x75){
                 log("OK: RequestUpload accepted; DATA=${hex(data)}")
-                stage=Stage.WAIT_CARD; send(g,cardDownloadSlot1(),"CardDownload exact SID36 TRTP=06 slot=01")
+                stage=Stage.WAIT_CARD; send(g,cardDownloadSlot1(),"CardDownload SID36 TRTP06 slot01",CARD_TIMEOUT_MS)
             }
-            Stage.WAIT_CARD -> if(sid==0x76){
-                val trep=if(data.size>1)u(data[1]) else -1
-                firstCardPayload=if(data.size>2)data.copyOfRange(2,data.size) else byteArrayOf()
-                log("*** CARD DATA RESPONSE RECEIVED *** TREP=0x${hb(trep)} payload=${firstCardPayload.size} byte(s)")
-                log("CARD PAYLOAD RAW=${hex(firstCardPayload)}"); finishOk(trep,frame)
-            }
+            Stage.WAIT_CARD -> if(sid==0x76){handleCardSubMessage(g,data,kwpLen)}
+            Stage.WAIT_77 -> if(sid==0x77){log("OK: RequestTransferExit accepted");stage=Stage.WAIT_C2;send(g,stopCommunication(),"StopCommunication",SHORT_TIMEOUT_MS)}
+            Stage.WAIT_C2 -> if(sid==0xC2){log("OK: StopCommunication accepted");finishSuccess()}
             else -> Unit
         }
     }
 
-    private fun scheduleTimeout(label:String,expectedStage:Stage){
-        val token=++timeoutToken
-        handler.postDelayed({if(!finished&&token==timeoutToken&&stage==expectedStage)finishFail("TIMEOUT waiting response for $label at stage=$expectedStage")},RESPONSE_TIMEOUT_MS)
+    private fun handleCardSubMessage(g:BluetoothGatt,data:ByteArray,kwpLen:Int){
+        if(data.size<4){finishFail("SID76/06 too short: ${hex(data)}");return}
+        val trep=u(data[1]); if(trep!=0x06){finishFail("Unexpected TREP=0x${hb(trep)} in card stream");return}
+        val counter=(u(data[2]) shl 8) or u(data[3])
+        val payload=if(data.size>4)data.copyOfRange(4,data.size) else byteArrayOf()
+        subMessages++; lastCounter=counter; cardFile.write(payload)
+        log("CARD SUBMSG #$subMessages MsgC=$counter KWP_LEN=$kwpLen payload=${payload.size} totalTLV=${cardFile.size()}")
+        if(subMessages==1 && payload.size>=5){
+            val fid=(u(payload[0]) shl 8) or u(payload[1]); val suffix=u(payload[2]); val len=(u(payload[3]) shl 8) or u(payload[4])
+            log("FIRST TLV: FID=${String.format(Locale.US,"%04X",fid)} suffix=${hb(suffix)} len=$len")
+        }
+        if(kwpLen==0xFF){
+            val next=(counter+1) and 0xFFFF
+            log("ACK MsgC=$counter -> request next=$next")
+            send(g,ackSubMessage(next),"ACK SID83 nextMsgC=$next",CARD_TIMEOUT_MS)
+        } else {
+            log("FINAL CARD SUBMSG detected because KWP LEN=$kwpLen < 255")
+            saveCardFile()
+            stage=Stage.WAIT_77
+            send(g,requestTransferExit(),"RequestTransferExit",SHORT_TIMEOUT_MS)
+        }
     }
 
-    private fun schedulePendingTimeout(){
-        val token=++timeoutToken
-        handler.postDelayed({
-            if(!finished && token==timeoutToken && stage==Stage.WAIT_CARD){
-                finishFail("TIMEOUT after responsePending: no final CardDownload response within ${PENDING_TIMEOUT_MS/1000} s; pendingCount=$pendingCount")
-            }
-        },PENDING_TIMEOUT_MS)
+    private fun saveCardFile(){
+        try{
+            val dir=context.getExternalFilesDir(null) ?: context.filesDir
+            if(!dir.exists())dir.mkdirs()
+            val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
+            val f=File(dir,"TachoWatch_card_$stamp.ddd")
+            f.writeBytes(cardFile.toByteArray()); savedPath=f.absolutePath
+            log("CARD FILE SAVED bytes=${f.length()} path=$savedPath")
+        }catch(e:Throwable){log("CARD FILE SAVE ERROR ${e.javaClass.simpleName}: ${e.message}")}
     }
 
-    private fun finishOk(trep:Int,frame:ByteArray){
+    private fun countTlvs(bytes:ByteArray):Pair<Int,Int>{
+        var p=0; var n=0
+        while(p+5<=bytes.size){
+            val len=(u(bytes[p+3]) shl 8) or u(bytes[p+4]); val end=p+5+len
+            if(end>bytes.size)break
+            n++; p=end
+        }
+        return Pair(n,p)
+    }
+
+    private fun scheduleTimeout(label:String,expectedStage:Stage,ms:Long){
+        val token=++timeoutToken
+        handler.postDelayed({if(!finished&&token==timeoutToken&&stage==expectedStage)finishFail("TIMEOUT waiting $label at stage=$expectedStage after ${ms/1000}s")},ms)
+    }
+
+    private fun finishSuccess(){
         timeoutToken++;stage=Stage.DONE;finished=true
+        val bytes=cardFile.toByteArray(); val parsed=countTlvs(bytes)
         log("");log("========================================");log(RESULT_MARKER);log("STATUS=SUCCESS")
         log("DownloadService=FOUND");log("StartCommunication=OK");log("StartDiagnostic=OK");log("RequestUpload=OK");log("CardDownloadResponse=OK")
-        log("ResponsePendingCount=$pendingCount")
-        log("CardTREP=0x${hb(trep)}");log("FirstCardPayloadBytes=${firstCardPayload.size}");log("FirstCardPayloadRAW=${hex(firstCardPayload)}");log("FullResponseFrameRAW=${hex(frame)}")
-        log("Следующий этап: continuation/sub-message ACK + TLV decoder");log("========================================")
+        log("ResponsePendingCount=$pendingCount");log("CardTREP=0x06");log("SubMessages=$subMessages");log("LastMsgC=$lastCounter")
+        log("CardTLVBytes=${bytes.size}");log("CompleteTLVRecords=${parsed.first}");log("TLVParsedBytes=${parsed.second}")
+        log("CardFilePath=$savedPath")
+        log("First64TLV=${hex(bytes.take(64).toByteArray())}")
+        log("TransferExit=OK");log("StopCommunication=OK")
+        log("Следующий этап: декодирование EF Driver_Activity_Data / Places / Border_Crossings / Load_Unload_Operations")
+        log("========================================")
     }
-    private fun finishFail(reason:String){if(finished)return;timeoutToken++;finished=true;stage=Stage.DONE;log("");log("========================================");log(RESULT_MARKER);log("STATUS=FAILED");log(reason);log("ResponsePendingCount=$pendingCount");log("========================================")}
+    private fun finishFail(reason:String){if(finished)return;timeoutToken++;finished=true;stage=Stage.DONE;log("");log("========================================");log(RESULT_MARKER);log("STATUS=FAILED");log(reason);log("ResponsePendingCount=$pendingCount");log("SubMessages=$subMessages CardTLVBytes=${cardFile.size()} LastMsgC=$lastCounter");log("========================================")}
 
-    private fun send(g:BluetoothGatt,kwpFrame:ByteArray,label:String){
+    private fun send(g:BluetoothGatt,kwpFrame:ByteArray,label:String,timeoutMs:Long){
         if(finished)return
-        if(txCredits<=0){log("WAIT TX-CREDIT for $label");handler.postDelayed({if(!finished)send(g,kwpFrame,label)},250);return}
+        if(txCredits<=0){log("WAIT TX-CREDIT for $label");handler.postDelayed({if(!finished)send(g,kwpFrame,label,timeoutMs)},250);return}
         val c=g.getService(SERVICE)?.getCharacteristic(FIFO) ?: run{finishFail("FIFO unavailable");return}
         val packet=byteArrayOf(0x01,0x01)+kwpFrame; val ok=writeBest(g,c,packet)
-        log("TX $label appLen=${kwpFrame.size} bleLen=${packet.size} initiated=$ok");log("TX BLE RAW=${hex(packet)}");log("TX APP RAW=${hex(kwpFrame)} creditBefore=$txCredits")
-        if(ok){txCredits--;scheduleTimeout(label,stage)}else finishFail("write failed: $label")
+        log("TX $label appLen=${kwpFrame.size} bleLen=${packet.size} initiated=$ok RAW=${hex(packet)} creditBefore=$txCredits")
+        if(ok){txCredits--;scheduleTimeout(label,stage,timeoutMs)}else finishFail("write failed: $label")
     }
     private fun grantRx(g:BluetoothGatt,n:Int,label:String){val c=g.getService(SERVICE)?.getCharacteristic(CREDITS)?:return;val ok=writeBest(g,c,byteArrayOf((n and 0xFF).toByte()));log("RX-CREDIT [$label] +$n initiated=$ok")}
 
@@ -239,6 +285,9 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun startDiagnostic()=kwp(byteArrayOf(0x10,0x81.toByte()))
     private fun requestUpload()=kwp(byteArrayOf(0x35,0x00,0x00,0x00,0x00,0x00,0xFF.toByte(),0xFF.toByte(),0xFF.toByte(),0xFF.toByte()))
     private fun cardDownloadSlot1()=kwp(byteArrayOf(0x36,0x06,0x01))
+    private fun ackSubMessage(next:Int)=kwp(byteArrayOf(0x83.toByte(),0x76,((next shr 8) and 0xFF).toByte(),(next and 0xFF).toByte()))
+    private fun requestTransferExit()=kwp(byteArrayOf(0x37))
+    private fun stopCommunication()=kwp(byteArrayOf(0x82.toByte()))
     private fun kwp(data:ByteArray):ByteArray{val body=byteArrayOf(0x80.toByte(),0xEE.toByte(),0xF0.toByte(),data.size.toByte())+data;return body+byteArrayOf(checksum(body).toByte())}
     private fun checksum(b:ByteArray)=b.fold(0){a,x->(a+u(x)) and 0xFF}
 
@@ -251,7 +300,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     @SuppressLint("MissingPermission") private fun closeGatt(){try{gatt?.close()}catch(_:Throwable){};gatt=null}
     fun clearLog(){lines.clear();notifyLog()}
     private fun nrcName(n:Int)=when(n){0x10->"generalReject";0x11->"serviceNotSupported";0x12->"subFunctionNotSupported";0x13->"incorrectMessageLength";0x21->"busyRepeatRequest";0x22->"conditionsNotCorrect/requestSequenceError";0x31->"requestOutOfRange";0x33->"securityAccessDenied";0x50->"uploadNotAccepted";0x78->"responsePending";0xFA->"dataNotAvailable";else->"NRC"}
-    private fun log(s:String){val t=SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date());lines.add("[$t] $s");while(lines.size>20000)lines.removeAt(0);notifyLog()}
+    private fun log(s:String){val t=SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date());lines.add("[$t] $s");while(lines.size>30000)lines.removeAt(0);notifyLog()}
     private fun notifyLog(){val text=lines.joinToString("\n");handler.post{listener?.onLogChanged(text)}}
     private fun notifyConnection(v:Boolean,n:String?){handler.post{listener?.onConnectionStateChanged(v,n)}}
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:d.address}catch(_:Throwable){"DTCO"}
