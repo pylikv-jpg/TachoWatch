@@ -51,6 +51,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var connectButton: Button
+    private lateinit var analyzeDddButton: Button
     private lateinit var manualGattButton: Button
     private lateinit var disconnectButton: Button
     private lateinit var refreshButton: Button
@@ -101,7 +102,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             setTypeface(typeface, Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "DTCO Bluetooth — TEST-11B DOWNLOAD"
+            text = "DTCO Bluetooth — TEST-12 DDD INVENTORY"
             textSize = 12f
             setTextColor(COLOR_CYAN)
         })
@@ -118,10 +119,24 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         statusRow.addView(statusText)
         statusCard.addView(statusRow)
         deviceText = TextView(this).apply {
-            text = "DTCO пока не выбран"; textSize = 12f; setTextColor(COLOR_MUTED); setPadding(0, dp(5), 0, 0); maxLines = 2
+            text = "Можно анализировать уже сохранённый DDD без подключения к DTCO"; textSize = 12f; setTextColor(COLOR_MUTED); setPadding(0, dp(5), 0, 0); maxLines = 2
         }
         statusCard.addView(deviceText)
         root.addView(statusCard)
+        root.addView(space(7))
+
+        val analyzeCard = card()
+        analyzeCard.addView(label("АНАЛИЗ СОХРАНЁННОЙ КАРТЫ"))
+        analyzeCard.addView(space(6))
+        analyzeDddButton = button("Анализ последнего DDD", COLOR_GREEN).apply {
+            setOnClickListener { analyzeLatestDdd() }
+        }
+        analyzeCard.addView(analyzeDddButton)
+        analyzeCard.addView(TextView(this).apply {
+            text = "Повторное скачивание карты не требуется. Используется последний TachoWatch_card_*.ddd из памяти приложения."
+            textSize = 11f; setTextColor(COLOR_MUTED); setPadding(0, dp(6), 0, 0)
+        })
+        root.addView(analyzeCard)
         root.addView(space(7))
 
         val deviceCard = card()
@@ -133,7 +148,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         val devicesScroll = ScrollView(this).apply { isFillViewport = false; isNestedScrollingEnabled = true }
         devicesContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         devicesScroll.addView(devicesContainer)
-        deviceCard.addView(devicesScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(120)))
+        deviceCard.addView(devicesScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(95)))
         root.addView(deviceCard)
         root.addView(space(7))
 
@@ -146,7 +161,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         controlCard.addView(controlHeader)
         controlCard.addView(space(6))
 
-        connectButton = button("Подключиться и запустить TEST-11B", COLOR_BLUE).apply {
+        connectButton = button("Скачать карту заново", COLOR_BLUE).apply {
             isEnabled = false; alpha = 0.55f
             setOnClickListener {
                 val d = selectedDevice ?: return@setOnClickListener
@@ -174,7 +189,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
         val logCard = card()
         val logHeader = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        logHeader.addView(label("ЖУРНАЛ DOWNLOAD"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        logHeader.addView(label("ЖУРНАЛ / TLV INVENTORY"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         clearButton = smallButton("Очистить").apply {
             setOnClickListener { renderedLog = ""; logText.text = ""; diagnostic.clearLog() }
         }
@@ -183,7 +198,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
         val copyRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, dp(4)) }
         copyResultButton = button("Копировать результат", COLOR_GREEN).apply { setOnClickListener { copyResultOnly() } }
-        copyAllButton = button("Копировать весь журнал", COLOR_CYAN).apply { setOnClickListener { copyText(renderedLog, "Весь журнал скопирован") } }
+        copyAllButton = button("Копировать всё", COLOR_CYAN).apply { setOnClickListener { copyText(renderedLog, "Текст скопирован") } }
         copyRow.addView(copyResultButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         copyRow.addView(hspace(6))
         copyRow.addView(copyAllButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -194,7 +209,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             isScrollbarFadingEnabled = false; isSmoothScrollingEnabled = false
         }
         logText = TextView(this).apply {
-            text = "Ожидание запуска TEST-11B..."; textSize = 11.5f; setTextColor(COLOR_TEXT); typeface = Typeface.MONOSPACE
+            text = "Нажми «Анализ последнего DDD» — повторное подключение к тахографу не требуется."; textSize = 11.5f; setTextColor(COLOR_TEXT); typeface = Typeface.MONOSPACE
             setLineSpacing(0f, 1.08f); setTextIsSelectable(true); setPadding(0, dp(4), 0, dp(12))
         }
         logScroll.addView(logText)
@@ -204,19 +219,39 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         setContentView(root)
     }
 
+    private fun analyzeLatestDdd() {
+        val dir = getExternalFilesDir(null)
+        val file = TlvInventory.findLatestDdd(dir)
+        if (file == null) {
+            Toast.makeText(this, "Сохранённый DDD не найден", Toast.LENGTH_LONG).show()
+            return
+        }
+        val result = TlvInventory.parse(file)
+        val text = TlvInventory.render(result)
+        renderedLog = text
+        logText.text = text
+        logScroll.scrollTo(0, 0)
+        setStatus(if (result.error == null && result.parsedBytes == result.bytes) "DDD разобран" else "DDD требует проверки", if (result.error == null) COLOR_GREEN else COLOR_ORANGE)
+        Toast.makeText(this, "Найдено TLV: ${result.entries.size}", Toast.LENGTH_SHORT).show()
+    }
+
     private fun copyResultOnly() {
+        if (renderedLog.contains("===== TEST-12 TLV INVENTORY =====")) {
+            copyText(renderedLog.trim(), "TEST-12 inventory скопирован")
+            return
+        }
         val idx = renderedLog.lastIndexOf(RESULT_MARKER)
         if (idx < 0) {
-            Toast.makeText(this, "Итог TEST-11 ещё не сформирован", Toast.LENGTH_SHORT).show(); return
+            Toast.makeText(this, "Итог ещё не сформирован", Toast.LENGTH_SHORT).show(); return
         }
         val start = renderedLog.lastIndexOf('\n', idx).let { if (it >= 0) it + 1 else idx }
-        copyText(renderedLog.substring(start).trim(), "Результат TEST-11 скопирован")
+        copyText(renderedLog.substring(start).trim(), "Результат скачивания скопирован")
     }
 
     private fun copyText(text: String, message: String) {
         if (text.isBlank()) { Toast.makeText(this, "Копировать пока нечего", Toast.LENGTH_SHORT).show(); return }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("TachoWatch TEST-11B", text))
+        clipboard.setPrimaryClip(ClipData.newPlainText("TachoWatch TEST-12", text))
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
