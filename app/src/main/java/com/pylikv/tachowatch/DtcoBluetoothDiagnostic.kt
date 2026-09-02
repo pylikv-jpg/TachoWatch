@@ -20,7 +20,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     }
 
     companion object {
-        private const val VERSION = "BLE-DOWNLOAD-CARD-FULL-TEST-11H"
+        private const val VERSION = "BLE-DOWNLOAD-CARD-FULL-TEST-11I"
         const val RESULT_MARKER = "===== TEST-11 DOWNLOAD RESULT ====="
         private const val SHORT_TIMEOUT_MS = 5000L
         private const val CARD_TIMEOUT_MS = 120000L
@@ -28,6 +28,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         private const val INITIAL_RX_CREDITS = 24
         private const val REFILL_EVERY_PACKETS = 12
         private const val REFILL_RX_CREDITS = 12
+        private const val REFILL_DELAY_MS = 180L
         private const val MAX_FRAGMENT_RETRIES = 3
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private val SERVICE = UUID.fromString("eef90782-55dd-4388-b80b-695aba7a69b5")
@@ -74,11 +75,12 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (!hasConnectPermission()) { log("ОШИБКА: нет BLUETOOTH_CONNECT"); return }
         closeGatt(); reset(); device = d
         log("========================================")
-        log("TachoWatch — TEST-11H DYNAMIC RX CREDITS")
+        log("TachoWatch — TEST-11I SERIALIZED BLE WRITES")
         log("Версия: $VERSION")
         log("Card request: 36 06 01")
         log("NRC 78 для SID36/SID83 = responsePending, НЕ ошибка")
         log("RX credits: initial=$INITIAL_RX_CREDITS, refill +$REFILL_RX_CREDITS каждые $REFILL_EVERY_PACKETS FIFO packets")
+        log("FIX: refill откладывается на ${REFILL_DELAY_MS}ms, чтобы не конфликтовать с ACK FIFO write")
         log("Fragment watchdog: ${FRAGMENT_TIMEOUT_MS/1000}s, retry expected MsgC до $MAX_FRAGMENT_RETRIES раз")
         log("RAW больших card blocks в журнал НЕ выводим; пишем сразу в TLV/DDD")
         log("ВАЖНО: штатный card download может обновить LastCardDownload/Card_Download на карте")
@@ -172,16 +174,19 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
 
         totalFifoPackets++
         fifoPacketsSinceRefill++
-        if(fifoPacketsSinceRefill>=REFILL_EVERY_PACKETS){
-            fifoPacketsSinceRefill=0
-            grantRx(g,REFILL_RX_CREDITS,"REFILL@$totalFifoPackets")
-        }
+        val refillDue = fifoPacketsSinceRefill>=REFILL_EVERY_PACKETS
+        if(refillDue) fifoPacketsSinceRefill=0
 
-        // Полный RAW card-stream больше не печатаем: только короткий заголовок транспортного пакета.
         val pNo=if(v.size>1)u(v[1]) else -1
         val total=if(v.isNotEmpty())u(v[0]) else -1
         if(stage!=Stage.WAIT_CARD || total<=1) log("RX FIFO len=${v.size} packet=$pNo/$total HEAD=${hex(v.take(20).toByteArray())}${if(v.size>20)" ..." else ""}")
         consumeTransportPacket(g,v)
+
+        if(refillDue && !finished){
+            handler.postDelayed({
+                if(!finished && connected) grantRx(g,REFILL_RX_CREDITS,"REFILL@$totalFifoPackets")
+            }, REFILL_DELAY_MS)
+        }
     }
 
     private fun consumeTransportPacket(g:BluetoothGatt,v:ByteArray){
@@ -189,12 +194,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         val first=u(v[0]); val packetNo=u(v[1]); val payload=v.copyOfRange(2,v.size)
         if(packetNo==1){
             expectedPackets=first; lastPacketNo=1; rxApplication=payload
-            if(expectedPackets>1){
-                scheduleFragmentWatchdog(g)
-            } else {
-                fragmentToken++
-                finishApplication(g)
-            }
+            if(expectedPackets>1){ scheduleFragmentWatchdog(g) }
+            else { fragmentToken++; finishApplication(g) }
             return
         }
         if(expectedPackets<=1){log("RX TRANSPORT unexpected continuation packet=$packetNo");return}
@@ -218,16 +219,12 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
                     fragmentRetries++
                     log("RECOVERY #$fragmentRetries: повторно запрашиваем MsgC=$requestedCounter")
                     send(g,ackSubMessage(requestedCounter),"RECOVER SID83 MsgC=$requestedCounter",CARD_TIMEOUT_MS)
-                } else {
-                    finishFail("Fragment recovery exhausted for requested MsgC=$requestedCounter")
-                }
+                } else finishFail("Fragment recovery exhausted for requested MsgC=$requestedCounter")
             }
         },FRAGMENT_TIMEOUT_MS)
     }
 
-    private fun clearPartialTransport(){
-        fragmentToken++; rxApplication=byteArrayOf(); expectedPackets=0; lastPacketNo=0
-    }
+    private fun clearPartialTransport(){ fragmentToken++; rxApplication=byteArrayOf(); expectedPackets=0; lastPacketNo=0 }
 
     private fun finishApplication(g:BluetoothGatt){
         val a=rxApplication;rxApplication=byteArrayOf();expectedPackets=0;lastPacketNo=0;parseKwpFrame(g,a)
@@ -262,11 +259,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         when(stage){
             Stage.WAIT_C1 -> if(sid==0xC1){log("OK StartCommunication");stage=Stage.WAIT_50;send(g,startDiagnostic(),"StartDiagnostic",SHORT_TIMEOUT_MS)}
             Stage.WAIT_50 -> if(sid==0x50){log("OK StartDiagnostic");stage=Stage.WAIT_75;send(g,requestUpload(),"RequestUpload",SHORT_TIMEOUT_MS)}
-            Stage.WAIT_75 -> if(sid==0x75){
-                log("OK RequestUpload")
-                stage=Stage.WAIT_CARD; requestedCounter=1
-                send(g,cardDownloadSlot1(),"CardDownload SID36 TRTP06 slot01",CARD_TIMEOUT_MS)
-            }
+            Stage.WAIT_75 -> if(sid==0x75){log("OK RequestUpload");stage=Stage.WAIT_CARD;requestedCounter=1;send(g,cardDownloadSlot1(),"CardDownload SID36 TRTP06 slot01",CARD_TIMEOUT_MS)}
             Stage.WAIT_CARD -> if(sid==0x76){handleCardSubMessage(g,data,kwpLen)}
             Stage.WAIT_77 -> if(sid==0x77){log("OK RequestTransferExit");stage=Stage.WAIT_C2;send(g,stopCommunication(),"StopCommunication",SHORT_TIMEOUT_MS)}
             Stage.WAIT_C2 -> if(sid==0xC2){log("OK StopCommunication");finishSuccess()}
@@ -284,9 +277,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
             send(g,ackSubMessage(next),"ACK duplicate nextMsgC=$next",CARD_TIMEOUT_MS)
             return
         }
-        if(requestedCounter>0 && counter!=requestedCounter){
-            log("WARNING MsgC expected=$requestedCounter got=$counter")
-        }
+        if(requestedCounter>0 && counter!=requestedCounter) log("WARNING MsgC expected=$requestedCounter got=$counter")
         fragmentRetries=0
         val payload=if(data.size>4)data.copyOfRange(4,data.size) else byteArrayOf()
         subMessages++; lastCounter=counter; cardFile.write(payload)
@@ -363,14 +354,22 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         val c=g.getService(SERVICE)?.getCharacteristic(FIFO) ?: run{finishFail("FIFO unavailable");return}
         val packet=byteArrayOf(0x01,0x01)+kwpFrame; val ok=writeBest(g,c,packet)
         if(stage!=Stage.WAIT_CARD || !label.startsWith("ACK SID83")) log("TX $label initiated=$ok HEAD=${hex(packet.take(20).toByteArray())}")
-        if(ok){txCredits--;scheduleTimeout(label,stage,timeoutMs)}else finishFail("write failed: $label")
+        if(ok){txCredits--;scheduleTimeout(label,stage,timeoutMs)}else {
+            log("BLE FIFO busy for $label; retry через 80ms")
+            handler.postDelayed({if(!finished)send(g,kwpFrame,label,timeoutMs)},80)
+        }
     }
 
     private fun grantRx(g:BluetoothGatt,n:Int,label:String){
         val c=g.getService(SERVICE)?.getCharacteristic(CREDITS)?:return
         val ok=writeBest(g,c,byteArrayOf((n and 0xFF).toByte()))
-        if(ok) rxCreditsGranted+=n
-        log("RX-CREDIT [$label] +$n initiated=$ok totalGranted=$rxCreditsGranted")
+        if(ok){
+            rxCreditsGranted+=n
+            log("RX-CREDIT [$label] +$n initiated=true totalGranted=$rxCreditsGranted")
+        } else {
+            log("RX-CREDIT [$label] GATT busy; retry через 120ms")
+            handler.postDelayed({if(!finished && connected) grantRx(g,n,label+"-retry")},120)
+        }
     }
 
     private fun startCommunication()=byteArrayOf(0x81.toByte(),0xEE.toByte(),0xF0.toByte(),0x81.toByte(),0xE0.toByte())
