@@ -11,8 +11,8 @@ android {
         applicationId = "com.pylikv.tachowatch"
         minSdk = 26
         targetSdk = 35
-        versionCode = 102
-        versionName = "1.0-dashboard-live-card"
+        versionCode = 103
+        versionName = "1.0-now-history"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
