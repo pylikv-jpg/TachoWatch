@@ -15,7 +15,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     interface Listener { fun onLogChanged(fullLog: String); fun onConnectionStateChanged(connected: Boolean, deviceName: String?) }
 
     companion object {
-        private const val VERSION = "BLE-RHMI-READONLY-CARD-DATA-TEST-9F"
+        private const val VERSION = "BLE-RHMI-READONLY-CARD-DATA-TEST-9G"
         private const val RESPONSE_TIMEOUT_MS = 3000L
         private const val NEXT_DELAY_MS = 220L
         private const val RECONNECT_DELAY_MS = 2500L
@@ -47,6 +47,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     @Volatile private var waiting=false
     @Volatile private var currentDid:Int?=null
     @Volatile private var reqGen=0L
+    @Volatile private var nextGen=0L
     @Volatile private var finished=false
     @Volatile private var reconnectUsed=false
 
@@ -57,18 +58,18 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if(!hasConnectPermission()){log("ОШИБКА: нет BLUETOOTH_CONNECT");return}
         closeGatt();reset();device=d
         log("========================================")
-        log("TachoWatch — TEST-9F NO_RESPONSE TRANSPORT")
+        log("TachoWatch — TEST-9G SCHEDULED NO_RESPONSE")
         log("Версия: $VERSION")
         log("READ-ONLY: только UDS 0x22, диапазон F900-F9FF")
-        log("FIX: FIFO и CREDITS всегда WRITE_TYPE_NO_RESPONSE")
-        log("Подтверждено TEST-9E: properties=0x24, WRITE=false, WRITE_NR=true")
+        log("FIX-1: FIFO/CREDITS всегда WRITE_TYPE_NO_RESPONSE")
+        log("FIX-2: один сериализованный DID scheduler; stale next() отменяется generation-token")
         log("НЕТ 0x27; НЕТ 0x2E; НЕТ записи карты/деятельности")
         log("========================================")
         connectGattNow(d,false)
     }
 
-    private fun reset(){lines.clear();results.clear();connected=false;credits=0;fifoSub=false;creditSub=false;openSent=false;statusSent=false;rhmi=false;scanning=false;index=0;waiting=false;currentDid=null;finished=false;reconnectUsed=false;reqGen++}
-    private fun resetTransport(){connected=false;credits=0;fifoSub=false;creditSub=false;openSent=false;statusSent=false;rhmi=false;scanning=false;waiting=false;currentDid=null;reqGen++}
+    private fun reset(){lines.clear();results.clear();connected=false;credits=0;fifoSub=false;creditSub=false;openSent=false;statusSent=false;rhmi=false;scanning=false;index=0;waiting=false;currentDid=null;finished=false;reconnectUsed=false;reqGen++;nextGen++}
+    private fun resetTransport(){connected=false;credits=0;fifoSub=false;creditSub=false;openSent=false;statusSent=false;rhmi=false;scanning=false;waiting=false;currentDid=null;reqGen++;nextGen++}
 
     @SuppressLint("MissingPermission")
     private fun connectGattNow(d:BluetoothDevice,retry:Boolean){
@@ -83,7 +84,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         override fun onConnectionStateChange(g:BluetoothGatt,status:Int,newState:Int){
             log("CONNECTION status=$status state=$newState")
             if(newState==BluetoothProfile.STATE_CONNECTED){connected=true;gatt=g;notifyConnection(true,safeName(g.device));try{if(!g.requestMtu(512))discover(g)}catch(_:Throwable){discover(g)};return}
-            if(newState==BluetoothProfile.STATE_DISCONNECTED){connected=false;waiting=false;reqGen++;notifyConnection(false,safeName(g.device));log("BLE DISCONNECTED status=$status");if(status==19&&!reconnectUsed&&!finished){reconnectUsed=true;log("STATUS 19 confirmed: peer terminated connection");try{g.close()}catch(_:Throwable){};if(gatt===g)gatt=null;resetTransport();device?.let{d->log("RECONNECT #1 scheduled after $RECONNECT_DELAY_MS ms");handler.postDelayed({if(!finished)connectGattNow(d,true)},RECONNECT_DELAY_MS)}}}
+            if(newState==BluetoothProfile.STATE_DISCONNECTED){connected=false;waiting=false;reqGen++;nextGen++;notifyConnection(false,safeName(g.device));log("BLE DISCONNECTED status=$status");if(status==19&&!reconnectUsed&&!finished){reconnectUsed=true;log("STATUS 19 confirmed: peer terminated connection");try{g.close()}catch(_:Throwable){};if(gatt===g)gatt=null;resetTransport();device?.let{d->log("RECONNECT #1 scheduled after $RECONNECT_DELAY_MS ms");handler.postDelayed({if(!finished)connectGattNow(d,true)},RECONNECT_DELAY_MS)}}}
         }
         override fun onMtuChanged(g:BluetoothGatt,mtu:Int,status:Int){log("MTU=$mtu status=$status");discover(g)}
         override fun onServicesDiscovered(g:BluetoothGatt,status:Int){log("services status=$status");if(status!=BluetoothGatt.GATT_SUCCESS)return;val s=g.getService(SERVICE)?:run{log("Diagnostics Service NOT FOUND");return};logChar("FIFO",s.getCharacteristic(FIFO));logChar("CREDITS",s.getCharacteristic(CREDITS));subscribe(g,FIFO)}
@@ -102,7 +103,13 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun grant(g:BluetoothGatt,label:String){val c=g.getService(SERVICE)?.getCharacteristic(CREDITS)?:return;val ok=writeNoResponse(g,c,byteArrayOf(1));log("RX-CREDIT [$label] NO_RESPONSE initiated=$ok")}
 
     private fun incoming(g:BluetoothGatt,c:BluetoothGattCharacteristic,v:ByteArray){
-        if(c.uuid==CREDITS){if(v.isEmpty())return;val n=u(v[0]);if(n==0xFF){log("FLOW CONTROL REJECTED");return};credits+=n;log("TX-CREDIT RX +$n => $credits");pump(g);return}
+        if(c.uuid==CREDITS){
+            if(v.isEmpty())return
+            val n=u(v[0]);if(n==0xFF){log("FLOW CONTROL REJECTED");return}
+            credits+=n;log("TX-CREDIT RX +$n => $credits")
+            if(!openSent){pumpBootstrap(g)} else if(scanning&&!waiting&&credits>0){scheduleNext(g,NEXT_DELAY_MS,"TX-CREDIT")}
+            return
+        }
         if(c.uuid!=FIFO||v.size<3)return
         val a=v.copyOfRange(2,v.size);log("RX APP=${hex(a)}")
         if(a.size>=4&&u(a[0])==0x71&&u(a[1])==1&&u(a[2])==0xF2&&u(a[3])==0x11){log("OPEN RHMI POSITIVE");grant(g,"RHMI-STATUS");handler.postDelayed({if(connected&&credits>0)sendStatus(g)},300);return}
@@ -111,18 +118,58 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if(a.size>=3&&u(a[0])==0x7F&&u(a[1])==0x22&&waiting&&currentDid!=null){val did=currentDid!!;val n=u(a[2]);results[did]=R(T.NRC,nrc=n,text=nrc(n));log("${hd(did)} NRC 0x${hb(n)} ${nrc(n)}");complete(g)}
     }
 
-    private fun pump(g:BluetoothGatt){if(!connected||finished||waiting||credits<=0)return;when{!openSent->sendOpen(g);scanning&&index<dids.size->sendRead(g)}}
+    private fun pumpBootstrap(g:BluetoothGatt){if(!connected||finished||credits<=0||openSent)return;sendOpen(g)}
     private fun sendOpen(g:BluetoothGatt){if(openSent||credits<=0)return;val f=fifo(g)?:return;val ok=writeNoResponse(g,f,byteArrayOf(1,1,0x31,1,0xF2.toByte(),0x11));log("OPEN NO_RESPONSE initiated=$ok");if(ok){openSent=true;credits--}}
     private fun sendStatus(g:BluetoothGatt){if(statusSent||credits<=0)return;val f=fifo(g)?:return;val ok=writeNoResponse(g,f,byteArrayOf(1,1,0x31,3,0xF2.toByte(),0x11));log("RHMI status NO_RESPONSE initiated=$ok");if(ok){statusSent=true;credits--}}
 
-    private fun startScan(g:BluetoothGatt){scanning=true;index=0;waiting=false;currentDid=null;results.clear();log("========================================");log("===== TEST-9F CARD DATA SEARCH START =====");log("Range F900-F9FF (${dids.size} DID), service 0x22 only");log("========================================");next(g)}
-    private fun next(g:BluetoothGatt){if(finished||!scanning||waiting)return;if(index>=dids.size){summary();return};if(credits<=0){grant(g,"READ-${hd(dids[index])}");return};sendRead(g)}
-    private fun sendRead(g:BluetoothGatt){if(finished||waiting||credits<=0||index>=dids.size)return;val did=dids[index];val f=fifo(g)?:return;log("TX UDS 22 ${hd(did)} [${index+1}/${dids.size}] creditBefore=$credits");val ok=writeNoResponse(g,f,byteArrayOf(1,1,0x22,(did shr 8).toByte(),did.toByte()));if(!ok){results[did]=R(T.ERROR,text="WRITE FAILED");index++;handler.postDelayed({next(g)},NEXT_DELAY_MS);return};credits--;waiting=true;currentDid=did;timeout(g,did)}
-    private fun positive(g:BluetoothGatt,did:Int,data:ByteArray){val text=decode(did,data);results[did]=R(T.POSITIVE,data.copyOf(),text=text);log("${hd(did)} POSITIVE len=${data.size} RAW=${hex(data)} | $text");if(waiting&&currentDid==did)complete(g)}
-    private fun complete(g:BluetoothGatt){reqGen++;waiting=false;currentDid=null;index++;grant(g,"AFTER-DID");if(index%32==0)log("----- PROGRESS $index/${dids.size}; positive=${results.values.count{it.type==T.POSITIVE}} -----");handler.postDelayed({next(g)},NEXT_DELAY_MS)}
-    private fun timeout(g:BluetoothGatt,did:Int){val gen=++reqGen;handler.postDelayed({if(finished||gen!=reqGen||!waiting||currentDid!=did)return@postDelayed;results[did]=R(T.TIMEOUT,text="TIMEOUT");log("${hd(did)} TIMEOUT");waiting=false;currentDid=null;index++;grant(g,"TIMEOUT-RECOVERY");handler.postDelayed({next(g)},500)},RESPONSE_TIMEOUT_MS)}
+    private fun startScan(g:BluetoothGatt){scanning=true;index=0;waiting=false;currentDid=null;results.clear();nextGen++;log("========================================");log("===== TEST-9G CARD DATA SEARCH START =====");log("Range F900-F9FF (${dids.size} DID), service 0x22 only");log("Serialized scheduler delay=$NEXT_DELAY_MS ms");log("========================================");scheduleNext(g,0,"START")}
 
-    private fun summary(){scanning=false;waiting=false;currentDid=null;reqGen++;finished=true;val pos=results.filterValues{it.type==T.POSITIVE};log("");log("========================================");log("===== TEST-9F CARD DATA SEARCH RESULT =====");log("Scanned=${dids.size} POSITIVE=${pos.size} NRC=${results.values.count{it.type==T.NRC}} TIMEOUT=${results.values.count{it.type==T.TIMEOUT}} ERROR=${results.values.count{it.type==T.ERROR}}");log("----- KNOWN / CONTROL DID -----");known.sorted().forEach{d->results[d]?.let{log("${hd(d)}=${rt(it)}")}};log("----- ALL POSITIVE DID -----");pos.forEach{(d,r)->log("${hd(d)} len=${r.data.size} RAW=${hex(r.data)} | ${r.text}")};log("----- CARD DATA CANDIDATES -----");val cand=pos.filter{(d,r)->d !in known&&(r.data.size>=8||ratio(r.data)>=0.45||ascii(r.data).count{it.isLetter()}>=4)};if(cand.isEmpty())log("No automatic candidates. Все положительные DID выше сохранены RAW.")else cand.forEach{(d,r)->log("${hd(d)} len=${r.data.size} ASCII=\"${ascii(r.data)}\" RAW=${hex(r.data)}")};log("READ-ONLY TEST COMPLETE");log("========================================")}
+    private fun scheduleNext(g:BluetoothGatt,delay:Long,reason:String){
+        if(finished||!scanning)return
+        val gen=++nextGen
+        log("NEXT scheduled +${delay}ms reason=$reason token=$gen index=$index credits=$credits waiting=$waiting")
+        handler.postDelayed({
+            if(gen!=nextGen||finished||!scanning)return@postDelayed
+            next(g,gen)
+        },delay)
+    }
+
+    private fun next(g:BluetoothGatt,gen:Long){
+        if(gen!=nextGen||finished||!scanning||waiting)return
+        if(index>=dids.size){summary();return}
+        if(credits<=0){grant(g,"READ-${hd(dids[index])}");return}
+        sendRead(g)
+    }
+
+    private fun sendRead(g:BluetoothGatt){
+        if(finished||waiting||credits<=0||index>=dids.size)return
+        nextGen++
+        val did=dids[index];val f=fifo(g)?:return
+        log("TX UDS 22 ${hd(did)} [${index+1}/${dids.size}] creditBefore=$credits")
+        val ok=writeNoResponse(g,f,byteArrayOf(1,1,0x22,(did shr 8).toByte(),did.toByte()))
+        if(!ok){results[did]=R(T.ERROR,text="WRITE FAILED");index++;scheduleNext(g,NEXT_DELAY_MS,"WRITE-FAILED");return}
+        credits--;waiting=true;currentDid=did;timeout(g,did)
+    }
+
+    private fun positive(g:BluetoothGatt,did:Int,data:ByteArray){val text=decode(did,data);results[did]=R(T.POSITIVE,data.copyOf(),text=text);log("${hd(did)} POSITIVE len=${data.size} RAW=${hex(data)} | $text");if(waiting&&currentDid==did)complete(g)}
+
+    private fun complete(g:BluetoothGatt){
+        reqGen++;nextGen++;waiting=false;currentDid=null;index++
+        grant(g,"AFTER-DID")
+        if(index%32==0)log("----- PROGRESS $index/${dids.size}; positive=${results.values.count{it.type==T.POSITIVE}} -----")
+        scheduleNext(g,NEXT_DELAY_MS,"DID-COMPLETE")
+    }
+
+    private fun timeout(g:BluetoothGatt,did:Int){
+        val gen=++reqGen
+        handler.postDelayed({
+            if(finished||gen!=reqGen||!waiting||currentDid!=did)return@postDelayed
+            results[did]=R(T.TIMEOUT,text="TIMEOUT");log("${hd(did)} TIMEOUT")
+            waiting=false;currentDid=null;index++;nextGen++;grant(g,"TIMEOUT-RECOVERY");scheduleNext(g,500,"TIMEOUT")
+        },RESPONSE_TIMEOUT_MS)
+    }
+
+    private fun summary(){scanning=false;waiting=false;currentDid=null;reqGen++;nextGen++;finished=true;val pos=results.filterValues{it.type==T.POSITIVE};log("");log("========================================");log("===== TEST-9G CARD DATA SEARCH RESULT =====");log("Scanned=${dids.size} POSITIVE=${pos.size} NRC=${results.values.count{it.type==T.NRC}} TIMEOUT=${results.values.count{it.type==T.TIMEOUT}} ERROR=${results.values.count{it.type==T.ERROR}}");log("----- KNOWN / CONTROL DID -----");known.sorted().forEach{d->results[d]?.let{log("${hd(d)}=${rt(it)}")}};log("----- ALL POSITIVE DID -----");pos.forEach{(d,r)->log("${hd(d)} len=${r.data.size} RAW=${hex(r.data)} | ${r.text}")};log("----- CARD DATA CANDIDATES -----");val cand=pos.filter{(d,r)->d !in known&&(r.data.size>=8||ratio(r.data)>=0.45||ascii(r.data).count{it.isLetter()}>=4)};if(cand.isEmpty())log("No automatic candidates. Все положительные DID выше сохранены RAW.")else cand.forEach{(d,r)->log("${hd(d)} len=${r.data.size} ASCII=\"${ascii(r.data)}\" RAW=${hex(r.data)}")};log("READ-ONLY TEST COMPLETE");log("========================================")}
 
     private fun decode(d:Int,b:ByteArray):String=when(d){0xF903->if(b.isEmpty())"activity no data" else when(u(b[0])){0->"0 - ОТДЫХ / ПЕРЕРЫВ";1->"1 - ГОТОВНОСТЬ";2->"2 - ДРУГАЯ РАБОТА";3->"3 - ВОЖДЕНИЕ";else->"activity=${u(b[0])}"};0xF916->"driver/card candidate ASCII=\"${ascii(b)}\"";0xF923->mins(b,"continuous driving");0xF925->mins(b,"accumulated break");0xF927->mins(b,"current activity duration");0xF938->mins(b,"two-week driving");else->{val s=ascii(b);if(s.isNotBlank())"ASCII=\"$s\"" else if(b.size==2)"${(u(b[0])shl 8)or u(b[1])}" else "binary ${b.size} byte(s)"}}
     private fun mins(b:ByteArray,label:String):String{if(b.size<2)return "$label short";val m=(u(b[0])shl 8)or u(b[1]);return "$label: $m min = ${m/60}:${String.format(Locale.US,"%02d",m%60)}"}
@@ -131,8 +178,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun rt(r:R)=when(r.type){T.POSITIVE->"POSITIVE ${hex(r.data)} (${r.text})";T.NRC->"NRC 0x${hb(r.nrc?:0)} ${r.text}";T.TIMEOUT->"TIMEOUT";T.ERROR->"ERROR ${r.text}"}
     private fun nrc(n:Int)=when(n){0x10->"generalReject";0x11->"serviceNotSupported";0x12->"subFunctionNotSupported";0x13->"incorrectMessageLengthOrInvalidFormat";0x21->"busyRepeatRequest";0x22->"conditionsNotCorrect";0x31->"requestOutOfRange";0x33->"securityAccessDenied";0x78->"responsePending";else->"NRC"}
 
-    private fun stop(reason:String){finished=true;scanning=false;waiting=false;reqGen++;log("===== TEST STOPPED =====");log(reason)}
-    @SuppressLint("MissingPermission") fun disconnect(){try{gatt?.disconnect()}catch(_:Throwable){};closeGatt();connected=false;notifyConnection(false,device?.let(::safeName));log("Отключено пользователем")}
+    private fun stop(reason:String){finished=true;scanning=false;waiting=false;reqGen++;nextGen++;log("===== TEST STOPPED =====");log(reason)}
+    @SuppressLint("MissingPermission") fun disconnect(){try{gatt?.disconnect()}catch(_:Throwable){};closeGatt();connected=false;nextGen++;notifyConnection(false,device?.let(::safeName));log("Отключено пользователем")}
     @SuppressLint("MissingPermission") private fun closeGatt(){try{gatt?.close()}catch(_:Throwable){};gatt=null}
     fun clearLog(){lines.clear();notifyLog()}
     private fun fifo(g:BluetoothGatt)=g.getService(SERVICE)?.getCharacteristic(FIFO)
