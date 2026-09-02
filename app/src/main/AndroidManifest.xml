@@ -24,7 +24,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="TachoWatch"
+        android:label="TachoWatch TEST-13"
         android:supportsRtl="true"
         android:theme="@style/Theme.TachoWatch">
 
