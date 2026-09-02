@@ -68,6 +68,9 @@ object HistoryData {
             val start = dp.firstOrNull { it.type.startsWith("BEGIN_") }
             val end = dp.lastOrNull { it.type.startsWith("END_") }
             Day(date, t.first, t.second, t.third, start?.time, start?.country, end?.time, end?.country)
+        }.filter { day ->
+            day.startTime != null || day.endTime != null ||
+                day.drivingMinutes > 0 || day.workMinutes > 0 || day.availabilityMinutes > 0
         }.sortedBy { it.date }
 
         val now = Date()
