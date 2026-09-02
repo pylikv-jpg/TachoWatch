@@ -18,9 +18,10 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     }
 
     companion object {
-        private const val VERSION = "BLE-DOWNLOAD-CARD-PROBE-TEST-11D"
+        private const val VERSION = "BLE-DOWNLOAD-CARD-PROBE-TEST-11E"
         const val RESULT_MARKER = "===== TEST-11 DOWNLOAD RESULT ====="
         private const val RESPONSE_TIMEOUT_MS = 5000L
+        private const val PENDING_TIMEOUT_MS = 120000L
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private val SERVICE = UUID.fromString("eef90782-55dd-4388-b80b-695aba7a69b5")
         private val FIFO = UUID.fromString("29d3a479-1592-47df-80a4-afa742d369bb")
@@ -40,6 +41,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private var started = false
     private var finished = false
     private var timeoutToken = 0L
+    private var pendingCount = 0
     private var rxApplication = byteArrayOf()
     private var expectedPackets = 0
     private var lastPacketNo = 0
@@ -53,12 +55,12 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (!hasConnectPermission()) { log("ОШИБКА: нет BLUETOOTH_CONNECT"); return }
         closeGatt(); reset(); device = d
         log("========================================")
-        log("TachoWatch — TEST-11D EXACT CARD DOWNLOAD")
+        log("TachoWatch — TEST-11E RESPONSE PENDING")
         log("Версия: $VERSION")
-        log("Bluetooth framing: 01 01 + KWP frame")
-        log("После RequestUpload отправляется ТОЧНО Appendix 7: SID 36, TRTP 06, Slot 01")
-        log("Card request data = 36 06 01 (без block/wrap counters)")
-        log("Цель: StartCommunication -> StartDiagnostic -> RequestUpload -> CardDownload slot 1")
+        log("Card request = точный Appendix 7: 36 06 01")
+        log("FIX: NRC 0x78 теперь НЕ ошибка; ждём окончательный ответ до 120 секунд")
+        log("Повторный CardDownload при 0x78 НЕ отправляется")
+        log("Цель: получить окончательный SID 76 после responsePending")
         log("Download UUID=$SERVICE")
         log("FIFO=$FIFO")
         log("CREDITS=$CREDITS")
@@ -75,13 +77,13 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
 
     private fun reset() {
         lines.clear(); connected=false; fifoSub=false; creditSub=false; txCredits=0
-        stage=Stage.IDLE; started=false; finished=false; timeoutToken++
+        stage=Stage.IDLE; started=false; finished=false; timeoutToken++; pendingCount=0
         rxApplication=byteArrayOf(); expectedPackets=0; lastPacketNo=0; firstCardPayload=byteArrayOf()
     }
 
     fun manualGattCheck() {
         log("===== MANUAL STATUS =====")
-        log("connected=$connected FIFO=$fifoSub Credits=$creditSub txCredits=$txCredits stage=$stage started=$started finished=$finished")
+        log("connected=$connected FIFO=$fifoSub Credits=$creditSub txCredits=$txCredits stage=$stage started=$started finished=$finished pendingCount=$pendingCount")
         log("rxApplication=${rxApplication.size} expectedPackets=$expectedPackets lastPacketNo=$lastPacketNo firstCardPayload=${firstCardPayload.size}")
     }
 
@@ -173,6 +175,13 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         timeoutToken++; val sid=u(data[0]); log("RX SID=0x${hb(sid)} DATA=${hex(data)}")
         if(sid==0x7F){
             val req=if(data.size>1)u(data[1]) else 0; val n=if(data.size>2)u(data[2]) else 0
+            if(n==0x78 && req==0x36 && stage==Stage.WAIT_CARD){
+                pendingCount++
+                log("*** RESPONSE PENDING *** request SID=0x36 count=$pendingCount")
+                log("DTCO принял CardDownload и ещё готовит данные; продолжаем ждать, повторный запрос НЕ отправляем")
+                schedulePendingTimeout()
+                return
+            }
             finishFail("NEGATIVE: request SID=0x${hb(req)} NRC=0x${hb(n)} ${nrcName(n)} stage=$stage"); return
         }
         when(stage){
@@ -192,15 +201,29 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         }
     }
 
-    private fun scheduleTimeout(label:String,expectedStage:Stage){val token=++timeoutToken;handler.postDelayed({if(!finished&&token==timeoutToken&&stage==expectedStage)finishFail("TIMEOUT waiting response for $label at stage=$expectedStage")},RESPONSE_TIMEOUT_MS)}
+    private fun scheduleTimeout(label:String,expectedStage:Stage){
+        val token=++timeoutToken
+        handler.postDelayed({if(!finished&&token==timeoutToken&&stage==expectedStage)finishFail("TIMEOUT waiting response for $label at stage=$expectedStage")},RESPONSE_TIMEOUT_MS)
+    }
+
+    private fun schedulePendingTimeout(){
+        val token=++timeoutToken
+        handler.postDelayed({
+            if(!finished && token==timeoutToken && stage==Stage.WAIT_CARD){
+                finishFail("TIMEOUT after responsePending: no final CardDownload response within ${PENDING_TIMEOUT_MS/1000} s; pendingCount=$pendingCount")
+            }
+        },PENDING_TIMEOUT_MS)
+    }
+
     private fun finishOk(trep:Int,frame:ByteArray){
         timeoutToken++;stage=Stage.DONE;finished=true
         log("");log("========================================");log(RESULT_MARKER);log("STATUS=SUCCESS")
         log("DownloadService=FOUND");log("StartCommunication=OK");log("StartDiagnostic=OK");log("RequestUpload=OK");log("CardDownloadResponse=OK")
+        log("ResponsePendingCount=$pendingCount")
         log("CardTREP=0x${hb(trep)}");log("FirstCardPayloadBytes=${firstCardPayload.size}");log("FirstCardPayloadRAW=${hex(firstCardPayload)}");log("FullResponseFrameRAW=${hex(frame)}")
         log("Следующий этап: continuation/sub-message ACK + TLV decoder");log("========================================")
     }
-    private fun finishFail(reason:String){if(finished)return;timeoutToken++;finished=true;stage=Stage.DONE;log("");log("========================================");log(RESULT_MARKER);log("STATUS=FAILED");log(reason);log("========================================")}
+    private fun finishFail(reason:String){if(finished)return;timeoutToken++;finished=true;stage=Stage.DONE;log("");log("========================================");log(RESULT_MARKER);log("STATUS=FAILED");log(reason);log("ResponsePendingCount=$pendingCount");log("========================================")}
 
     private fun send(g:BluetoothGatt,kwpFrame:ByteArray,label:String){
         if(finished)return
@@ -215,7 +238,6 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun startCommunication()=byteArrayOf(0x81.toByte(),0xEE.toByte(),0xF0.toByte(),0x81.toByte(),0xE0.toByte())
     private fun startDiagnostic()=kwp(byteArrayOf(0x10,0x81.toByte()))
     private fun requestUpload()=kwp(byteArrayOf(0x35,0x00,0x00,0x00,0x00,0x00,0xFF.toByte(),0xFF.toByte(),0xFF.toByte(),0xFF.toByte()))
-    // Current Appendix 7: Card download = SID 36, TRTP 06, optional Slot. Slot 01 = driver slot.
     private fun cardDownloadSlot1()=kwp(byteArrayOf(0x36,0x06,0x01))
     private fun kwp(data:ByteArray):ByteArray{val body=byteArrayOf(0x80.toByte(),0xEE.toByte(),0xF0.toByte(),data.size.toByte())+data;return body+byteArrayOf(checksum(body).toByte())}
     private fun checksum(b:ByteArray)=b.fold(0){a,x->(a+u(x)) and 0xFF}
