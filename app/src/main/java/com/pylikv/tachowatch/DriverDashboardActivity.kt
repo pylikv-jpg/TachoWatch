@@ -101,8 +101,8 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener 
         val dailyRest=isDailyRestNow()
         val icon=when{currentActivity.contains("ВОЖДЕНИЕ")->"◉";currentActivity.contains("РАБОТА")->"⚒";currentActivity.contains("ГОТОВНОСТЬ")->"▣";currentActivity.contains("ОТДЫХ")->"🛏";else->"•"}
         if(dailyRest){
-            activityTitle.text="🛏  СУТОЧНЫЙ ОТДЫХ";activityTime.text=HistoryData.fmt(activityMinutes);activitySub.text="минимум 9:00 • полный 11:00"
-            setProgress(activityFrame,activityProgress,activityMinutes/(11f*60f),dailyRestColor(activityMinutes))
+            activityTitle.text="🛏  СУТОЧНЫЙ ОТДЫХ";activityTime.text=HistoryData.fmt(activityMinutes);activitySub.text="${HistoryData.fmt(activityMinutes)} из 9:00 • полный 11:00"
+            setProgress(activityFrame,activityProgress,activityMinutes/(9f*60f),dailyRestColor(activityMinutes))
         }else{
             activityTitle.text="$icon  ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ • $currentActivity";activityTime.text=HistoryData.fmt(activityMinutes)
             val p:Float;val color:Int;val text:String
@@ -114,7 +114,14 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener 
 
     private fun updateWeekCards(){if(!::week.isInitialized)return;val current=history?.currentWeekCardMinutes?:0;val prev=history?.previousWeekDrivingMinutes?:0;val limit=minOf(56*60,(90*60-prev).coerceAtLeast(0));week.text="${HistoryData.fmt(current)} из ${HistoryData.fmt(limit)}";weekSub.text="прошлая неделя ${HistoryData.fmt(prev)} • данные недели с карты";setProgress(weekFrame,weekProgress,if(limit>0)current.toFloat()/limit else 1f,limitColor(current,limit))}
 
-    private fun isDailyRestNow():Boolean{if(!currentActivity.contains("ОТДЫХ"))return false;val last=history?.days?.lastOrNull{it.endTime!=null}?:return false;val end=parseUtc("${last.date} ${last.endTime}")?:return false;val elapsed=(System.currentTimeMillis()-end.time)/60000L;return elapsed in 0..900}
+    private fun isDailyRestNow():Boolean{
+        if(!currentActivity.contains("ОТДЫХ"))return false
+        if(activityMinutes>45 || breakMinutes>45)return true
+        val last=history?.days?.lastOrNull{it.endTime!=null}?:return false
+        val end=parseUtc("${last.date} ${last.endTime}")?:return false
+        val elapsed=(System.currentTimeMillis()-end.time)/60000L
+        return elapsed in 0..900
+    }
     private fun parseUtc(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull()
     private fun last(log:String,did:String)=log.lines().asReversed().firstOrNull{it.startsWith("$did=")}?.substringAfter(" | ")?.trim()
     private fun mins(v:String?):Int?=v?.let{Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull()}
