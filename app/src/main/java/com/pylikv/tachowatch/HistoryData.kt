@@ -69,23 +69,23 @@ object HistoryData {
         }.sortedBy { it.date }
 
         val utc = TimeZone.getTimeZone("UTC")
-        val cal = Calendar.getInstance(utc, Locale.US)
         val now = Date()
-        cal.time = now
-        val currentWeek = cal.get(Calendar.WEEK_OF_YEAR)
-        val currentYear = cal.get(Calendar.WEEK_YEAR)
+        val currentCal = Calendar.getInstance(utc, Locale.US).apply { time = now }
+        val previousCal = Calendar.getInstance(utc, Locale.US).apply { time = now; add(Calendar.WEEK_OF_YEAR, -1) }
+        val currentWeek = currentCal.get(Calendar.WEEK_OF_YEAR)
+        val currentYear = currentCal.get(Calendar.YEAR)
+        val previousWeek = previousCal.get(Calendar.WEEK_OF_YEAR)
+        val previousYear = previousCal.get(Calendar.YEAR)
+
         var current = 0
         var previous = 0
         days.forEach { d ->
             val dc = Calendar.getInstance(utc, Locale.US)
             dc.time = parseDate(d.date) ?: return@forEach
             val w = dc.get(Calendar.WEEK_OF_YEAR)
-            val y = dc.get(Calendar.WEEK_YEAR)
+            val y = dc.get(Calendar.YEAR)
             if (w == currentWeek && y == currentYear) current += d.drivingMinutes
-            else {
-                val pc = Calendar.getInstance(utc, Locale.US).apply { time = now; add(Calendar.WEEK_OF_YEAR, -1) }
-                if (w == pc.get(Calendar.WEEK_OF_YEAR) && y == pc.get(Calendar.WEEK_YEAR)) previous += d.drivingMinutes
-            }
+            if (w == previousWeek && y == previousYear) previous += d.drivingMinutes
         }
         return Model(days, previous, current)
     }
