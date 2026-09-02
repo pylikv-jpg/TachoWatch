@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
     private var selectedDevice: BluetoothDevice? = null
     private var renderedLog = ""
+    private var autoProcessedDownload = false
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result.values.all { it }) {
@@ -102,7 +103,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             setTypeface(typeface, Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "DTCO Bluetooth — TEST-12 DDD INVENTORY"
+            text = "DTCO Bluetooth • Card Data 0504 + 0506"
             textSize = 12f
             setTextColor(COLOR_CYAN)
         })
@@ -119,21 +120,21 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         statusRow.addView(statusText)
         statusCard.addView(statusRow)
         deviceText = TextView(this).apply {
-            text = "Можно анализировать уже сохранённый DDD без подключения к DTCO"; textSize = 12f; setTextColor(COLOR_MUTED); setPadding(0, dp(5), 0, 0); maxLines = 2
+            text = "Скачанный DDD хранится в приложении и копируется в Download/TachoWatch"; textSize = 12f; setTextColor(COLOR_MUTED); setPadding(0, dp(5), 0, 0); maxLines = 2
         }
         statusCard.addView(deviceText)
         root.addView(statusCard)
         root.addView(space(7))
 
         val analyzeCard = card()
-        analyzeCard.addView(label("АНАЛИЗ СОХРАНЁННОЙ КАРТЫ"))
+        analyzeCard.addView(label("АНАЛИЗ КАРТЫ"))
         analyzeCard.addView(space(6))
         analyzeDddButton = button("Анализ последнего DDD", COLOR_GREEN).apply {
             setOnClickListener { analyzeLatestDdd() }
         }
         analyzeCard.addView(analyzeDddButton)
         analyzeCard.addView(TextView(this).apply {
-            text = "Повторное скачивание карты не требуется. Используется последний TachoWatch_card_*.ddd из памяти приложения."
+            text = "Показывает TLV inventory + TEST-13 (0504 Activities) + TEST-14 (0506 Places)."
             textSize = 11f; setTextColor(COLOR_MUTED); setPadding(0, dp(6), 0, 0)
         })
         root.addView(analyzeCard)
@@ -161,10 +162,11 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         controlCard.addView(controlHeader)
         controlCard.addView(space(6))
 
-        connectButton = button("Скачать карту заново", COLOR_BLUE).apply {
+        connectButton = button("Скачать карту", COLOR_BLUE).apply {
             isEnabled = false; alpha = 0.55f
             setOnClickListener {
                 val d = selectedDevice ?: return@setOnClickListener
+                autoProcessedDownload = false
                 renderedLog = ""; logText.text = ""; logScroll.scrollTo(0, 0)
                 setStatus("Подключение...", COLOR_ORANGE)
                 diagnostic.connect(d)
@@ -189,7 +191,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
         val logCard = card()
         val logHeader = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        logHeader.addView(label("ЖУРНАЛ / TLV INVENTORY"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        logHeader.addView(label("ЖУРНАЛ / CARD DATA"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         clearButton = smallButton("Очистить").apply {
             setOnClickListener { renderedLog = ""; logText.text = ""; diagnostic.clearLog() }
         }
@@ -209,7 +211,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             isScrollbarFadingEnabled = false; isSmoothScrollingEnabled = false
         }
         logText = TextView(this).apply {
-            text = "Нажми «Анализ последнего DDD» — повторное подключение к тахографу не требуется."; textSize = 11.5f; setTextColor(COLOR_TEXT); typeface = Typeface.MONOSPACE
+            text = "Выбери DTCO и нажми «Скачать карту». После успешного скачивания анализ 0504/0506 запускается автоматически."; textSize = 11.5f; setTextColor(COLOR_TEXT); typeface = Typeface.MONOSPACE
             setLineSpacing(0f, 1.08f); setTextIsSelectable(true); setPadding(0, dp(4), 0, dp(12))
         }
         logScroll.addView(logText)
@@ -227,17 +229,26 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             return
         }
         val result = TlvInventory.parse(file)
-        val text = TlvInventory.render(result)
+        val exportPath = DddPublicExporter.export(this, file)
+        val text = buildString {
+            append(TlvInventory.render(result))
+            append("\n\n")
+            append(PlacesDecoder.render(result))
+            append("\n\n===== DDD PUBLIC COPY =====\n")
+            append("File=${file.name}\n")
+            append("PublicPath=${exportPath ?: "EXPORT_FAILED"}\n")
+            append("===== END DDD PUBLIC COPY =====")
+        }
         renderedLog = text
         logText.text = text
         logScroll.scrollTo(0, 0)
         setStatus(if (result.error == null && result.parsedBytes == result.bytes) "DDD разобран" else "DDD требует проверки", if (result.error == null) COLOR_GREEN else COLOR_ORANGE)
-        Toast.makeText(this, "Найдено TLV: ${result.entries.size}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, if (exportPath != null) "DDD скопирован в $exportPath" else "DDD разобран; публичная копия не создана", Toast.LENGTH_LONG).show()
     }
 
     private fun copyResultOnly() {
-        if (renderedLog.contains("===== TEST-12 TLV INVENTORY =====")) {
-            copyText(renderedLog.trim(), "TEST-12 inventory скопирован")
+        if (renderedLog.contains("===== TEST-13 CARD ACTIVITY DECODER =====") || renderedLog.contains("===== TEST-14 PLACES DECODER =====")) {
+            copyText(renderedLog.trim(), "Декодирование карты скопировано")
             return
         }
         val idx = renderedLog.lastIndexOf(RESULT_MARKER)
@@ -251,7 +262,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
     private fun copyText(text: String, message: String) {
         if (text.isBlank()) { Toast.makeText(this, "Копировать пока нечего", Toast.LENGTH_SHORT).show(); return }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("TachoWatch TEST-12", text))
+        clipboard.setPrimaryClip(ClipData.newPlainText("TachoWatch Card Data", text))
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
@@ -304,6 +315,11 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             } else logText.text = fullLog
             renderedLog = fullLog
             logScroll.post { logScroll.scrollTo(0, savedY) }
+
+            if (!autoProcessedDownload && fullLog.contains(RESULT_MARKER) && fullLog.contains("STATUS=SUCCESS")) {
+                autoProcessedDownload = true
+                logScroll.postDelayed({ analyzeLatestDdd() }, 400)
+            }
         }
     }
 
