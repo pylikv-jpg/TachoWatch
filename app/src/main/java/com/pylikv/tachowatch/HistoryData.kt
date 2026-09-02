@@ -42,7 +42,9 @@ object HistoryData {
         val totals = linkedMapOf<String, Triple<Int, Int, Int>>()
         dayMatches.forEach { m ->
             val date = m.groupValues[1]
-            var driving = 0; var work = 0; var availability = 0
+            var driving = 0
+            var work = 0
+            var availability = 0
             m.groupValues[2].lines().forEach { line ->
                 val dur = Regex("duration=(\\d+):(\\d{2})").find(line) ?: return@forEach
                 val minutes = (dur.groupValues[1].toIntOrNull() ?: 0) * 60 + (dur.groupValues[2].toIntOrNull() ?: 0)
@@ -68,25 +70,25 @@ object HistoryData {
             Day(date, t.first, t.second, t.third, start?.time, start?.country, end?.time, end?.country)
         }.sortedBy { it.date }
 
-        val utc = TimeZone.getTimeZone("UTC")
         val now = Date()
-        val currentCal = Calendar.getInstance(utc, Locale.US).apply { time = now }
-        val previousCal = Calendar.getInstance(utc, Locale.US).apply { time = now; add(Calendar.WEEK_OF_YEAR, -1) }
+        val currentCal = isoCalendar(now)
+        val previousCal = isoCalendar(now).apply { add(Calendar.WEEK_OF_YEAR, -1) }
         val currentWeek = currentCal.get(Calendar.WEEK_OF_YEAR)
-        val currentYear = currentCal.get(Calendar.YEAR)
+        val currentYear = currentCal.getWeekYear()
         val previousWeek = previousCal.get(Calendar.WEEK_OF_YEAR)
-        val previousYear = previousCal.get(Calendar.YEAR)
+        val previousYear = previousCal.getWeekYear()
 
         var current = 0
         var previous = 0
         days.forEach { d ->
-            val dc = Calendar.getInstance(utc, Locale.US)
-            dc.time = parseDate(d.date) ?: return@forEach
-            val w = dc.get(Calendar.WEEK_OF_YEAR)
-            val y = dc.get(Calendar.YEAR)
-            if (w == currentWeek && y == currentYear) current += d.drivingMinutes
-            if (w == previousWeek && y == previousYear) previous += d.drivingMinutes
+            val date = parseDate(d.date) ?: return@forEach
+            val dc = isoCalendar(date)
+            val week = dc.get(Calendar.WEEK_OF_YEAR)
+            val weekYear = dc.getWeekYear()
+            if (week == currentWeek && weekYear == currentYear) current += d.drivingMinutes
+            if (week == previousWeek && weekYear == previousYear) previous += d.drivingMinutes
         }
+
         return Model(days, previous, current)
     }
 
@@ -100,6 +102,16 @@ object HistoryData {
     }
 
     fun fmt(min: Int): String = String.format(Locale.US, "%d:%02d", min / 60, min % 60)
+
+    private fun isoCalendar(date: Date): Calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.US).apply {
+        firstDayOfWeek = Calendar.MONDAY
+        minimalDaysInFirstWeek = 4
+        time = date
+    }
+
     private fun clockMinutes(v: String): Int = v.substringBefore(':').toInt() * 60 + v.substringAfter(':').toInt()
-    private fun parseDate(v: String): Date? = runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(v) }.getOrNull()
+
+    private fun parseDate(v: String): Date? = runCatching {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(v)
+    }.getOrNull()
 }
