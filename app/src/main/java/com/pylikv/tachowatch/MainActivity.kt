@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
         private const val COLOR_ORANGE = 0xFFFFB547.toInt()
         private const val COLOR_RED = 0xFFE85D5D.toInt()
         private const val COLOR_BORDER = 0xFF263545.toInt()
-        private const val RESULT_MARKER = "===== TEST-10 TARGET DATA RESULT ====="
+        private const val RESULT_MARKER = "===== TEST-11 DOWNLOAD RESULT ====="
     }
 
     private val bluetoothManager by lazy { getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
@@ -101,7 +101,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             setTypeface(typeface, Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "DTCO Bluetooth — TEST-10A TARGET 34 DID"
+            text = "DTCO Bluetooth — TEST-11B DOWNLOAD"
             textSize = 12f
             setTextColor(COLOR_CYAN)
         })
@@ -139,14 +139,14 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
         val controlCard = card()
         val controlHeader = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        controlHeader.addView(label("ЦЕЛЕВАЯ ДИАГНОСТИКА"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        controlHeader.addView(label("DOWNLOAD SERVICE"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         controlHeader.addView(TextView(this).apply {
             text = "READ ONLY"; textSize = 11f; setTextColor(COLOR_GREEN); setTypeface(typeface, Typeface.BOLD)
         })
         controlCard.addView(controlHeader)
         controlCard.addView(space(6))
 
-        connectButton = button("Подключиться и прочитать 34 DID", COLOR_BLUE).apply {
+        connectButton = button("Подключиться и запустить TEST-11B", COLOR_BLUE).apply {
             isEnabled = false; alpha = 0.55f
             setOnClickListener {
                 val d = selectedDevice ?: return@setOnClickListener
@@ -174,7 +174,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
 
         val logCard = card()
         val logHeader = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        logHeader.addView(label("ЖУРНАЛ / ИТОГОВАЯ ТАБЛИЦА"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        logHeader.addView(label("ЖУРНАЛ DOWNLOAD"), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         clearButton = smallButton("Очистить").apply {
             setOnClickListener { renderedLog = ""; logText.text = ""; diagnostic.clearLog() }
         }
@@ -194,7 +194,7 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
             isScrollbarFadingEnabled = false; isSmoothScrollingEnabled = false
         }
         logText = TextView(this).apply {
-            text = "Ожидание запуска диагностики..."; textSize = 11.5f; setTextColor(COLOR_TEXT); typeface = Typeface.MONOSPACE
+            text = "Ожидание запуска TEST-11B..."; textSize = 11.5f; setTextColor(COLOR_TEXT); typeface = Typeface.MONOSPACE
             setLineSpacing(0f, 1.08f); setTextIsSelectable(true); setPadding(0, dp(4), 0, dp(12))
         }
         logScroll.addView(logText)
@@ -207,16 +207,16 @@ class MainActivity : AppCompatActivity(), DtcoBluetoothDiagnostic.Listener {
     private fun copyResultOnly() {
         val idx = renderedLog.lastIndexOf(RESULT_MARKER)
         if (idx < 0) {
-            Toast.makeText(this, "Итог TEST-10 ещё не сформирован", Toast.LENGTH_SHORT).show(); return
+            Toast.makeText(this, "Итог TEST-11 ещё не сформирован", Toast.LENGTH_SHORT).show(); return
         }
         val start = renderedLog.lastIndexOf('\n', idx).let { if (it >= 0) it + 1 else idx }
-        copyText(renderedLog.substring(start).trim(), "Результат TEST-10 скопирован")
+        copyText(renderedLog.substring(start).trim(), "Результат TEST-11 скопирован")
     }
 
     private fun copyText(text: String, message: String) {
         if (text.isBlank()) { Toast.makeText(this, "Копировать пока нечего", Toast.LENGTH_SHORT).show(); return }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("TachoWatch TEST-10", text))
+        clipboard.setPrimaryClip(ClipData.newPlainText("TachoWatch TEST-11B", text))
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
