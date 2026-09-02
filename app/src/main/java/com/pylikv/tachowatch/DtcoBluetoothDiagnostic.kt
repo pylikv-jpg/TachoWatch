@@ -18,7 +18,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     }
 
     companion object {
-        private const val VERSION = "BLE-DOWNLOAD-CARD-PROBE-TEST-11B"
+        private const val VERSION = "BLE-DOWNLOAD-CARD-PROBE-TEST-11C"
         const val RESULT_MARKER = "===== TEST-11 DOWNLOAD RESULT ====="
         private const val RESPONSE_TIMEOUT_MS = 5000L
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
@@ -27,7 +27,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         private val CREDITS = UUID.fromString("db9c4128-bff3-41fe-a306-fb6f9a8aeb2d")
     }
 
-    private enum class Stage { IDLE, WAIT_C1, WAIT_50, WAIT_75, WAIT_VERSION, WAIT_CARD, DONE }
+    private enum class Stage { IDLE, WAIT_C1, WAIT_50, WAIT_75, WAIT_CARD, DONE }
 
     private val handler = Handler(Looper.getMainLooper())
     private val lines = CopyOnWriteArrayList<String>()
@@ -61,11 +61,12 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         reset()
         device = d
         log("========================================")
-        log("TachoWatch — TEST-11B DOWNLOAD SERVICE")
+        log("TachoWatch — TEST-11C DIRECT CARD DOWNLOAD")
         log("Версия: $VERSION")
-        log("FIX: Bluetooth FIFO Packet Information header 01 01")
-        log("По JRC transport: первый байт = число пакетов, второй = номер пакета")
-        log("Цель: StartCommunication -> StartDiagnostic -> RequestUpload -> InterfaceVersion -> CardDownload slot 1")
+        log("FIX-1: JRC Bluetooth Packet Information header 01 01")
+        log("FIX-2: убран лишний TransferData InterfaceVersion")
+        log("FIX-3: Card TransferData = SID 36 + block=01 + wrap=00 + TRTP=06 + slot=01")
+        log("Цель: StartCommunication -> StartDiagnostic -> RequestUpload -> CardDownload slot 1")
         log("Download UUID=$SERVICE")
         log("FIFO=$FIFO")
         log("CREDITS=$CREDITS")
@@ -75,9 +76,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         try {
             gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 d.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
-            } else {
-                d.connectGatt(context, false, cb)
-            }
+            } else d.connectGatt(context, false, cb)
             log("connectGatt=${if (gatt != null) "CREATED" else "NULL"}")
         } catch (e: Throwable) {
             err("connectGatt", e)
@@ -114,11 +113,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
                 connected = true
                 gatt = g
                 notifyConnection(true, safeName(g.device))
-                try {
-                    if (!g.requestMtu(512)) discover(g)
-                } catch (_: Throwable) {
-                    discover(g)
-                }
+                try { if (!g.requestMtu(512)) discover(g) } catch (_: Throwable) { discover(g) }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connected = false
                 timeoutToken++
@@ -135,10 +130,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             log("services status=$status")
             if (status != BluetoothGatt.GATT_SUCCESS) return
-            val s = g.getService(SERVICE) ?: run {
-                finishFail("Download Service NOT FOUND")
-                return
-            }
+            val s = g.getService(SERVICE) ?: run { finishFail("Download Service NOT FOUND"); return }
             logChar("DOWNLOAD FIFO", s.getCharacteristic(FIFO))
             logChar("DOWNLOAD CREDITS", s.getCharacteristic(CREDITS))
             subscribe(g, FIFO)
@@ -152,11 +144,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
                 handler.postDelayed({ if (connected) subscribe(g, CREDITS) }, 150)
             } else if (uuid == CREDITS) {
                 creditSub = status == BluetoothGatt.GATT_SUCCESS
-                if (!creditSub) {
-                    finishFail("CREDITS subscription failed")
-                } else {
-                    handler.postDelayed({ if (connected) grantRx(g, 20, "INITIAL") }, 250)
-                }
+                if (!creditSub) finishFail("CREDITS subscription failed")
+                else handler.postDelayed({ if (connected) grantRx(g, 20, "INITIAL") }, 250)
             }
         }
 
@@ -175,18 +164,11 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
 
     @SuppressLint("MissingPermission")
     private fun discover(g: BluetoothGatt) {
-        try {
-            log("discoverServices=${g.discoverServices()}")
-        } catch (e: Throwable) {
-            err("discover", e)
-        }
+        try { log("discoverServices=${g.discoverServices()}") } catch (e: Throwable) { err("discover", e) }
     }
 
     private fun logChar(label: String, c: BluetoothGattCharacteristic?) {
-        if (c == null) {
-            log("$label NOT FOUND")
-            return
-        }
+        if (c == null) { log("$label NOT FOUND"); return }
         log("$label props=0x${Integer.toHexString(c.properties)} perms=0x${Integer.toHexString(c.permissions)} writeType=${writeTypeName(c.writeType)}")
         log("$label flags WRITE=${(c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0} WRITE_NR=${(c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0} INDICATE=${(c.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0}")
     }
@@ -204,10 +186,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (c.uuid == CREDITS) {
             if (value.isEmpty()) return
             val n = u(value[0])
-            if (n == 0xFF) {
-                finishFail("FLOW CONTROL REJECTED")
-                return
-            }
+            if (n == 0xFF) { finishFail("FLOW CONTROL REJECTED"); return }
             txCredits += n
             log("TX-CREDIT RX +$n => $txCredits")
             if (!started && txCredits > 0) {
@@ -217,18 +196,13 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
             }
             return
         }
-
         if (c.uuid != FIFO) return
         log("RX FIFO BLE chunk len=${value.size} RAW=${hex(value)}")
         consumeTransportPacket(g, value)
     }
 
     private fun consumeTransportPacket(g: BluetoothGatt, value: ByteArray) {
-        if (value.size < 2) {
-            log("RX transport packet too short")
-            return
-        }
-
+        if (value.size < 2) { log("RX transport packet too short"); return }
         val first = u(value[0])
         val packetNo = u(value[1])
         val payload = value.copyOfRange(2, value.size)
@@ -238,63 +212,39 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
             lastPacketNo = 1
             rxApplication = payload
             log("RX TRANSPORT first packet total=$expectedPackets packet=1 appBytes=${payload.size}")
-            if (expectedPackets <= 1) {
-                val app = rxApplication
-                rxApplication = byteArrayOf()
-                expectedPackets = 0
-                lastPacketNo = 0
-                parseKwpFrame(g, app)
-            }
+            if (expectedPackets <= 1) finishApplication(g)
             return
         }
-
-        if (expectedPackets <= 1) {
-            log("RX TRANSPORT unexpected continuation packet=$packetNo without active message")
-            return
-        }
+        if (expectedPackets <= 1) { log("RX TRANSPORT unexpected continuation packet=$packetNo"); return }
         if (packetNo != lastPacketNo + 1) {
             log("RX TRANSPORT packet sequence error expected=${lastPacketNo + 1} got=$packetNo")
-            rxApplication = byteArrayOf()
-            expectedPackets = 0
-            lastPacketNo = 0
+            rxApplication = byteArrayOf(); expectedPackets = 0; lastPacketNo = 0
             return
         }
-
         rxApplication += payload
         lastPacketNo = packetNo
         log("RX TRANSPORT continuation packet=$packetNo/$expectedPackets appTotal=${rxApplication.size}")
+        if (packetNo >= expectedPackets) finishApplication(g)
+    }
 
-        if (packetNo >= expectedPackets) {
-            val app = rxApplication
-            rxApplication = byteArrayOf()
-            expectedPackets = 0
-            lastPacketNo = 0
-            parseKwpFrame(g, app)
-        }
+    private fun finishApplication(g: BluetoothGatt) {
+        val app = rxApplication
+        rxApplication = byteArrayOf()
+        expectedPackets = 0
+        lastPacketNo = 0
+        parseKwpFrame(g, app)
     }
 
     private fun parseKwpFrame(g: BluetoothGatt, frame: ByteArray) {
         if (frame.isEmpty()) return
         log("RX APP reassembled len=${frame.size} RAW=${hex(frame)}")
-
         val start = frame.indexOfFirst { u(it) == 0x80 }
-        if (start < 0) {
-            log("RX APP: no KWP 0x80 header")
-            return
-        }
-        if (frame.size - start < 5) {
-            log("RX APP: short KWP frame")
-            return
-        }
-
+        if (start < 0) { log("RX APP: no KWP 0x80 header"); return }
         val kwp = frame.copyOfRange(start, frame.size)
+        if (kwp.size < 5) { log("RX APP: short KWP frame"); return }
         val len = u(kwp[3])
         val total = 4 + len + 1
-        if (kwp.size < total) {
-            log("RX APP: incomplete KWP expected=$total got=${kwp.size}")
-            return
-        }
-
+        if (kwp.size < total) { log("RX APP: incomplete KWP expected=$total got=${kwp.size}"); return }
         val one = kwp.copyOfRange(0, total)
         val expected = checksum(one.copyOfRange(0, one.size - 1))
         val actual = u(one.last())
@@ -312,48 +262,38 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (sid == 0x7F) {
             val req = if (data.size > 1) u(data[1]) else 0
             val nrc = if (data.size > 2) u(data[2]) else 0
-            finishFail("NEGATIVE: request SID=0x${hb(req)} NRC=0x${hb(nrc)} ${nrcName(nrc)}")
+            finishFail("NEGATIVE: request SID=0x${hb(req)} NRC=0x${hb(nrc)} ${nrcName(nrc)} stage=$stage")
             return
         }
 
         when (stage) {
-            Stage.WAIT_C1 -> {
-                if (sid == 0xC1) {
-                    log("OK: StartCommunication accepted")
-                    stage = Stage.WAIT_50
-                    send(g, startDiagnostic(), "StartDiagnostic 0x10/0x81")
-                } else log("WAIT_C1: unexpected SID=0x${hb(sid)}")
+            Stage.WAIT_C1 -> if (sid == 0xC1) {
+                log("OK: StartCommunication accepted")
+                stage = Stage.WAIT_50
+                send(g, startDiagnostic(), "StartDiagnostic 0x10/0x81")
             }
-            Stage.WAIT_50 -> {
-                if (sid == 0x50) {
-                    log("OK: Diagnostic session accepted")
-                    stage = Stage.WAIT_75
-                    send(g, requestUpload(), "RequestUpload 0x35")
-                } else log("WAIT_50: unexpected SID=0x${hb(sid)}")
+            Stage.WAIT_50 -> if (sid == 0x50) {
+                log("OK: Diagnostic session accepted")
+                stage = Stage.WAIT_75
+                send(g, requestUpload(), "RequestUpload 0x35")
             }
-            Stage.WAIT_75 -> {
-                if (sid == 0x75) {
-                    log("OK: RequestUpload accepted")
-                    stage = Stage.WAIT_VERSION
-                    send(g, downloadInterfaceVersion(), "TransferData InterfaceVersion 0x36/0x00")
-                } else log("WAIT_75: unexpected SID=0x${hb(sid)}")
+            Stage.WAIT_75 -> if (sid == 0x75) {
+                log("OK: RequestUpload accepted; DATA=${hex(data)}")
+                stage = Stage.WAIT_CARD
+                send(g, cardDownloadSlot1(), "CardDownload SID36 block=01 wrap=00 TRTP=06 slot=01")
             }
-            Stage.WAIT_VERSION -> {
-                if (sid == 0x76) {
-                    val trep = if (data.size > 1) u(data[1]) else -1
-                    log("OK: Positive TransferData, TREP=0x${hb(trep)}")
-                    stage = Stage.WAIT_CARD
-                    send(g, cardDownloadSlot1(), "CardDownload 0x36/0x06 slot=1")
-                } else log("WAIT_VERSION: unexpected SID=0x${hb(sid)}")
-            }
-            Stage.WAIT_CARD -> {
-                if (sid == 0x76) {
-                    val trep = if (data.size > 1) u(data[1]) else -1
-                    firstCardPayload = if (data.size > 2) data.copyOfRange(2, data.size) else byteArrayOf()
-                    log("*** CARD DATA RESPONSE RECEIVED *** TREP=0x${hb(trep)} payload=${firstCardPayload.size} byte(s)")
-                    log("CARD PAYLOAD RAW=${hex(firstCardPayload)}")
-                    finishOk(trep, frame)
-                } else log("WAIT_CARD: unexpected SID=0x${hb(sid)}")
+            Stage.WAIT_CARD -> if (sid == 0x76) {
+                if (data.size < 4) {
+                    finishFail("Positive SID76 too short: ${hex(data)}")
+                    return
+                }
+                val block = u(data[1])
+                val wrap = u(data[2])
+                val trep = u(data[3])
+                firstCardPayload = if (data.size > 4) data.copyOfRange(4, data.size) else byteArrayOf()
+                log("*** CARD DATA RESPONSE RECEIVED *** block=${hb(block)} wrap=${hb(wrap)} TREP=0x${hb(trep)} payload=${firstCardPayload.size} byte(s)")
+                log("CARD PAYLOAD RAW=${hex(firstCardPayload)}")
+                finishOk(block, wrap, trep, frame)
             }
             else -> Unit
         }
@@ -368,7 +308,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         }, RESPONSE_TIMEOUT_MS)
     }
 
-    private fun finishOk(trep: Int, frame: ByteArray) {
+    private fun finishOk(block: Int, wrap: Int, trep: Int, frame: ByteArray) {
         timeoutToken++
         stage = Stage.DONE
         finished = true
@@ -376,18 +316,18 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         log("========================================")
         log(RESULT_MARKER)
         log("STATUS=SUCCESS")
-        log("BluetoothPacketHeader=01 01 CONFIRMED")
         log("DownloadService=FOUND")
         log("StartCommunication=OK")
         log("StartDiagnostic=OK")
         log("RequestUpload=OK")
-        log("TransferDataVersion=OK")
         log("CardDownloadResponse=OK")
+        log("CardBlockSequence=0x${hb(block)}")
+        log("CardWrapCounter=0x${hb(wrap)}")
         log("CardTREP=0x${hb(trep)}")
         log("FirstCardPayloadBytes=${firstCardPayload.size}")
         log("FirstCardPayloadRAW=${hex(firstCardPayload)}")
         log("FullResponseFrameRAW=${hex(frame)}")
-        log("Следующий этап: TLV/sub-message/ACK decoder")
+        log("Следующий этап: continuation blocks + TLV decoder")
         log("========================================")
     }
 
@@ -411,13 +351,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
             handler.postDelayed({ if (!finished) send(g, kwpFrame, label) }, 250)
             return
         }
-        val c = g.getService(SERVICE)?.getCharacteristic(FIFO) ?: run {
-            finishFail("FIFO unavailable")
-            return
-        }
-
-        // JRC Bluetooth transport protocol: first packet = [totalPackets, packetNo] + application data.
-        // All requests in TEST-11B fit in one ATT packet, therefore header is always 01 01.
+        val c = g.getService(SERVICE)?.getCharacteristic(FIFO) ?: run { finishFail("FIFO unavailable"); return }
         val transportPacket = byteArrayOf(0x01, 0x01) + kwpFrame
         val ok = writeBest(g, c, transportPacket)
         log("TX $label appLen=${kwpFrame.size} bleLen=${transportPacket.size} initiated=$ok")
@@ -426,9 +360,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (ok) {
             txCredits--
             scheduleTimeout(label, stage)
-        } else {
-            finishFail("write failed: $label")
-        }
+        } else finishFail("write failed: $label")
     }
 
     private fun grantRx(g: BluetoothGatt, n: Int, label: String) {
@@ -443,6 +375,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
 
     private fun startDiagnostic() = kwp(byteArrayOf(0x10, 0x81.toByte()))
 
+    // Этот RequestUpload уже подтвержден реальным TEST-11B: DTCO отвечает SID 75.
     private fun requestUpload() = kwp(
         byteArrayOf(
             0x35, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -450,8 +383,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         )
     )
 
-    private fun downloadInterfaceVersion() = kwp(byteArrayOf(0x36, 0x00))
-    private fun cardDownloadSlot1() = kwp(byteArrayOf(0x36, 0x06, 0x01))
+    // Appendix 7/FMS: SID 36, blockSequenceCounter 01, wrapAroundCounter 00, TRTP 06, slot 01.
+    private fun cardDownloadSlot1() = kwp(byteArrayOf(0x36, 0x01, 0x00, 0x06, 0x01))
 
     private fun kwp(data: ByteArray): ByteArray {
         val body = byteArrayOf(0x80.toByte(), 0xEE.toByte(), 0xF0.toByte(), data.size.toByte()) + data
@@ -467,12 +400,9 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             g.writeCharacteristic(c, value, type) == BluetoothGatt.GATT_SUCCESS
         } else {
-            @Suppress("DEPRECATION")
-            c.writeType = type
-            @Suppress("DEPRECATION")
-            c.value = value
-            @Suppress("DEPRECATION")
-            g.writeCharacteristic(c)
+            @Suppress("DEPRECATION") c.writeType = type
+            @Suppress("DEPRECATION") c.value = value
+            @Suppress("DEPRECATION") g.writeCharacteristic(c)
         }
     } catch (e: Throwable) {
         err("writeBest", e)
@@ -484,14 +414,10 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             g.writeDescriptor(d, value) == BluetoothGatt.GATT_SUCCESS
         } else {
-            @Suppress("DEPRECATION")
-            d.value = value
-            @Suppress("DEPRECATION")
-            g.writeDescriptor(d)
+            @Suppress("DEPRECATION") d.value = value
+            @Suppress("DEPRECATION") g.writeDescriptor(d)
         }
-    } catch (_: Throwable) {
-        false
-    }
+    } catch (_: Throwable) { false }
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
@@ -509,10 +435,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         gatt = null
     }
 
-    fun clearLog() {
-        lines.clear()
-        notifyLog()
-    }
+    fun clearLog() { lines.clear(); notifyLog() }
 
     private fun nrcName(n: Int) = when (n) {
         0x10 -> "generalReject"
@@ -523,7 +446,10 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         0x22 -> "conditionsNotCorrect/requestSequenceError"
         0x31 -> "requestOutOfRange"
         0x33 -> "securityAccessDenied"
+        0x50 -> "uploadNotAccepted"
+        0x73 -> "wrongBlockSequenceCounter"
         0x78 -> "responsePending"
+        0xFA -> "dataNotAvailable"
         else -> "NRC"
     }
 
@@ -546,9 +472,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     @SuppressLint("MissingPermission")
     private fun safeName(d: BluetoothDevice) = try { d.name ?: d.address } catch (_: Throwable) { "DTCO" }
 
-    private fun err(where: String, e: Throwable) {
-        log("ERROR [$where] ${e.javaClass.simpleName}: ${e.message}")
-    }
+    private fun err(where: String, e: Throwable) { log("ERROR [$where] ${e.javaClass.simpleName}: ${e.message}") }
 
     private fun writeTypeName(type: Int) = when (type) {
         BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT -> "DEFAULT"
