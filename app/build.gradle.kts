@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.pylikv.tachowatch.test14picker2"
+        applicationId = "com.pylikv.tachowatch"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "1.0-test14-picker2"
+        versionCode = 100
+        versionName = "1.0-unified-carddata"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
