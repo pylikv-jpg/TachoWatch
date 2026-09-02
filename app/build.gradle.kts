@@ -11,8 +11,8 @@ android {
         applicationId = "com.pylikv.tachowatch"
         minSdk = 26
         targetSdk = 35
-        versionCode = 100
-        versionName = "1.0-unified-carddata"
+        versionCode = 101
+        versionName = "1.0-test15-current-usage"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
