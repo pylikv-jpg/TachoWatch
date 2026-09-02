@@ -20,7 +20,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     }
 
     companion object {
-        private const val VERSION = "BLE-DOWNLOAD-CARD-FULL-TEST-11F"
+        private const val VERSION = "BLE-DOWNLOAD-CARD-FULL-TEST-11G"
         const val RESULT_MARKER = "===== TEST-11 DOWNLOAD RESULT ====="
         private const val SHORT_TIMEOUT_MS = 5000L
         private const val CARD_TIMEOUT_MS = 120000L
@@ -45,6 +45,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private var finished = false
     private var timeoutToken = 0L
     private var pendingCount = 0
+    private var cardPendingCount = 0
+    private var ackPendingCount = 0
     private var subMessages = 0
     private var lastCounter = 0
     private var rxApplication = byteArrayOf()
@@ -61,12 +63,12 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (!hasConnectPermission()) { log("ОШИБКА: нет BLUETOOTH_CONNECT"); return }
         closeGatt(); reset(); device = d
         log("========================================")
-        log("TachoWatch — TEST-11F FULL CARD DOWNLOAD")
+        log("TachoWatch — TEST-11G FULL CARD DOWNLOAD")
         log("Версия: $VERSION")
         log("Card request: 36 06 01")
-        log("NRC 78 = responsePending, ждём финальный ответ")
-        log("SID 76/06: читаем 2-byte MsgC, сохраняем TLV, отправляем SID 83 ACK MsgC+1")
-        log("Финальный sub-message LEN<FF -> RequestTransferExit 37 -> 77 -> StopCommunication 82 -> C2")
+        log("NRC 78 для SID36 И SID83 = responsePending, НЕ ошибка")
+        log("SID 76/06: MsgC -> TLV -> SID83 ACK next MsgC")
+        log("Финальный sub-message LEN<FF -> 37 -> 77 -> 82 -> C2")
         log("RX credits initial=250")
         log("ВАЖНО: штатный card download может обновить LastCardDownload/Card_Download на карте")
         log("Деятельность/страны/ручные записи приложение НЕ изменяет")
@@ -81,7 +83,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
 
     private fun reset() {
         lines.clear(); connected=false; fifoSub=false; creditSub=false; txCredits=0
-        stage=Stage.IDLE; started=false; finished=false; timeoutToken++; pendingCount=0
+        stage=Stage.IDLE; started=false; finished=false; timeoutToken++; pendingCount=0; cardPendingCount=0; ackPendingCount=0
         subMessages=0; lastCounter=0; rxApplication=byteArrayOf(); expectedPackets=0; lastPacketNo=0
         cardFile.reset(); savedPath=""
     }
@@ -89,7 +91,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     fun manualGattCheck() {
         log("===== MANUAL STATUS =====")
         log("connected=$connected FIFO=$fifoSub Credits=$creditSub txCredits=$txCredits stage=$stage started=$started finished=$finished")
-        log("pendingCount=$pendingCount subMessages=$subMessages lastCounter=$lastCounter cardBytes=${cardFile.size()} savedPath=$savedPath")
+        log("pending=$pendingCount cardPending=$cardPendingCount ackPending=$ackPendingCount subMessages=$subMessages lastCounter=$lastCounter cardBytes=${cardFile.size()} savedPath=$savedPath")
     }
 
     private val cb = object : BluetoothGattCallback() {
@@ -187,9 +189,12 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         timeoutToken++; val sid=u(data[0]); log("RX SID=0x${hb(sid)} DATA_HEAD=${hex(data.take(16).toByteArray())}${if(data.size>16)" ..." else ""}")
         if(sid==0x7F){
             val req=if(data.size>1)u(data[1]) else 0; val n=if(data.size>2)u(data[2]) else 0
-            if(n==0x78 && req==0x36 && stage==Stage.WAIT_CARD){
-                pendingCount++; log("*** RESPONSE PENDING *** count=$pendingCount; CardDownload принят, продолжаем ждать")
-                scheduleTimeout("CardDownload after NRC78",Stage.WAIT_CARD,CARD_TIMEOUT_MS); return
+            if(n==0x78 && stage==Stage.WAIT_CARD && (req==0x36 || req==0x83)){
+                pendingCount++
+                if(req==0x36){cardPendingCount++;log("*** RESPONSE PENDING CardDownload SID36 *** count=$cardPendingCount")}
+                else {ackPendingCount++;log("*** RESPONSE PENDING ACK SID83 *** count=$ackPendingCount; следующий sub-message готовится")}
+                scheduleTimeout("card stream after NRC78 SID${hb(req)}",Stage.WAIT_CARD,CARD_TIMEOUT_MS)
+                return
             }
             finishFail("NEGATIVE: request SID=0x${hb(req)} NRC=0x${hb(n)} ${nrcName(n)} stage=$stage"); return
         }
@@ -211,6 +216,10 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if(data.size<4){finishFail("SID76/06 too short: ${hex(data)}");return}
         val trep=u(data[1]); if(trep!=0x06){finishFail("Unexpected TREP=0x${hb(trep)} in card stream");return}
         val counter=(u(data[2]) shl 8) or u(data[3])
+        if(subMessages>0 && counter==lastCounter){
+            log("DUPLICATE CARD SUBMSG MsgC=$counter ignored")
+            return
+        }
         val payload=if(data.size>4)data.copyOfRange(4,data.size) else byteArrayOf()
         subMessages++; lastCounter=counter; cardFile.write(payload)
         log("CARD SUBMSG #$subMessages MsgC=$counter KWP_LEN=$kwpLen payload=${payload.size} totalTLV=${cardFile.size()}")
@@ -261,7 +270,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         val bytes=cardFile.toByteArray(); val parsed=countTlvs(bytes)
         log("");log("========================================");log(RESULT_MARKER);log("STATUS=SUCCESS")
         log("DownloadService=FOUND");log("StartCommunication=OK");log("StartDiagnostic=OK");log("RequestUpload=OK");log("CardDownloadResponse=OK")
-        log("ResponsePendingCount=$pendingCount");log("CardTREP=0x06");log("SubMessages=$subMessages");log("LastMsgC=$lastCounter")
+        log("ResponsePendingCount=$pendingCount CardPending=$cardPendingCount AckPending=$ackPendingCount")
+        log("CardTREP=0x06");log("SubMessages=$subMessages");log("LastMsgC=$lastCounter")
         log("CardTLVBytes=${bytes.size}");log("CompleteTLVRecords=${parsed.first}");log("TLVParsedBytes=${parsed.second}")
         log("CardFilePath=$savedPath")
         log("First64TLV=${hex(bytes.take(64).toByteArray())}")
@@ -269,7 +279,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         log("Следующий этап: декодирование EF Driver_Activity_Data / Places / Border_Crossings / Load_Unload_Operations")
         log("========================================")
     }
-    private fun finishFail(reason:String){if(finished)return;timeoutToken++;finished=true;stage=Stage.DONE;log("");log("========================================");log(RESULT_MARKER);log("STATUS=FAILED");log(reason);log("ResponsePendingCount=$pendingCount");log("SubMessages=$subMessages CardTLVBytes=${cardFile.size()} LastMsgC=$lastCounter");log("========================================")}
+    private fun finishFail(reason:String){if(finished)return;timeoutToken++;finished=true;stage=Stage.DONE;log("");log("========================================");log(RESULT_MARKER);log("STATUS=FAILED");log(reason);log("ResponsePendingCount=$pendingCount CardPending=$cardPendingCount AckPending=$ackPendingCount");log("SubMessages=$subMessages CardTLVBytes=${cardFile.size()} LastMsgC=$lastCounter");log("========================================")}
 
     private fun send(g:BluetoothGatt,kwpFrame:ByteArray,label:String,timeoutMs:Long){
         if(finished)return
