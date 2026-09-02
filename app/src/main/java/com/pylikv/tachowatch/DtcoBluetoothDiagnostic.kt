@@ -18,7 +18,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     }
 
     companion object {
-        private const val VERSION = "BLE-RHMI-READONLY-CARD-DATA-TEST-9"
+        private const val VERSION = "BLE-RHMI-READONLY-CARD-DATA-TEST-9B"
         private const val RESPONSE_TIMEOUT_MS = 3000L
         private const val CREDIT_WAIT_MS = 12000L
         private const val NEXT_DELAY_MS = 220L
@@ -63,9 +63,10 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         if (!hasConnectPermission()) { log("ОШИБКА: нет BLUETOOTH_CONNECT"); return }
         closeGatt(); reset(); device = d
         log("========================================")
-        log("TachoWatch — TEST-9 CARD DATA SEARCH")
+        log("TachoWatch — TEST-9B CARD DATA SEARCH")
         log("Версия: $VERSION")
         log("READ-ONLY: только UDS 0x22, диапазон F900-F9FF")
+        log("STARTUP TX-credit watchdog + recovery включены")
         log("НЕТ 0x27 SecurityAccess; НЕТ 0x2E; НЕТ записи карты/деятельности")
         log("RAW каждого положительного DID сохраняется")
         log("========================================")
@@ -112,8 +113,14 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         }
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             val u=d.characteristic.uuid; log("CCCD $u status=$status")
-            if (u==FIFO) { fifoSub=status==BluetoothGatt.GATT_SUCCESS; handler.postDelayed({subscribe(g,CREDITS)},150) }
-            else if (u==CREDITS) { creditSub=status==BluetoothGatt.GATT_SUCCESS; handler.postDelayed({grant(g,"INITIAL")},300) }
+            if (u==FIFO) {
+                fifoSub=status==BluetoothGatt.GATT_SUCCESS
+                handler.postDelayed({subscribe(g,CREDITS)},150)
+            } else if (u==CREDITS) {
+                creditSub=status==BluetoothGatt.GATT_SUCCESS
+                if (creditSub) handler.postDelayed({ startInitialFlow(g) },300)
+                else stop("CREDITS CCCD subscription failed")
+            }
         }
         @Deprecated("legacy")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
@@ -137,6 +144,22 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun grant(g:BluetoothGatt,label:String) {
         val c=g.getService(SERVICE)?.getCharacteristic(CREDITS) ?: return
         log("RX-CREDIT [$label] write=${writeChar(g,c,byteArrayOf(1))}")
+    }
+
+    private fun startInitialFlow(g: BluetoothGatt) {
+        if (!connected || finished || openSent) return
+        log("===== STARTUP FLOW-CONTROL =====")
+        grant(g, "INITIAL")
+        handler.postDelayed({
+            if (!connected || finished || openSent) return@postDelayed
+            if (credits > 0) {
+                log("STARTUP TX-CREDIT ready=$credits")
+                sendOpen(g)
+            } else {
+                log("STARTUP: TX-CREDIT not received after INITIAL; recovery starts")
+                withCredit(g, "OPEN RHMI") { sendOpen(g) }
+            }
+        }, 700)
     }
 
     private fun incoming(g:BluetoothGatt,c:BluetoothGattCharacteristic,v:ByteArray) {
@@ -175,11 +198,28 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun withCredit(g:BluetoothGatt,label:String,ready:()->Unit) {
         if(finished)return
         if(credits>0){ready();return}
-        val gen=++creditGen; log("WAIT TX-CREDIT [$label]"); grant(g,"RECOVERY-$label")
-        handler.postDelayed({if(gen==creditGen&&credits==0)grant(g,"RECOVERY2-$label")},1200)
+        val gen=++creditGen
+        log("WAIT TX-CREDIT [$label]")
+        grant(g,"RECOVERY-$label")
+        handler.postDelayed({
+            if(gen==creditGen&&credits==0&&!finished){
+                log("TX-CREDIT retry #2 [$label]")
+                grant(g,"RECOVERY2-$label")
+            }
+        },1200)
+        handler.postDelayed({
+            if(gen==creditGen&&credits==0&&!finished){
+                log("TX-CREDIT retry #3 [$label]")
+                grant(g,"RECOVERY3-$label")
+            }
+        },3500)
         handler.postDelayed({
             if(finished||gen!=creditGen)return@postDelayed
-            if(credits>0)ready() else stop("Flow-control stalled before $label")
+            if(credits>0) ready()
+            else {
+                log("TX-CREDIT RECOVERY FAILED [$label]")
+                stop("Flow-control stalled before $label")
+            }
         },CREDIT_WAIT_MS)
     }
 
@@ -202,7 +242,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun startScan(g:BluetoothGatt) {
         scanning=true;index=0;waiting=false;currentDid=null;results.clear()
         log("========================================")
-        log("===== TEST-9 CARD DATA SEARCH START =====")
+        log("===== TEST-9B CARD DATA SEARCH START =====")
         log("Range F900-F9FF (${dids.size} DID), service 0x22 only")
         log("========================================")
         next(g)
@@ -248,7 +288,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private fun summary() {
         scanning=false;waiting=false;currentDid=null;reqGen++;finished=true
         val pos=results.filterValues{it.type==T.POSITIVE}
-        log("");log("========================================");log("===== TEST-9 CARD DATA SEARCH RESULT =====")
+        log("");log("========================================");log("===== TEST-9B CARD DATA SEARCH RESULT =====")
         log("Scanned=${dids.size} POSITIVE=${pos.size} NRC=${results.values.count{it.type==T.NRC}} TIMEOUT=${results.values.count{it.type==T.TIMEOUT}} ERROR=${results.values.count{it.type==T.ERROR}}")
         log("----- KNOWN / CONTROL DID -----")
         known.sorted().forEach{d->results[d]?.let{log("${hd(d)}=${rt(it)}")}}
@@ -258,7 +298,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         val cand=pos.filter{(d,r)->d !in known && (r.data.size>=8 || ratio(r.data)>=0.45 || ascii(r.data).count{it.isLetter()}>=4)}
         if(cand.isEmpty())log("No automatic candidates. Все положительные DID выше сохранены RAW.")
         else cand.forEach{(d,r)->log("${hd(d)} len=${r.data.size} ASCII=\"${ascii(r.data)}\" RAW=${hex(r.data)}")}
-        log("PHOTO: TEST-9 RESULT + ALL POSITIVE + CARD DATA CANDIDATES")
+        log("COPY: use 'Копировать результат' in TEST-9A/9B UI")
         log("READ-ONLY TEST COMPLETE");log("========================================")
     }
 
