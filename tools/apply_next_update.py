@@ -12,7 +12,6 @@ if 'private var nowTab:Button?=null' not in s:
         1
     )
 
-# Bind actual tab buttons without depending on the exact buildUi layout.
 s = s.replace(
     'private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER)}',
     'private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER);if(t=="Сейчас")nowTab=this;if(t=="История")historyTab=this}'
@@ -23,7 +22,6 @@ s = s.replace('private fun label(t:String)=TextView(this).apply{text=t;textSize=
 s = s.replace('private fun label(t:String)=TextView(this).apply{text=t;textSize=12f;', 'private fun label(t:String)=TextView(this).apply{text=t;textSize=15f;')
 s = s.replace('private fun label(t:String):TextView=TextView(this).apply{text=t;textSize=12f;', 'private fun label(t:String):TextView=TextView(this).apply{text=t;textSize=15f;')
 
-# Active tab + active activity-card visual state.
 helper = r'''
     private fun setTabState(now:Boolean){
         nowTab?.let{
@@ -42,14 +40,12 @@ helper = r'''
         val drive=currentActivity.contains("ВОЖДЕНИЕ")
         val work=currentActivity.contains("РАБОТА") && !drive
         val ready=currentActivity.contains("ГОТОВНОСТЬ") || currentActivity.contains("ОЖИДАНИЕ")
-        val rest=currentActivity.contains("ОТДЫХ")
         fun a(v:View,on:Boolean){v.alpha=if(on)1.0f else 0.48f}
         if(::continuousFrame.isInitialized)a(continuousFrame,drive)
         if(::shiftDrivingFrame.isInitialized)a(shiftDrivingFrame,drive)
         if(::work6Frame.isInitialized)a(work6Frame,drive||work)
         if(::otherWorkFrame.isInitialized)a(otherWorkFrame,work)
         if(::availabilityFrame.isInitialized)a(availabilityFrame,ready)
-        if(::activityFrame.isInitialized)a(activityFrame,rest)
         if(::weekFrame.isInitialized)weekFrame.alpha=0.72f
         if(::twoWeekFrame.isInitialized)twoWeekFrame.alpha=0.72f
     }
@@ -58,8 +54,12 @@ if 'private fun setTabState(now:Boolean)' not in s:
     anchor = '    private fun updateShiftDriving()'
     if anchor in s:
         s = s.replace(anchor, helper + '\n' + anchor, 1)
+    else:
+        m = re.search(r'\bprivate\s+fun\s+updateShiftDriving\s*\(', s)
+        if m:
+            s = s[:m.start()] + helper + '\n    ' + s[m.start():]
 
-# Robustly add active-tab state to existing compact functions.
+# Active tabs.
 s = s.replace(
     'private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE}',
     'private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE;setTabState(true)}'
@@ -77,10 +77,9 @@ s = s.replace(
     'private fun showHistory(){nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;setTabState(false)}'
 )
 
-# Refresh activity highlighting after each processed live cycle.
 s = s.replace('persistCounters();updateShiftDriving()}', 'persistCounters();updateShiftDriving();updateActiveVisualState()}')
 
-# Do not mark card unread on an ordinary reconnect / selecting the same DTCO.
+# Ordinary reconnect must not force another full card read.
 s = s.replace('.putBoolean(FIRST_READ,false)', '')
 s = s.replace('.putBoolean(FIRST_READ, false)', '')
 
@@ -108,14 +107,13 @@ if 'private fun scheduleReconnect()' not in s:
     if anchor in s:
         s = s.replace(anchor, reconnect_helper + '\n' + anchor, 1)
 
-# Hook common disconnect status paths.
 for text in ['DTCO отключён','Соединение потеряно','Отключено','Связь потеряна']:
     old=f'status.text="{text}"'
     new=f'status.text="{text}";scheduleReconnect()'
     s=s.replace(old,new)
 
 # --- History: weekly totals + reduced weekly rest compensation ---
-new_history = r'''    private fun buildHistoryView(){
+new_history = r'''private fun buildHistoryView(){
         historyRoot.removeAllViews()
         val scroll=ScrollView(this)
         val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
@@ -128,8 +126,6 @@ new_history = r'''    private fun buildHistoryView(){
         val debts=mutableListOf<Debt>()
         val paidOn=mutableMapOf<String,MutableList<Debt>>()
 
-        // Walk forward through history. A reduced weekly rest creates a debt.
-        // Extra rest above a qualifying base rest can close one outstanding debt.
         for(i in 0 until chronological.lastIndex){
             val older=chronological[i]
             val newer=chronological[i+1]
@@ -210,18 +206,17 @@ new_history = r'''    private fun buildHistoryView(){
         historyRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
         setTabState(historyRoot.visibility==View.GONE)
     }
-'''
-start=s.find('    private fun buildHistoryView(){')
-end=s.find('\n    private fun loadHistory',start)
-if start>=0 and end>start:
-    s=s[:start]+new_history+s[end:]
-    print('history function replaced 1')
-else:
-    print('history function replaced 0')
+
+    '''
+pattern=r'(?s)\bprivate\s+fun\s+buildHistoryView\s*\(\s*\)\s*\{.*?(?=\bprivate\s+fun\s+loadHistory\b)'
+s,n=re.subn(pattern,new_history,s,count=1)
+print('history function replaced',n)
+if n!=1:
+    raise SystemExit('Could not replace buildHistoryView; refusing to build partial update')
 
 p.write_text(s)
 
-# Keep all place records. Display the event using the device/local zone instead of forcing UTC.
+# Keep all place records. Display event time using the device/tachograph-oriented local zone instead of forcing UTC.
 pp=Path('app/src/main/java/com/pylikv/tachowatch/PlacesDecoder.kt')
 ps=pp.read_text()
 ps=ps.replace('val show = chronological.takeLast(30)','val show = chronological')
@@ -232,6 +227,6 @@ pp.write_text(ps)
 # Bump version for install-over update.
 gp=Path('app/build.gradle.kts')
 g=gp.read_text()
-g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 113',g)
-g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-activity-highlight-rest-comp-reconnect-fix"',g)
+g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 114',g)
+g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-activity-highlight-rest-comp-reconnect-fix2"',g)
 gp.write_text(g)
