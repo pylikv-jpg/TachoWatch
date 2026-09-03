@@ -55,6 +55,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private lateinit var work6:TextView; private lateinit var work6Sub:TextView; private lateinit var work6Frame:FrameLayout; private lateinit var work6Progress:View
     private lateinit var otherWork:TextView; private lateinit var otherWorkFrame:FrameLayout; private lateinit var otherWorkProgress:View
     private lateinit var availability:TextView; private lateinit var availabilityFrame:FrameLayout; private lateinit var availabilityProgress:View
+    private lateinit var workWeek:TextView; private lateinit var workWeekSub:TextView; private lateinit var workWeekFrame:FrameLayout; private lateinit var workWeekProgress:View
     private lateinit var week:TextView; private lateinit var weekSub:TextView; private lateinit var weekFrame:FrameLayout; private lateinit var weekProgress:View
     private lateinit var twoWeek:TextView; private lateinit var twoWeekFrame:FrameLayout; private lateinit var twoWeekProgress:View
 
@@ -84,6 +85,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         val six=progressCard();work6Frame=six.first;work6Progress=six.second;six.third.addView(label("⚒  НЕПРЕРЫВНАЯ РАБОТА"));work6=value("—",28f);six.third.addView(work6);work6Sub=sub("вождение + другая работа • окно 6:00");six.third.addView(work6Sub);c.addView(work6Frame);c.addView(space(7))
         val ow=progressCard();otherWorkFrame=ow.first;otherWorkProgress=ow.second;ow.third.addView(label("⚒  ДРУГАЯ РАБОТА"));otherWork=value("0:00",26f);ow.third.addView(otherWork);ow.third.addView(sub("в текущем 6-часовом рабочем окне"));c.addView(otherWorkFrame);c.addView(space(7))
         val av=progressCard();availabilityFrame=av.first;availabilityProgress=av.second;av.third.addView(label("✉  ОЖИДАНИЕ / ГОТОВНОСТЬ"));availability=value("0:00",26f);av.third.addView(availability);av.third.addView(sub("в текущем рабочем окне"));c.addView(availabilityFrame);c.addView(space(7))
+        val ww=progressCard();workWeekFrame=ww.first;workWeekProgress=ww.second;ww.third.addView(label("⏳  РАБОЧАЯ НЕДЕЛЯ"));workWeek=value("—",28f);ww.third.addView(workWeek);workWeekSub=sub("144:00 от окончания последнего недельного отдыха");ww.third.addView(workWeekSub);c.addView(workWeekFrame);c.addView(space(7))
         val w=progressCard();weekFrame=w.first;weekProgress=w.second;w.third.addView(label("🚗  ТЕКУЩАЯ НЕДЕЛЯ"));week=value("—",28f);w.third.addView(week);weekSub=sub("по карте водителя");w.third.addView(weekSub);c.addView(weekFrame);c.addView(space(7))
         val tw=progressCard();twoWeekFrame=tw.first;twoWeekProgress=tw.second;tw.third.addView(label("🚗  ДВЕ НЕДЕЛИ"));twoWeek=value("—",28f);tw.third.addView(twoWeek);tw.third.addView(sub("лимит 90:00"));c.addView(twoWeekFrame)
         scroll.addView(c);nowRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
@@ -96,7 +98,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         scroll.addView(c);historyRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
     }
 
-    private fun loadHistory(){val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))?:return;val r=TlvInventory.parse(f);if(r.error==null){history=HistoryData.load(r);if(::historyRoot.isInitialized)buildHistoryView();updateWeekCards();updateShiftDriving()}}
+    private fun loadHistory(){val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))?:return;val r=TlvInventory.parse(f);if(r.error==null){history=HistoryData.load(r);if(::historyRoot.isInitialized)buildHistoryView();updateWeekCards();updateWorkWeekClock();updateShiftDriving()}}
 
     private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
     private fun persistCounters(){prefs.edit().putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).apply()}
@@ -117,6 +119,20 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private fun shiftDrivingLimit():Int=if(currentWeekTenHourUses()>=2)540 else 600
     private fun currentWeekTenHourUses():Int{val now=isoCalendar(Date());return history?.days.orEmpty().count{d->val date=parseDateOnly(d.date)?:return@count false;val c=isoCalendar(date);c.get(Calendar.WEEK_OF_YEAR)==now.get(Calendar.WEEK_OF_YEAR)&&c.getWeekYear()==now.getWeekYear()&&d.drivingMinutes>540}}
     private fun shiftDriveColor(v:Int,limit:Int)=when{v>=limit-30->RED;v>=limit-60->YELLOW;else->GREEN}
+
+    private fun updateWorkWeekClock(){
+        if(!::workWeek.isInitialized)return
+        val start=history?.let{HistoryData.lastWeeklyRestEndMillis(it.days)}
+        if(start==null){workWeek.text="—";workWeekSub.text="не найден законченный недельный отдых на карте";setProgress(workWeekFrame,workWeekProgress,0f,GREEN);return}
+        val total=144*60
+        val elapsed=((System.currentTimeMillis()-start)/60000L).toInt().coerceAtLeast(0)
+        val remain=(total-elapsed).coerceAtLeast(0)
+        workWeek.text="${HistoryData.fmt(remain)} осталось"
+        val stamp=SimpleDateFormat("dd.MM HH:mm",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.format(Date(start))
+        workWeekSub.text="от конца недельного отдыха $stamp • лимит 144:00"
+        val color=when{remain<=12*60->RED;remain<=24*60->YELLOW;else->GREEN}
+        setProgress(workWeekFrame,workWeekProgress,elapsed.coerceAtMost(total).toFloat()/total,color)
+    }
 
     private fun resetAllWindows(){shiftCompletedMinutes=0;previousContinuousMinutes=0;shiftCounterInitialized=true;workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity="—";previousActivityDuration=0;persistCounters();updateShiftDriving()}
     private fun onShiftClosedDetected(){resetAllWindows();startCardRead("Смена закрыта",true)}
@@ -149,7 +165,6 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         val restCredited=HistoryData.creditedRestMinutes(restActual)
         val restNext=HistoryData.nextRestMilestone(restActual)
         val icon=when{currentActivity.contains("ВОЖДЕНИЕ")->"🚗";currentActivity.contains("РАБОТА")->"⚒";currentActivity.contains("ГОТОВНОСТЬ")->"✉";resting->"🛏";else->"•"}
-
         if(resting){
             activityTitle.text="🛏  ОТДЫХ"
             activityTime.text=HistoryData.fmt(restCredited)
@@ -167,7 +182,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         val wt=activeWorkTotal();work6.text="${HistoryData.fmt(wt)} из 6:00";work6Sub.text=if(wt>=330)"⚠ До 6 часов осталось ${HistoryData.fmt((360-wt).coerceAtLeast(0))}" else "вождение + другая работа";setProgress(work6Frame,work6Progress,wt/360f,workColor(wt))
         val ow=activeOtherWorkTotal();otherWork.text=HistoryData.fmt(ow);setProgress(otherWorkFrame,otherWorkProgress,ow/360f,workColor(ow))
         val av=activeAvailabilityTotal();availability.text=HistoryData.fmt(av);setProgress(availabilityFrame,availabilityProgress,av/360f,GREEN)
-        twoWeek.text="${HistoryData.fmt(twoWeekMinutes)} из 90:00";setProgress(twoWeekFrame,twoWeekProgress,twoWeekMinutes/(90f*60f),limitColor(twoWeekMinutes,90*60));updateWeekCards()
+        twoWeek.text="${HistoryData.fmt(twoWeekMinutes)} из 90:00";setProgress(twoWeekFrame,twoWeekProgress,twoWeekMinutes/(90f*60f),limitColor(twoWeekMinutes,90*60));updateWeekCards();updateWorkWeekClock()
     }
 
     private fun updateWeekCards(){if(!::week.isInitialized)return;val current=history?.currentWeekCardMinutes?:0;val prev=history?.previousWeekDrivingMinutes?:0;val limit=minOf(56*60,(90*60-prev).coerceAtLeast(0));week.text="${HistoryData.fmt(current)} из ${HistoryData.fmt(limit)}";weekSub.text="прошлая неделя ${HistoryData.fmt(prev)} • 10-часовых смен: ${currentWeekTenHourUses()}/2";setProgress(weekFrame,weekProgress,if(limit>0)current.toFloat()/limit else 1f,limitColor(current,limit))}
