@@ -17,15 +17,19 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -37,7 +41,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         private const val BG=0xFF0B1118.toInt(); private const val CARD=0xFF141D27.toInt(); private const val TEXT=0xFFF3F7FA.toInt()
         private const val MUTED=0xFF9BAAB8.toInt(); private const val GREEN=0xFF238A52.toInt(); private const val YELLOW=0xFF9A7A1B.toInt()
         private const val RED=0xFF9E3434.toInt(); private const val CYAN=0xFF29B6C8.toInt(); private const val BORDER=0xFF263545.toInt()
-        private const val PREFS="tachowatch_auto_card"; private const val FIRST_READ="first_card_read_done"; private const val SELECTED_DTCO="selected_dtco_address"; private const val CARD_NAME="driver_name_from_card"
+        private const val PREFS="tachowatch_auto_card"; private const val FIRST_READ="first_card_read_done"; private const val SELECTED_DTCO="selected_dtco_address"; private const val CARD_NAME="driver_name_from_card"; private const val KEEP_SCREEN_ON="keep_screen_on"
         private const val SHIFT_INITIALIZED="shift_counter_initialized"; private const val SHIFT_COMPLETED="shift_completed_driving"; private const val SHIFT_PREV_CONTINUOUS="shift_prev_continuous"
         private const val WORK_WINDOW="work_window_minutes"; private const val WORK_PREV_ACTIVITY="work_prev_activity"; private const val WORK_PREV_DURATION="work_prev_duration"
         private const val WORK_ACC="other_work_window_minutes"; private const val AVAIL_ACC="availability_window_minutes"
@@ -48,7 +52,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private lateinit var live:LiveDidDiagnostic; private lateinit var cardReader:DtcoBluetoothDiagnostic
     private var dtco:BluetoothDevice?=null; private var history:HistoryData.Model?=null; private var cardReading=false; private var resumeLive=false
 
-    private lateinit var status:TextView; private lateinit var connectButton:Button; private lateinit var nowTab:Button; private lateinit var historyTab:Button; private lateinit var nowRoot:LinearLayout; private lateinit var historyRoot:LinearLayout; private lateinit var driver:TextView
+    private lateinit var status:TextView; private lateinit var nowTab:Button; private lateinit var historyTab:Button; private lateinit var nowRoot:LinearLayout; private lateinit var historyRoot:LinearLayout; private lateinit var driver:TextView
     private lateinit var activityTitle:TextView; private lateinit var activityTime:TextView; private lateinit var activitySub:TextView; private lateinit var activityFrame:FrameLayout; private lateinit var activityProgress:View
     private lateinit var continuous:TextView; private lateinit var continuousFrame:FrameLayout; private lateinit var continuousProgress:View
     private lateinit var shiftDriving:TextView; private lateinit var shiftDrivingSub:TextView; private lateinit var shiftDrivingFrame:FrameLayout; private lateinit var shiftDrivingProgress:View
@@ -65,17 +69,29 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
 
     private val permissionLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){findAndAutoConnect()}
 
-    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=BG;window.navigationBarColor=BG;live=LiveDidDiagnostic(applicationContext,this);cardReader=DtcoBluetoothDiagnostic(applicationContext,this);restoreCounters();buildUi();loadHistory();requestPermission()}
+    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=BG;window.navigationBarColor=BG;applyKeepScreenOn();live=LiveDidDiagnostic(applicationContext,this);cardReader=DtcoBluetoothDiagnostic(applicationContext,this);restoreCounters();buildUi();loadHistory();requestPermission()}
     override fun onDestroy(){live.disconnect();cardReader.disconnect();super.onDestroy()}
 
     private fun buildUi(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(10),dp(12),dp(10));setBackgroundColor(BG)}
+        ViewCompat.setOnApplyWindowInsetsListener(root){v,insets->val bars=insets.getInsets(WindowInsetsCompat.Type.statusBars());v.setPadding(dp(12),dp(10)+bars.top,dp(12),dp(10));insets}
         val top=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL};val titles=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
         titles.addView(TextView(this).apply{text="TachoWatch";textSize=25f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)});status=TextView(this).apply{text="DTCO не подключён";textSize=11.5f;setTextColor(CYAN)};titles.addView(status)
-        top.addView(titles,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));connectButton=smallButton("Подключить DTCO").apply{setOnClickListener{showDtcoPicker()}};top.addView(connectButton);top.addView(hspace(5));top.addView(smallButton("Диагностика").apply{setOnClickListener{startActivity(Intent(this@DriverDashboardActivity,MainActivity::class.java))}});root.addView(top);root.addView(space(7))
+        top.addView(titles,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));top.addView(smallButton("☰").apply{textSize=20f;contentDescription="Меню";setOnClickListener{showMainMenu(this)}});root.addView(top);root.addView(space(7))
         val tabs=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};nowTab=tabButton("Сейчас").apply{setOnClickListener{showNow()}};historyTab=tabButton("История").apply{setOnClickListener{showHistory()}};tabs.addView(nowTab,LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));tabs.addView(historyTab,LinearLayout.LayoutParams(0,dp(42),1f));root.addView(tabs);root.addView(space(7))
-        val viewport=FrameLayout(this);nowRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};historyRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};viewport.addView(nowRoot);viewport.addView(historyRoot);root.addView(viewport,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f));setContentView(root);buildNow();buildHistoryView();updateTabState(true)
+        val viewport=FrameLayout(this);nowRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};historyRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};viewport.addView(nowRoot);viewport.addView(historyRoot);root.addView(viewport,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f));setContentView(root);ViewCompat.requestApplyInsets(root);buildNow();buildHistoryView();updateTabState(true)
     }
+
+    private fun showMainMenu(anchor:View){
+        val popup=PopupMenu(this,anchor)
+        popup.menu.add(0,1,0,"Подключить DTCO")
+        popup.menu.add(0,2,1,"Диагностика")
+        popup.menu.add(0,3,2,"Не выключать экран").apply{isCheckable=true;isChecked=prefs.getBoolean(KEEP_SCREEN_ON,false)}
+        popup.setOnMenuItemClickListener{item->when(item.itemId){1->{showDtcoPicker();true};2->{startActivity(Intent(this,MainActivity::class.java));true};3->{val enabled=!prefs.getBoolean(KEEP_SCREEN_ON,false);prefs.edit().putBoolean(KEEP_SCREEN_ON,enabled).apply();applyKeepScreenOn();true};else->false}}
+        popup.show()
+    }
+
+    private fun applyKeepScreenOn(){if(prefs.getBoolean(KEEP_SCREEN_ON,false))window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
 
     private fun buildNow(){
         val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};driver=TextView(this).apply{text=prefs.getString(CARD_NAME,null)?:"Водитель";textSize=25f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setPadding(dp(3),dp(4),0,dp(8))};c.addView(driver)
