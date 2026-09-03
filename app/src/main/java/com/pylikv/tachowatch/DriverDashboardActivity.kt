@@ -144,8 +144,25 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • подключаю live";cardReader.disconnect();if(resume){val d=dtco?:return;status.postDelayed({live.connect(d)},500)}}
 
     private fun updateNow(){
-        val dailyRest=isDailyRestNow();val icon=when{currentActivity.contains("ВОЖДЕНИЕ")->"🚗";currentActivity.contains("РАБОТА")->"⚒";currentActivity.contains("ГОТОВНОСТЬ")->"✉";currentActivity.contains("ОТДЫХ")->"🛏";else->"•"}
-        if(dailyRest){activityTitle.text="🛏  СУТОЧНЫЙ ОТДЫХ";activityTime.text=HistoryData.fmt(activityMinutes);activitySub.text="${HistoryData.fmt(activityMinutes)} из 9:00 • полный 11:00";setProgress(activityFrame,activityProgress,activityMinutes/(9f*60f),dailyRestColor(activityMinutes))}else{activityTitle.text="$icon  ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ • $currentActivity";activityTime.text=HistoryData.fmt(activityMinutes);val p:Float;val color:Int;val text:String;when{currentActivity.contains("ВОЖДЕНИЕ")->{p=continuousMinutes/270f;color=driveColor(continuousMinutes);text="непрерывно ${HistoryData.fmt(continuousMinutes)} из 4:30"};currentActivity.contains("ОТДЫХ")->{p=breakMinutes/45f;color=breakColor(breakMinutes);text="пауза ${HistoryData.fmt(breakMinutes)} из 0:45"};currentActivity.contains("РАБОТА")->{p=activeWorkTotal()/360f;color=workColor(activeWorkTotal());text="⚒ рабочее окно ${HistoryData.fmt(activeWorkTotal())} из 6:00"};currentActivity.contains("ГОТОВНОСТЬ")->{p=activityMinutes/360f;color=GREEN;text="✉ ожидание ${HistoryData.fmt(activityMinutes)}"};else->{p=0f;color=GREEN;text="ожидание данных"}};activitySub.text=text;setProgress(activityFrame,activityProgress,p,color)}
+        val resting=currentActivity.contains("ОТДЫХ")
+        val restActual=maxOf(activityMinutes,breakMinutes)
+        val restCredited=HistoryData.creditedRestMinutes(restActual)
+        val restNext=HistoryData.nextRestMilestone(restActual)
+        val icon=when{currentActivity.contains("ВОЖДЕНИЕ")->"🚗";currentActivity.contains("РАБОТА")->"⚒";currentActivity.contains("ГОТОВНОСТЬ")->"✉";resting->"🛏";else->"•"}
+
+        if(resting){
+            activityTitle.text="🛏  ОТДЫХ"
+            activityTime.text=HistoryData.fmt(restCredited)
+            activitySub.text=if(restNext!=null)"засчитано ${HistoryData.fmt(restCredited)} • фактически ${HistoryData.fmt(restActual)} • следующая ступень ${HistoryData.fmt(restNext)}" else "засчитано 45:00 • фактически ${HistoryData.fmt(restActual)}"
+            val target=restNext?:45*60
+            setProgress(activityFrame,activityProgress,if(target>0)restActual.toFloat()/target else 1f,restMilestoneColor(restCredited))
+        }else{
+            activityTitle.text="$icon  ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ • $currentActivity"
+            activityTime.text=HistoryData.fmt(activityMinutes)
+            val p:Float;val color:Int;val text:String
+            when{currentActivity.contains("ВОЖДЕНИЕ")->{p=continuousMinutes/270f;color=driveColor(continuousMinutes);text="непрерывно ${HistoryData.fmt(continuousMinutes)} из 4:30"};currentActivity.contains("РАБОТА")->{p=activeWorkTotal()/360f;color=workColor(activeWorkTotal());text="⚒ рабочее окно ${HistoryData.fmt(activeWorkTotal())} из 6:00"};currentActivity.contains("ГОТОВНОСТЬ")->{p=activityMinutes/360f;color=GREEN;text="✉ ожидание ${HistoryData.fmt(activityMinutes)}"};else->{p=0f;color=GREEN;text="ожидание данных"}}
+            activitySub.text=text;setProgress(activityFrame,activityProgress,p,color)
+        }
         continuous.text="${HistoryData.fmt(continuousMinutes)} из 4:30";setProgress(continuousFrame,continuousProgress,continuousMinutes/270f,driveColor(continuousMinutes));updateShiftDriving()
         val wt=activeWorkTotal();work6.text="${HistoryData.fmt(wt)} из 6:00";work6Sub.text=if(wt>=330)"⚠ До 6 часов осталось ${HistoryData.fmt((360-wt).coerceAtLeast(0))}" else "вождение + другая работа";setProgress(work6Frame,work6Progress,wt/360f,workColor(wt))
         val ow=activeOtherWorkTotal();otherWork.text=HistoryData.fmt(ow);setProgress(otherWorkFrame,otherWorkProgress,ow/360f,workColor(ow))
@@ -154,10 +171,10 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     }
 
     private fun updateWeekCards(){if(!::week.isInitialized)return;val current=history?.currentWeekCardMinutes?:0;val prev=history?.previousWeekDrivingMinutes?:0;val limit=minOf(56*60,(90*60-prev).coerceAtLeast(0));week.text="${HistoryData.fmt(current)} из ${HistoryData.fmt(limit)}";weekSub.text="прошлая неделя ${HistoryData.fmt(prev)} • 10-часовых смен: ${currentWeekTenHourUses()}/2";setProgress(weekFrame,weekProgress,if(limit>0)current.toFloat()/limit else 1f,limitColor(current,limit))}
-    private fun isDailyRestNow():Boolean{if(!currentActivity.contains("ОТДЫХ"))return false;if(activityMinutes>45||breakMinutes>45)return true;val last=history?.days?.lastOrNull{it.endTime!=null}?:return false;val end=parseUtc("${last.date} ${last.endTime}")?:return false;val elapsed=(System.currentTimeMillis()-end.time)/60000L;return elapsed in 0..900}
+    private fun isDailyRestNow():Boolean{if(!currentActivity.contains("ОТДЫХ"))return false;if(activityMinutes>=9*60||breakMinutes>=9*60)return true;val last=history?.days?.lastOrNull{it.endTime!=null}?:return false;val end=parseUtc("${last.date} ${last.endTime}")?:return false;val elapsed=(System.currentTimeMillis()-end.time)/60000L;return elapsed in 9*60..900}
     private fun parseUtc(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull();private fun parseDateOnly(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull();private fun isoCalendar(d:Date)=Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US).apply{firstDayOfWeek=Calendar.MONDAY;minimalDaysInFirstWeek=4;time=d}
     private fun last(log:String,did:String)=log.lines().asReversed().firstOrNull{it.startsWith("$did=")}?.substringAfter(" | ")?.trim();private fun mins(v:String?):Int?=v?.let{Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull()}
-    private fun driveColor(m:Int)=when{m>=255->RED;m>=240->YELLOW;else->GREEN};private fun breakColor(m:Int)=when{m>=45->GREEN;m>=15->YELLOW;else->RED};private fun dailyRestColor(m:Int)=when{m>=660->GREEN;m>=540->YELLOW;else->RED};private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN};private fun limitColor(v:Int,limit:Int)=when{limit<=0||v>=limit-120->RED;v>=limit-360->YELLOW;else->GREEN}
+    private fun driveColor(m:Int)=when{m>=255->RED;m>=240->YELLOW;else->GREEN};private fun breakColor(m:Int)=when{m>=45->GREEN;m>=15->YELLOW;else->RED};private fun dailyRestColor(m:Int)=when{m>=660->GREEN;m>=540->YELLOW;else->RED};private fun restMilestoneColor(m:Int)=when{m>=45*60->CYAN;m>=24*60->GREEN;m>=11*60->GREEN;m>=9*60->GREEN;m>=3*60->YELLOW;m>=45->GREEN;m>=15->YELLOW;else->RED};private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN};private fun limitColor(v:Int,limit:Int)=when{limit<=0||v>=limit-120->RED;v>=limit-360->YELLOW;else->GREEN}
 
     private fun progressCard():Triple<FrameLayout,View,LinearLayout>{val f=FrameLayout(this).apply{background=rounded(CARD,dp(15).toFloat(),BORDER)};val p=View(this).apply{background=rounded(GREEN,dp(15).toFloat())};f.addView(p,FrameLayout.LayoutParams(0,FrameLayout.LayoutParams.MATCH_PARENT));val b=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(11),dp(12),dp(11))};f.addView(b,FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.WRAP_CONTENT));return Triple(f,p,b)}
     private fun setProgress(frame:FrameLayout,bar:View,p:Float,color:Int){frame.post{val w=(frame.width*p.coerceIn(0f,1f)).toInt();val lp=bar.layoutParams as FrameLayout.LayoutParams;if(lp.width!=w){lp.width=w;bar.layoutParams=lp};bar.background=rounded(color,dp(15).toFloat())}}
