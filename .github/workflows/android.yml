@@ -61,6 +61,9 @@ jobs:
       - name: Apply current UI, history and reconnect update
         run: python3 tools/apply_next_update.py
 
+      - name: Apply final work, icon, tab and rest corrections
+        run: python3 tools/apply_final_corrections.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
