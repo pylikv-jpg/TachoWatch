@@ -77,6 +77,7 @@ object HistoryData {
     )
 
     private val restMilestones = intArrayOf(15, 45, 3 * 60, 9 * 60, 11 * 60, 24 * 60, 45 * 60)
+    private var latestRests: List<RestInfo> = emptyList()
 
     fun load(result: TlvInventory.Result): Model {
         val activity = TlvInventory.render(result)
@@ -196,7 +197,9 @@ object HistoryData {
             if (week == previousWeek && weekYear == previousYear) previous += d.drivingMinutes
         }
 
-        return Model(days, previous, current, buildRestInfo(days))
+        val rests = buildRestInfo(days)
+        latestRests = rests
+        return Model(days, previous, current, rests)
     }
 
     private fun buildRestInfo(days: List<Day>): List<RestInfo> {
@@ -289,7 +292,11 @@ object HistoryData {
         return ((t2.time - t1.time) / 60000L).toInt().takeIf { it >= 0 }
     }
 
-    fun gapMinutes(a: Day, b: Day): Int? = actualGapMinutes(a, b)
+    fun gapMinutes(a: Day, b: Day): Int? {
+        val index = latestRests.indexOfFirst { it.previousDate == a.date && it.nextDate == b.date }
+        if (index < 0) return actualGapMinutes(a, b)
+        return if (latestRests[index].weekly) 1_000_000 + index else -1_000_000 - index
+    }
 
     fun lastWeeklyRestEndMillis(days: List<Day>): Long? {
         var latest: Long? = null
@@ -306,7 +313,40 @@ object HistoryData {
 
     fun creditedRestMinutes(actualMinutes: Int): Int = restMilestones.lastOrNull { actualMinutes >= it } ?: 0
     fun nextRestMilestone(actualMinutes: Int): Int? = restMilestones.firstOrNull { actualMinutes < it }
-    fun fmt(min: Int): String = String.format(Locale.US, "%d:%02d", min / 60, min % 60)
+
+    fun fmt(min: Int): String {
+        if (min >= 1_000_000) {
+            val index = min - 1_000_000
+            return latestRests.getOrNull(index)?.let(::formatRestInfo) ?: "—"
+        }
+        if (min <= -1_000_000) {
+            val index = -min - 1_000_000
+            return latestRests.getOrNull(index)?.let(::formatRestInfo) ?: "—"
+        }
+        return String.format(Locale.US, "%d:%02d", min / 60, min % 60)
+    }
+
+    private fun formatRestInfo(rest: RestInfo): String {
+        if (rest.weekly) {
+            val first = fmtPlain(rest.actualMinutes)
+            if (rest.compensationCreatedMinutes <= 0) return first
+            return if (rest.compensationRemainingMinutes <= 0 && rest.compensationPaidDate != null) {
+                "$first\n✓ Компенсация ${fmtPlain(rest.compensationCreatedMinutes)} отдана ${prettyDate(rest.compensationPaidDate)}"
+            } else {
+                val paid = rest.compensationCreatedMinutes - rest.compensationRemainingMinutes
+                val paidPart = if (paid > 0) " • отдано ${fmtPlain(paid)}" else ""
+                val due = rest.compensationDueDate?.let(::prettyDate) ?: "—"
+                "$first\n⚠ Компенсация нужна ${fmtPlain(rest.compensationRemainingMinutes)}$paidPart • до $due"
+            }
+        }
+
+        val first = if (rest.splitDaily) "3:00 + ${fmtPlain(rest.actualMinutes)}" else fmtPlain(rest.actualMinutes)
+        val credited = rest.creditedDailyMinutes
+        return if (credited != null) "$first\nЗасчитано: ${fmtPlain(credited)}" else first
+    }
+
+    private fun fmtPlain(min: Int): String = String.format(Locale.US, "%d:%02d", min / 60, min % 60)
+
     fun prettyDate(date: String): String = runCatching {
         val p = date.split('-')
         "${p[2]}.${p[1]}.${p[0]}"
