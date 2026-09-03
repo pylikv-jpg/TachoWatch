@@ -48,7 +48,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private lateinit var live:LiveDidDiagnostic; private lateinit var cardReader:DtcoBluetoothDiagnostic
     private var dtco:BluetoothDevice?=null; private var history:HistoryData.Model?=null; private var cardReading=false; private var resumeLive=false
 
-    private lateinit var status:TextView; private lateinit var connectButton:Button; private lateinit var nowRoot:LinearLayout; private lateinit var historyRoot:LinearLayout; private lateinit var driver:TextView
+    private lateinit var status:TextView; private lateinit var connectButton:Button; private lateinit var nowTab:Button; private lateinit var historyTab:Button; private lateinit var nowRoot:LinearLayout; private lateinit var historyRoot:LinearLayout; private lateinit var driver:TextView
     private lateinit var activityTitle:TextView; private lateinit var activityTime:TextView; private lateinit var activitySub:TextView; private lateinit var activityFrame:FrameLayout; private lateinit var activityProgress:View
     private lateinit var continuous:TextView; private lateinit var continuousFrame:FrameLayout; private lateinit var continuousProgress:View
     private lateinit var shiftDriving:TextView; private lateinit var shiftDrivingSub:TextView; private lateinit var shiftDrivingFrame:FrameLayout; private lateinit var shiftDrivingProgress:View
@@ -73,8 +73,8 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         val top=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL};val titles=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
         titles.addView(TextView(this).apply{text="TachoWatch";textSize=25f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)});status=TextView(this).apply{text="DTCO не подключён";textSize=11.5f;setTextColor(CYAN)};titles.addView(status)
         top.addView(titles,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));connectButton=smallButton("Подключить DTCO").apply{setOnClickListener{showDtcoPicker()}};top.addView(connectButton);top.addView(hspace(5));top.addView(smallButton("Диагностика").apply{setOnClickListener{startActivity(Intent(this@DriverDashboardActivity,MainActivity::class.java))}});root.addView(top);root.addView(space(7))
-        val tabs=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};tabs.addView(tabButton("Сейчас").apply{setOnClickListener{showNow()}},LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));tabs.addView(tabButton("История").apply{setOnClickListener{showHistory()}},LinearLayout.LayoutParams(0,dp(42),1f));root.addView(tabs);root.addView(space(7))
-        val viewport=FrameLayout(this);nowRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};historyRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};viewport.addView(nowRoot);viewport.addView(historyRoot);root.addView(viewport,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f));setContentView(root);buildNow();buildHistoryView()
+        val tabs=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};nowTab=tabButton("Сейчас").apply{setOnClickListener{showNow()}};historyTab=tabButton("История").apply{setOnClickListener{showHistory()}};tabs.addView(nowTab,LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));tabs.addView(historyTab,LinearLayout.LayoutParams(0,dp(42),1f));root.addView(tabs);root.addView(space(7))
+        val viewport=FrameLayout(this);nowRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};historyRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};viewport.addView(nowRoot);viewport.addView(historyRoot);root.addView(viewport,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f));setContentView(root);buildNow();buildHistoryView();updateTabState(true)
     }
 
     private fun buildNow(){
@@ -137,7 +137,13 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private fun resetAllWindows(){shiftCompletedMinutes=0;previousContinuousMinutes=0;shiftCounterInitialized=true;workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity="—";previousActivityDuration=0;persistCounters();updateShiftDriving()}
     private fun onShiftClosedDetected(){resetAllWindows();startCardRead("Смена закрыта",true)}
 
-    private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE};private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE}
+    private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE;updateTabState(true)}
+    private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;updateTabState(false)}
+    private fun updateTabState(nowSelected:Boolean){
+        if(!::nowTab.isInitialized||!::historyTab.isInitialized)return
+        nowTab.background=rounded(if(nowSelected)GREEN else CARD,dp(11).toFloat(),if(nowSelected)GREEN else BORDER)
+        historyTab.background=rounded(if(nowSelected)CARD else GREEN,dp(11).toFloat(),if(nowSelected)BORDER else GREEN)
+    }
 
     private fun requestPermission(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN))else findAndAutoConnect()}
     @SuppressLint("MissingPermission") private fun findAndAutoConnect(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)return;val saved=prefs.getString(SELECTED_DTCO,null);dtco=try{adapter?.bondedDevices?.firstOrNull{it.address==saved}}catch(_:Throwable){null};val d=dtco;if(d==null){status.text="Выберите DTCO";return};connectSelected(d)}
