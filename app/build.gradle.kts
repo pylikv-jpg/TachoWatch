@@ -11,8 +11,8 @@ android {
         applicationId = "com.pylikv.tachowatch"
         minSdk = 26
         targetSdk = 35
-        versionCode = 106
-        versionName = "1.0-long-rest-week-history"
+        versionCode = 107
+        versionName = "1.0-shift-driving-auto-card"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
