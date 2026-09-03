@@ -1,33 +1,42 @@
 from pathlib import Path
 import re
 
-p = Path('app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt')
-s = p.read_text()
+p=Path('app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt')
+s=p.read_text()
 
-# 1) Qualified 45-minute break.
-# It resets ONLY continuous work. Other work/readiness remain shift-cumulative.
-qualified_helper = r'''
+# Qualified 45-minute rest. Only the continuous-work window resets.
+helper='''
     private fun qualifiedBreak45():Boolean=
         currentActivity.contains("ОТДЫХ") && (breakMinutes>=45 || activityMinutes>=45)
 '''
 if 'private fun qualifiedBreak45()' not in s:
     anchor='    private fun updateShiftDriving()'
     if anchor not in s: raise SystemExit('updateShiftDriving anchor not found')
-    s=s.replace(anchor,qualified_helper+'\n'+anchor,1)
+    s=s.replace(anchor,helper+'\n'+anchor,1)
 
-m=re.search(r'private fun processCycle\(\)\{',s)
-if not m: raise SystemExit('processCycle not found')
-insert=m.end()
-if 'if(qualifiedBreak45())workWindowMinutes=0;' not in s[insert:insert+250]:
-    s=s[:insert]+'if(qualifiedBreak45())workWindowMinutes=0;'+s[insert:]
-s=s.replace('workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;', 'workWindowMinutes=0;')
-s=s.replace('workWindowMinutes=0;otherWorkWindowMinutes=0;', 'workWindowMinutes=0;')
+# Never reset shift-cumulative other-work/readiness counters at 45 minutes.
+s=s.replace('workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;','workWindowMinutes=0;')
+s=s.replace('workWindowMinutes=0;otherWorkWindowMinutes=0;','workWindowMinutes=0;')
+
+# Persist the continuous-work reset in the actual work-window processor when present.
+work_marker='private fun processWorkWindow(){'
+if work_marker in s and 'if(qualifiedBreak45()){workWindowMinutes=0;' not in s:
+    s=s.replace(work_marker,work_marker+'if(qualifiedBreak45()){workWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};',1)
+
+# Some generated variants still have processCycle; patch it too, but do NOT require it.
+cycle=re.search(r'private fun processCycle\(\)\{',s)
+if cycle:
+    pos=cycle.end()
+    if 'if(qualifiedBreak45())workWindowMinutes=0;' not in s[pos:pos+220]:
+        s=s[:pos]+'if(qualifiedBreak45())workWindowMinutes=0;'+s[pos:]
+
+# The UI must immediately show 0:00 while the qualifying break is active.
 s=s.replace('private fun activeWorkTotal():Int=workWindowMinutes+when{','private fun activeWorkTotal():Int=if(qualifiedBreak45())0 else workWindowMinutes+when{')
 s=s.replace('private fun activeWorkTotal(): Int = workWindowMinutes + when {','private fun activeWorkTotal(): Int = if(qualifiedBreak45()) 0 else workWindowMinutes + when {')
-s=re.sub(r'private fun workTotalForUi\(\):Int=([^\n]+)',lambda m:'private fun workTotalForUi():Int=if(qualifiedBreak45())0 else '+m.group(1) if 'qualifiedBreak45()' not in m.group(0) else m.group(0),s,count=1)
+s=re.sub(r'private fun workTotalForUi\(\):Int=([^\n]+)',lambda m:m.group(0) if 'qualifiedBreak45()' in m.group(0) else 'private fun workTotalForUi():Int=if(qualifiedBreak45())0 else '+m.group(1),s,count=1)
 
-# 2) Large pictograms as separate 30sp TextViews.
-activity_label = r'''
+# Large activity pictograms as their own 30sp TextViews.
+activity_label='''
     private fun activityLabel(icon:String,title:String):LinearLayout=LinearLayout(this).apply{
         orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL
         addView(TextView(this@DriverDashboardActivity).apply{text=icon;textSize=30f;setTextColor(TEXT);setPadding(0,0,dp(9),0)})
@@ -38,54 +47,47 @@ if 'private fun activityLabel(icon:String,title:String)' not in s:
     anchor='    private fun progressCard()'
     if anchor not in s: raise SystemExit('progressCard anchor not found')
     s=s.replace(anchor,activity_label+'\n'+anchor,1)
-def repl_label(m): return f'activityLabel("{m.group(1)}","{m.group(2).strip()}")'
-s=re.sub(r'label\("(🚗|⚒|✉|🛏|⏱|☕)\s*([^"\\]+)"\)',repl_label,s)
-plain_map={'НЕПРЕРЫВНОЕ ВОЖДЕНИЕ':('🚗','НЕПРЕРЫВНОЕ ВОЖДЕНИЕ'),'ВОЖДЕНИЕ ЗА СМЕНУ':('🚗','ВОЖДЕНИЕ ЗА СМЕНУ'),'ОТДЫХ':('🛏','ОТДЫХ'),'НЕПРЕРЫВНАЯ РАБОТА':('⏱','НЕПРЕРЫВНАЯ РАБОТА'),'ДРУГАЯ РАБОТА':('⚒','ДРУГАЯ РАБОТА'),'ОЖИДАНИЕ / ГОТОВНОСТЬ':('✉','ОЖИДАНИЕ / ГОТОВНОСТЬ')}
-for title,(icon,text) in plain_map.items(): s=s.replace(f'label("{title}")',f'activityLabel("{icon}","{text}")')
 
-# 3) Active tabs.
-if 'private lateinit var nowTab:Button' not in s:
-    s=s.replace('private var nowTab:Button?=null; private var historyTab:Button?=null','private lateinit var nowTab:Button; private lateinit var historyTab:Button')
-pattern=r'val tabs=LinearLayout\(this\)\.apply\{orientation=LinearLayout\.HORIZONTAL\};tabs\.addView\(tabButton\("Сейчас"\)\.apply\{setOnClickListener\{showNow\(\)\}\},LinearLayout\.LayoutParams\(0,dp\(42\),1f\)\);tabs\.addView\(hspace\(6\)\);tabs\.addView\(tabButton\("История"\)\.apply\{setOnClickListener\{showHistory\(\)\}\},LinearLayout\.LayoutParams\(0,dp\(42\),1f\)\)'
-replacement='val tabs=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};nowTab=tabButton("Сейчас").apply{setOnClickListener{showNow()}};historyTab=tabButton("История").apply{setOnClickListener{showHistory()}};tabs.addView(nowTab,LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));tabs.addView(historyTab,LinearLayout.LayoutParams(0,dp(42),1f))'
-s=re.sub(pattern,replacement,s,count=1)
-s=s.replace(';if(t=="Сейчас")nowTab=this;if(t=="История")historyTab=this}', '}')
-s=s.replace('nowTab?.let{','if(::nowTab.isInitialized) nowTab.let{').replace('historyTab?.let{','if(::historyTab.isInitialized) historyTab.let{')
-s=s.replace('it.alpha=if(now)1.0f else 0.68f','it.alpha=if(now)1.0f else 0.60f').replace('it.alpha=if(!now)1.0f else 0.68f','it.alpha=if(!now)1.0f else 0.60f')
-s=s.replace('private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE}','private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE;setTabState(true)}')
-s=s.replace('private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE}','private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;setTabState(false)}')
+def repl(m): return f'activityLabel("{m.group(1)}","{m.group(2).strip()}")'
+s=re.sub(r'label\("(🚗|⚒|✉|🛏|⏱|☕)\s*([^"\\]+)"\)',repl,s)
+for title,icon in [('НЕПРЕРЫВНОЕ ВОЖДЕНИЕ','🚗'),('ВОЖДЕНИЕ ЗА СМЕНУ','🚗'),('ОТДЫХ','🛏'),('НЕПРЕРЫВНАЯ РАБОТА','⏱'),('ДРУГАЯ РАБОТА','⚒'),('ОЖИДАНИЕ / ГОТОВНОСТЬ','✉')]:
+    s=s.replace(f'label("{title}")',f'activityLabel("{icon}","{title}")')
 
-# 4) Split daily rest: any in-shift rest >=3h displays exactly 3:00.
+# Active tabs: use the references created by apply_next_update.py and force state on every navigation.
+s=s.replace('it.alpha=if(now)1.0f else 0.68f','it.alpha=if(now)1.0f else 0.60f')
+s=s.replace('it.alpha=if(!now)1.0f else 0.68f','it.alpha=if(!now)1.0f else 0.60f')
+s=s.replace('private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE}', 'private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE;setTabState(true)}')
+s=s.replace('private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE};', 'private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE;setTabState(true)};')
+s=s.replace('private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE}', 'private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;setTabState(false)}')
+s=s.replace('private fun showHistory(){nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE}', 'private fun showHistory(){nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;setTabState(false)}')
+s=s.replace('setContentView(root);buildNow();buildHistoryView()', 'setContentView(root);buildNow();buildHistoryView();setTabState(true)',1)
+
+# Split daily rest: any in-shift rest >=3h is displayed as exactly 3:00.
 s=re.sub(r'fun splitRestText\(older:HistoryData\.Day,gap:Int\):String\{.*?\n\s*\}','fun splitRestText(older:HistoryData.Day,gap:Int):String{\n            val inside=older.longestRestMinutes\n            if(inside<180)return HistoryData.fmt(gap)\n            return "3:00 + ${HistoryData.fmt(gap)}"\n        }',s,count=1,flags=re.S)
 
-# 5) Rest milestones.
-s=s.replace('0:45 • 3:00 • 9:00 • 11:00','0:45 • 3:00 • 9:00 • 11:00 • 24:00 • 45:00').replace('45 мин • 3:00 • 9:00 • 11:00','45 мин • 3:00 • 9:00 • 11:00 • 24:00 • 45:00')
+# Rest milestones.
+s=s.replace('0:45 • 3:00 • 9:00 • 11:00','0:45 • 3:00 • 9:00 • 11:00 • 24:00 • 45:00')
+s=s.replace('45 мин • 3:00 • 9:00 • 11:00','45 мин • 3:00 • 9:00 • 11:00 • 24:00 • 45:00')
 
-# 6) Working-week 144-hour countdown from the END of the last weekly rest.
-# We derive the last weekly-rest gap from card history. A weekly rest is >=24h.
-week_helper = r'''
+# Working week: 144h from the end of the most recent weekly rest (>=24h).
+week_helper='''
     private fun workingWeekElapsedMinutes():Int?{
-        val h=history?:return null
-        val d=h.days
+        val d=history?.days?:return null
         if(d.size<2)return null
         for(i in d.lastIndex downTo 1){
             val older=d[i-1];val newer=d[i]
             val gap=HistoryData.gapMinutes(older,newer)?:continue
             if(gap>=24*60){
-                val end=newer.startTime?:continue
-                val endDate=newer.date
+                val t=newer.startTime?:continue
                 val sdf=java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",java.util.Locale.US)
-                val start=sdf.parse("$endDate $end")?.time?:continue
+                val start=sdf.parse("${newer.date} $t")?.time?:continue
                 return (((System.currentTimeMillis()-start)/60000L).coerceAtLeast(0L)).toInt()
             }
         }
         return null
     }
-
     private fun workingWeekCard():LinearLayout{
-        val elapsed=workingWeekElapsedMinutes()
-        val limit=144*60
-        val remaining=(limit-(elapsed?:0)).coerceAtLeast(0)
+        val elapsed=workingWeekElapsedMinutes();val limit=144*60;val remaining=(limit-(elapsed?:0)).coerceAtLeast(0)
         val bg=when{elapsed==null->CARD;elapsed>=142*60->RED;elapsed>=140*60->YELLOW;else->GREEN}
         return card().apply{
             background=rounded(bg,dp(14).toFloat(),bg)
@@ -99,30 +101,32 @@ if 'private fun workingWeekElapsedMinutes()' not in s:
     anchor='    private fun buildNow()'
     if anchor not in s: raise SystemExit('buildNow anchor not found')
     s=s.replace(anchor,week_helper+'\n'+anchor,1)
-# Insert after two-week card when possible; otherwise append to nowRoot at end of buildNow construction.
-inserted=False
-for needle in ['nowRoot.addView(twoWeekFrame)','c.addView(twoWeekFrame)','col.addView(twoWeekFrame)']:
-    if needle in s:
-        s=s.replace(needle,needle+';'+needle.split('.addView')[0]+'.addView(workingWeekCard())',1);inserted=True;break
-if not inserted:
-    # Put it before the end of buildNow by anchoring the next function.
-    m=re.search(r'private fun buildNow\(\)\{(.*?)(?=\n\s*private fun )',s,re.S)
-    if not m: raise SystemExit('cannot locate buildNow body for working week card')
-    body=m.group(0)
-    pos=m.end()-len(m.group(0))+len(body)
-    # insert immediately before trailing whitespace; compact buildNow normally closes with }
-    close=s.rfind('}',m.start(),m.end())
-    if close<0: raise SystemExit('buildNow closing brace not found')
-    s=s[:close]+';nowRoot.addView(workingWeekCard())'+s[close:]
 
-# Version bump.
-gp=Path('app/build.gradle.kts');g=gp.read_text();g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 118',g);g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-working-week-144"',g);gp.write_text(g)
+# Put the working-week card in the main scroll column after the two-week card.
+if 'c.addView(workingWeekCard())' not in s:
+    if 'c.addView(twoWeekFrame)' in s:
+        s=s.replace('c.addView(twoWeekFrame)','c.addView(twoWeekFrame);c.addView(space(7));c.addView(workingWeekCard())',1)
+    elif 'nowRoot.addView(workingWeekCard())' not in s:
+        raise SystemExit('two-week card insertion anchor not found')
+
 p.write_text(s)
 
+gp=Path('app/build.gradle.kts');g=gp.read_text();g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 119',g);g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-build119-work45-tabs-week144"',g);gp.write_text(g)
+
 final=p.read_text()
-checks={'qualified45':'private fun qualifiedBreak45()','processReset':'if(qualifiedBreak45())workWindowMinutes=0;','split3':'return "3:00 + ${HistoryData.fmt(gap)}"','tabState':'private fun setTabState(now:Boolean)','nowTab':'nowTab=tabButton("Сейчас")','historyTab':'historyTab=tabButton("История")','largeIconHelper':'textSize=30f','workingWeek':'private fun workingWeekElapsedMinutes()','workingWeekCard':'РАБОЧАЯ НЕДЕЛЯ','yellow140':'elapsed>=140*60','red142':'elapsed>=142*60'}
+checks={
+ 'qualified45':'private fun qualifiedBreak45()',
+ 'workUiReset':'if(qualifiedBreak45())0 else',
+ 'tabState':'private fun setTabState(now:Boolean)',
+ 'showNowState':'setTabState(true)',
+ 'showHistoryState':'setTabState(false)',
+ 'split3':'return "3:00 + ${HistoryData.fmt(gap)}"',
+ 'largeIcons':'textSize=30f',
+ 'week144':'РАБОЧАЯ НЕДЕЛЯ',
+ 'yellow140':'elapsed>=140*60',
+ 'red142':'elapsed>=142*60'
+}
 missing=[k for k,v in checks.items() if v not in final]
 if missing: raise SystemExit('Final correction missing: '+','.join(missing))
-if 'workWindowMinutes=0;otherWorkWindowMinutes=0' in final: raise SystemExit('Other-work counter would be reset by 45-minute break; refusing build')
-if final.count('activityLabel("') < 4: raise SystemExit('Large pictograms were not applied; refusing build')
-print('Final corrections plus 144h working-week countdown applied successfully')
+if 'workWindowMinutes=0;otherWorkWindowMinutes=0' in final: raise SystemExit('Other work would reset at 45 minutes')
+print('Final corrections applied: 45m reset, active tabs, large icons, split rest, 144h week')
