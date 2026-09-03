@@ -42,6 +42,10 @@ jobs:
               -validity 10000 \
               -dname "CN=Android Debug,O=TachoWatch,C=LT"
           fi
+          keytool -list -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey | grep 'SHA256:'
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -50,6 +54,16 @@ jobs:
 
       - name: Build debug APK from current main sources
         run: gradle assembleDebug
+
+      - name: Verify APK signing certificate
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          KEY_FP="$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sed -n 's/.*SHA256: //p' | head -1 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          APK_FP="$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | sed -n 's/.*SHA-256 digest: //p' | head -1 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          echo "KEY_SHA256=$KEY_FP"
+          echo "APK_SHA256=$APK_FP"
+          test -n "$KEY_FP"
+          test "$KEY_FP" = "$APK_FP"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
