@@ -119,23 +119,17 @@ if 'c.addView(workingWeekCard())' not in s:
         raise SystemExit('twoWeekFrame anchor not found')
     s=s.replace('c.addView(twoWeekFrame)','c.addView(twoWeekFrame);c.addView(space(7));c.addView(workingWeekCard())',1)
 
-# Active tabs without rewriting navigation functions.
-# apply_next_update.py already creates nowTab/historyTab and setTabState().
-# Add a non-consuming touch listener: ACTION_UP changes the highlight,
-# while the existing click listener continues to switch screens normally.
-old_tab='private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER);if(t=="Сейчас")nowTab=this;if(t=="История")historyTab=this}'
-new_tab='private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER);if(t=="Сейчас")nowTab=this;if(t=="История")historyTab=this;setOnTouchListener{_,e->if(e.action==android.view.MotionEvent.ACTION_UP)setTabState(t=="Сейчас");false};if(t=="Сейчас")post{setTabState(true)}}'
-if old_tab in s:
-    s=s.replace(old_tab,new_tab,1)
-elif 'setOnTouchListener{_,e->if(e.action==android.view.MotionEvent.ACTION_UP)setTabState(t=="Сейчас")' not in s:
-    raise SystemExit('tabButton anchor not found after apply_next_update')
+# Tabs are already patched by apply_next_update.py. Do not rewrite them here.
+# Only verify that the active-tab state function exists.
+if 'private fun setTabState(now:Boolean)' not in s:
+    raise SystemExit('setTabState missing after apply_next_update')
 
 p.write_text(s)
 
 gp=Path('app/build.gradle.kts')
 g=gp.read_text()
-g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 127',g)
-g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-build127-week-tabs-safe-touch"',g)
+g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 128',g)
+g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-build128-week-tabs-verified"',g)
 gp.write_text(g)
 
 final=p.read_text()
@@ -145,12 +139,11 @@ checks={
     'weekLabel':'РАБОЧАЯ НЕДЕЛЯ',
     'yellow':'elapsed>=140*60',
     'red':'elapsed>=143*60',
-    'tabState':'private fun setTabState(now:Boolean)',
-    'touchTabs':'android.view.MotionEvent.ACTION_UP'
+    'tabState':'private fun setTabState(now:Boolean)'
 }
 missing=[k for k,v in checks.items() if v not in final]
 if missing:
     raise SystemExit('Final patch missing: '+','.join(missing))
 if 'activityLabel("📅"' in final:
     raise SystemExit('Unsafe activityLabel reference remains')
-print('Final patch applied safely: work45 + week144 + touch-based active tabs')
+print('Final patch applied safely: work45 + week144; tabs preserved from apply_next_update')
