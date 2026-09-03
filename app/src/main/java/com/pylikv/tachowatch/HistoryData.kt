@@ -32,6 +32,16 @@ object HistoryData {
 
     private data class Place(val date: String, val time: String, val type: String, val country: String)
 
+    private val restMilestones = intArrayOf(
+        15,
+        45,
+        3 * 60,
+        9 * 60,
+        11 * 60,
+        24 * 60,
+        45 * 60
+    )
+
     fun load(result: TlvInventory.Result): Model {
         val activity = TlvInventory.render(result)
         val placesText = PlacesDecoder.render(result)
@@ -101,7 +111,16 @@ object HistoryData {
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         val t1 = runCatching { sdf.parse("${a.date} $end") }.getOrNull() ?: return null
         val t2 = runCatching { sdf.parse("${b.date} $start") }.getOrNull() ?: return null
-        return ((t2.time - t1.time) / 60000L).toInt().takeIf { it >= 0 }
+        val actual = ((t2.time - t1.time) / 60000L).toInt().takeIf { it >= 0 } ?: return null
+        return creditedRestMinutes(actual).takeIf { it > 0 }
+    }
+
+    fun creditedRestMinutes(actualMinutes: Int): Int {
+        return restMilestones.lastOrNull { actualMinutes >= it } ?: 0
+    }
+
+    fun nextRestMilestone(actualMinutes: Int): Int? {
+        return restMilestones.firstOrNull { actualMinutes < it }
     }
 
     fun fmt(min: Int): String = String.format(Locale.US, "%d:%02d", min / 60, min % 60)
