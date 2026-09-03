@@ -104,7 +104,8 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private fun initializeShiftCounterFromCard(){if(shiftCounterInitialized)return;val cardDriving=history?.days?.lastOrNull()?.drivingMinutes?:0;shiftCompletedMinutes=(cardDriving-continuousMinutes).coerceAtLeast(0);previousContinuousMinutes=continuousMinutes;shiftCounterInitialized=true;persistCounters()}
     private fun processCycle(){initializeShiftCounterFromCard();if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes&&breakMinutes>=45)shiftCompletedMinutes+=previousContinuousMinutes;previousContinuousMinutes=continuousMinutes;processWorkWindow();persistCounters();updateShiftDriving()}
     private fun processWorkWindow(){
-        if(currentActivity.contains("ОТДЫХ")&&breakMinutes>=45){workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return}
+        val restReached45=currentActivity.contains("ОТДЫХ")&&maxOf(breakMinutes,activityMinutes)>=45
+        if(restReached45){workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return}
         if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return}
         previousActivityDuration=activityMinutes
     }
