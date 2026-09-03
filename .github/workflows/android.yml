@@ -42,6 +42,27 @@ jobs:
           fi
           keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android | grep 'SHA256:' || true
 
+      - name: Apply 6-hour work warning refinement
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt')
+          s = p.read_text()
+          s = s.replace(
+              'val wt=activeWorkTotal();work6.text="${HistoryData.fmt(wt)} из 6:00";work6Sub.text=if(wt>=330)"⚠ До 6 часов осталось ${HistoryData.fmt((360-wt).coerceAtLeast(0))}" else "вождение + другая работа";setProgress(work6Frame,work6Progress,wt/360f,workColor(wt))',
+              'val wt=activeWorkTotal();work6.text="${HistoryData.fmt(wt)} из 6:00";work6Sub.text=when{wt>=360->"⚠ Лимит 6:00 общей работы достигнут";wt>=330->"⚠ Осталось ${HistoryData.fmt((360-wt).coerceAtLeast(0))} общей работы";wt>=300->"Приближение к лимиту 6:00 • осталось ${HistoryData.fmt(360-wt)}";else->"вождение + другая работа"};setProgress(work6Frame,work6Progress,wt/360f,workColor(wt))'
+          )
+          s = s.replace(
+              'private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN}',
+              'private fun workColor(m:Int)=when{m>=330->RED;m>=300->YELLOW;else->GREEN}'
+          )
+          p.write_text(s)
+
+          g = Path('app/build.gradle.kts')
+          t = g.read_text().replace('versionCode = 109', 'versionCode = 110').replace('versionName = "1.0-dashboard-56d-dtco-picker"', 'versionName = "1.0-work6-warning"')
+          g.write_text(t)
+          PY
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
