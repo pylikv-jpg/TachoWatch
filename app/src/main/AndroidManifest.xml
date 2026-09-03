@@ -14,8 +14,8 @@
         <activity android:name=".Test15Activity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="false" />
         <activity android:name=".DashboardActivity" android:exported="false" />
-        <activity android:name=".DriverDashboardActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
-        <activity android:name=".DriverDashboardActivityV2" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
+        <activity android:name=".DriverDashboardActivityV2" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".DriverDashboardActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
