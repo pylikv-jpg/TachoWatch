@@ -15,7 +15,8 @@ object HistoryData {
         val startTime: String?,
         val startCountry: String?,
         val endTime: String?,
-        val endCountry: String?
+        val endCountry: String?,
+        val hasSplitDailyRest3h: Boolean = false
     ) {
         val shiftMinutes: Int? get() {
             val s = startTime?.let(::clockMinutes) ?: return null
@@ -24,11 +25,37 @@ object HistoryData {
         }
     }
 
+    data class Compensation(
+        val sourcePreviousDate: String,
+        val sourceNextDate: String,
+        val originalMinutes: Int,
+        val remainingMinutes: Int,
+        val paidDate: String?,
+        val dueDate: String
+    )
+
+    data class RestInfo(
+        val previousDate: String,
+        val nextDate: String,
+        val actualMinutes: Int,
+        val weekly: Boolean,
+        val splitDaily: Boolean,
+        val creditedDailyMinutes: Int?,
+        val compensationCreatedMinutes: Int,
+        val compensationRemainingMinutes: Int,
+        val compensationPaidDate: String?,
+        val compensationDueDate: String?
+    )
+
     data class Model(
         val days: List<Day>,
         val previousWeekDrivingMinutes: Int,
-        val currentWeekCardMinutes: Int
-    )
+        val currentWeekCardMinutes: Int,
+        val rests: List<RestInfo>
+    ) {
+        fun restBetween(previous: Day, next: Day): RestInfo? =
+            rests.firstOrNull { it.previousDate == previous.date && it.nextDate == next.date }
+    }
 
     private data class Place(val date: String, val time: String, val type: String, val country: String)
     private data class ActivityDay(
@@ -36,10 +63,20 @@ object HistoryData {
         val work: Int,
         val availability: Int,
         val activeStart: String?,
-        val restStartAfterWork: String?
+        val restStartAfterWork: String?,
+        val hasSplitDailyRest3h: Boolean
     )
 
-    private val restMilestones = intArrayOf(15,45,3*60,9*60,11*60,24*60,45*60)
+    private data class Debt(
+        val previousDate: String,
+        val nextDate: String,
+        val original: Int,
+        var remaining: Int,
+        var paidDate: String? = null,
+        val dueDate: String
+    )
+
+    private val restMilestones = intArrayOf(15, 45, 3 * 60, 9 * 60, 11 * 60, 24 * 60, 45 * 60)
 
     fun load(result: TlvInventory.Result): Model {
         val activity = TlvInventory.render(result)
@@ -56,6 +93,8 @@ object HistoryData {
             var activeStart: String? = null
             var restStartAfterWork: String? = null
             var seenActive = false
+            var pendingSplitRest = false
+            var hasSplitDailyRest3h = false
 
             lines.forEach { line ->
                 val row = Regex("^\\s*(\\d{2}:\\d{2})\\s+(REST|AVAILABILITY|WORK|DRIVING)\\b").find(line) ?: return@forEach
@@ -68,30 +107,46 @@ object HistoryData {
 
                 when (kind) {
                     "DRIVING" -> {
+                        if (pendingSplitRest) hasSplitDailyRest3h = true
+                        pendingSplitRest = false
                         driving += minutes
                         if (activeStart == null) activeStart = time
                         seenActive = true
                         restStartAfterWork = null
                     }
                     "WORK" -> {
+                        if (pendingSplitRest) hasSplitDailyRest3h = true
+                        pendingSplitRest = false
                         work += minutes
                         if (activeStart == null) activeStart = time
                         seenActive = true
                         restStartAfterWork = null
                     }
                     "AVAILABILITY" -> {
+                        if (pendingSplitRest) hasSplitDailyRest3h = true
+                        pendingSplitRest = false
                         availability += minutes
                         if (activeStart == null) activeStart = time
                         seenActive = true
                         restStartAfterWork = null
                     }
                     "REST" -> {
-                        if (seenActive) restStartAfterWork = time
+                        if (seenActive) {
+                            restStartAfterWork = time
+                            pendingSplitRest = minutes >= 3 * 60
+                        }
                     }
                 }
             }
 
-            activityDays[date] = ActivityDay(driving, work, availability, activeStart, restStartAfterWork)
+            activityDays[date] = ActivityDay(
+                driving,
+                work,
+                availability,
+                activeStart,
+                restStartAfterWork,
+                hasSplitDailyRest3h
+            )
         }
 
         val places = Regex("(?m)^#\\d+ time=(\\d{4}-\\d{2}-\\d{2}) (\\d{2}:\\d{2}):\\d{2} type=([^ ]+) country=([^ ]+)").findAll(placesText)
@@ -117,13 +172,14 @@ object HistoryData {
                 startTime = startTime,
                 startCountry = placeStart?.country,
                 endTime = endTime,
-                endCountry = placeEnd?.country
+                endCountry = placeEnd?.country,
+                hasSplitDailyRest3h = a.hasSplitDailyRest3h
             )
         }.sortedBy { it.date }
 
         val now = Date()
         val currentCal = isoCalendar(now)
-        val previousCal = isoCalendar(now).apply { add(Calendar.WEEK_OF_YEAR,-1) }
+        val previousCal = isoCalendar(now).apply { add(Calendar.WEEK_OF_YEAR, -1) }
         val currentWeek = currentCal.get(Calendar.WEEK_OF_YEAR)
         val currentYear = currentCal.getWeekYear()
         val previousWeek = previousCal.get(Calendar.WEEK_OF_YEAR)
@@ -140,7 +196,89 @@ object HistoryData {
             if (week == previousWeek && weekYear == previousYear) previous += d.drivingMinutes
         }
 
-        return Model(days, previous, current)
+        return Model(days, previous, current, buildRestInfo(days))
+    }
+
+    private fun buildRestInfo(days: List<Day>): List<RestInfo> {
+        if (days.size < 2) return emptyList()
+        val debts = mutableListOf<Debt>()
+        val raw = mutableListOf<RestInfo>()
+
+        for (i in 0 until days.lastIndex) {
+            val a = days[i]
+            val b = days[i + 1]
+            val actual = actualGapMinutes(a, b) ?: continue
+            val weekly = actual >= 24 * 60
+            val created = if (weekly && actual < 45 * 60) 45 * 60 - actual else 0
+            val due = if (created > 0) compensationDueDate(b.date) else null
+
+            if (created > 0 && due != null) {
+                debts += Debt(a.date, b.date, created, created, null, due)
+            }
+
+            var availableForCompensation = compensationSurplusMinutes(actual, weekly, a.hasSplitDailyRest3h)
+            if (availableForCompensation > 0) {
+                debts.filter { it.remaining > 0 && !(it.previousDate == a.date && it.nextDate == b.date) }.forEach { debt ->
+                    if (availableForCompensation <= 0) return@forEach
+                    val paid = minOf(debt.remaining, availableForCompensation)
+                    debt.remaining -= paid
+                    availableForCompensation -= paid
+                    if (debt.remaining == 0 && debt.paidDate == null) debt.paidDate = b.date
+                }
+            }
+
+            val dailyCredit = if (weekly) null else when {
+                a.hasSplitDailyRest3h && actual >= 9 * 60 -> 11 * 60
+                actual >= 11 * 60 -> 11 * 60
+                actual >= 9 * 60 -> 9 * 60
+                else -> null
+            }
+
+            raw += RestInfo(
+                previousDate = a.date,
+                nextDate = b.date,
+                actualMinutes = actual,
+                weekly = weekly,
+                splitDaily = !weekly && a.hasSplitDailyRest3h && actual >= 9 * 60,
+                creditedDailyMinutes = dailyCredit,
+                compensationCreatedMinutes = created,
+                compensationRemainingMinutes = created,
+                compensationPaidDate = null,
+                compensationDueDate = due
+            )
+        }
+
+        return raw.map { rest ->
+            if (rest.compensationCreatedMinutes <= 0) rest
+            else {
+                val debt = debts.firstOrNull { it.previousDate == rest.previousDate && it.nextDate == rest.nextDate }
+                rest.copy(
+                    compensationRemainingMinutes = debt?.remaining ?: rest.compensationCreatedMinutes,
+                    compensationPaidDate = debt?.paidDate
+                )
+            }
+        }
+    }
+
+    private fun compensationSurplusMinutes(actual: Int, weekly: Boolean, splitDaily: Boolean): Int {
+        val base = when {
+            weekly && actual >= 45 * 60 -> 45 * 60
+            weekly -> 24 * 60
+            splitDaily && actual >= 9 * 60 -> 9 * 60
+            actual >= 11 * 60 -> 11 * 60
+            else -> 9 * 60
+        }
+        return (actual - base).coerceAtLeast(0)
+    }
+
+    private fun compensationDueDate(restStartDate: String): String {
+        val date = parseDate(restStartDate) ?: return restStartDate
+        val cal = isoCalendar(date).apply {
+            set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+            add(Calendar.WEEK_OF_YEAR, 4)
+            add(Calendar.DAY_OF_MONTH, -1)
+        }
+        return SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(cal.time)
     }
 
     fun actualGapMinutes(a: Day, b: Day): Int? {
@@ -151,14 +289,14 @@ object HistoryData {
         return ((t2.time - t1.time) / 60000L).toInt().takeIf { it >= 0 }
     }
 
-    fun gapMinutes(a: Day, b: Day): Int? = actualGapMinutes(a,b)?.let(::creditedRestMinutes)?.takeIf { it > 0 }
+    fun gapMinutes(a: Day, b: Day): Int? = actualGapMinutes(a, b)
 
     fun lastWeeklyRestEndMillis(days: List<Day>): Long? {
         var latest: Long? = null
         for (i in 0 until days.lastIndex) {
             val previous = days[i]
-            val next = days[i+1]
-            if ((actualGapMinutes(previous,next) ?: continue) < 24*60) continue
+            val next = days[i + 1]
+            if ((actualGapMinutes(previous, next) ?: continue) < 24 * 60) continue
             val start = next.startTime ?: continue
             val endOfRest = parseDateTime("${next.date} $start")?.time ?: continue
             if (latest == null || endOfRest > latest) latest = endOfRest
@@ -168,9 +306,24 @@ object HistoryData {
 
     fun creditedRestMinutes(actualMinutes: Int): Int = restMilestones.lastOrNull { actualMinutes >= it } ?: 0
     fun nextRestMilestone(actualMinutes: Int): Int? = restMilestones.firstOrNull { actualMinutes < it }
-    fun fmt(min: Int): String = String.format(Locale.US,"%d:%02d",min/60,min%60)
-    private fun parseDateTime(v: String): Date? = runCatching { SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).apply { timeZone=TimeZone.getTimeZone("UTC") }.parse(v) }.getOrNull()
-    private fun isoCalendar(date: Date): Calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US).apply { firstDayOfWeek=Calendar.MONDAY;minimalDaysInFirstWeek=4;time=date }
-    private fun clockMinutes(v: String): Int = v.substringBefore(':').toInt()*60 + v.substringAfter(':').toInt()
-    private fun parseDate(v: String): Date? = runCatching { SimpleDateFormat("yyyy-MM-dd",Locale.US).apply { timeZone=TimeZone.getTimeZone("UTC") }.parse(v) }.getOrNull()
+    fun fmt(min: Int): String = String.format(Locale.US, "%d:%02d", min / 60, min % 60)
+    fun prettyDate(date: String): String = runCatching {
+        val p = date.split('-')
+        "${p[2]}.${p[1]}.${p[0]}"
+    }.getOrDefault(date)
+
+    private fun parseDateTime(v: String): Date? = runCatching {
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(v)
+    }.getOrNull()
+
+    private fun isoCalendar(date: Date): Calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.US).apply {
+        firstDayOfWeek = Calendar.MONDAY
+        minimalDaysInFirstWeek = 4
+        time = date
+    }
+
+    private fun clockMinutes(v: String): Int = v.substringBefore(':').toInt() * 60 + v.substringAfter(':').toInt()
+    private fun parseDate(v: String): Date? = runCatching {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(v)
+    }.getOrNull()
 }
