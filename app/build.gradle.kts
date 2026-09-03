@@ -11,8 +11,8 @@ android {
         applicationId = "com.pylikv.tachowatch"
         minSdk = 26
         targetSdk = 35
-        versionCode = 110
-        versionName = "1.0.110-active-tabs-rest-workweek"
+        versionCode = 111
+        versionName = "1.0.111-clean-dashboard-card-read"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
