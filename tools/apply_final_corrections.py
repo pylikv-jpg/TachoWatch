@@ -4,7 +4,7 @@ import re
 p=Path('app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt')
 s=p.read_text()
 
-# Start from the last known-good #172 logic for continuous work.
+# Preserve the last known-good #172 continuous-work logic.
 helper='''
     private fun qualifiedBreak45():Boolean=
         currentActivity.contains("ОТДЫХ") && maxOf(breakMinutes,activityMinutes)>=45
@@ -19,14 +19,12 @@ s=s.replace('workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinu
 s=s.replace('workWindowMinutes=0;otherWorkWindowMinutes=0;','workWindowMinutes=0;')
 
 reset_code='if(qualifiedBreak45()){workWindowMinutes=0;prefs.edit().putBoolean("work45_reset_latched",true).apply();}'
-inserted=False
 for pat in [r'(private\s+fun\s+processCycle\s*\(\s*\)\s*\{)',r'(private\s+fun\s+processWorkWindow\s*\(\s*\)\s*\{)']:
     m=re.search(pat,s)
     if m:
         pos=m.end()
         if 'work45_reset_latched' not in s[pos:pos+500]:
             s=s[:pos]+reset_code+s[pos:]
-        inserted=True
         break
 
 m=re.search(r'(private\s+fun\s+syncWorkWindowToCurrentShift\s*\(\s*\)\s*\{)',s)
@@ -60,7 +58,7 @@ for name in ['onShiftClosedDetected','resetShiftCounters','clearShiftCounters']:
             s=s[:pos]+clear+s[pos:]
         break
 
-# 144-hour working week. Use only helpers that definitely exist in the #172 source.
+# 144-hour working week. Start at the first shift after the latest weekly rest >=24h.
 week_code='''
     private fun workingWeekStartMs():Long?{
         val days=history?.days?:return null
@@ -103,7 +101,6 @@ week_code='''
     }
 '''
 
-# Replace any older working-week implementation without touching surrounding braces.
 for old_start in ['    private fun workingWeekStartMs()','    private fun workingWeekElapsedMinutes()']:
     start=s.find(old_start)
     if start!=-1:
@@ -122,36 +119,23 @@ if 'c.addView(workingWeekCard())' not in s:
         raise SystemExit('twoWeekFrame anchor not found')
     s=s.replace('c.addView(twoWeekFrame)','c.addView(twoWeekFrame);c.addView(space(7));c.addView(workingWeekCard())',1)
 
-# Active tabs. apply_next_update.py already creates nowTab/historyTab + setTabState().
-# Only make exact, local replacements; do not regex-rewrite function bodies.
-if 'private var nowTab:Button?=null' not in s:
-    s=s.replace('private lateinit var driver:TextView','private lateinit var driver:TextView; private var nowTab:Button?=null; private var historyTab:Button?=null',1)
-
-s=s.replace(
-    'private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER)}',
-    'private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER);if(t=="Сейчас")nowTab=this;if(t=="История")historyTab=this}',1)
-
-# If apply_next_update already stored refs, this is a no-op.
-s=s.replace('it.alpha=if(now)1.0f else 0.68f','it.alpha=if(now)1.0f else 0.68f')
-s=s.replace('it.alpha=if(!now)1.0f else 0.68f','it.alpha=if(!now)1.0f else 0.68f')
-
-# Exact navigation strings from the generated source variants.
-s=s.replace('private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE}',
-            'private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE;setTabState(true)}',1)
-s=s.replace('private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE}',
-            'private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;setTabState(false)}',1)
-s=s.replace('private fun showHistory(){nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE}',
-            'private fun showHistory(){nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;setTabState(false)}',1)
-if 'setContentView(root);buildNow();buildHistoryView();setTabState(true)' not in s:
-    s=s.replace('setContentView(root);buildNow();buildHistoryView()',
-                'setContentView(root);buildNow();buildHistoryView();setTabState(true)',1)
+# Active tabs without rewriting navigation functions.
+# apply_next_update.py already creates nowTab/historyTab and setTabState().
+# Add a non-consuming touch listener: ACTION_UP changes the highlight,
+# while the existing click listener continues to switch screens normally.
+old_tab='private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER);if(t=="Сейчас")nowTab=this;if(t=="История")historyTab=this}'
+new_tab='private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER);if(t=="Сейчас")nowTab=this;if(t=="История")historyTab=this;setOnTouchListener{_,e->if(e.action==android.view.MotionEvent.ACTION_UP)setTabState(t=="Сейчас");false};if(t=="Сейчас")post{setTabState(true)}}'
+if old_tab in s:
+    s=s.replace(old_tab,new_tab,1)
+elif 'setOnTouchListener{_,e->if(e.action==android.view.MotionEvent.ACTION_UP)setTabState(t=="Сейчас")' not in s:
+    raise SystemExit('tabButton anchor not found after apply_next_update')
 
 p.write_text(s)
 
 gp=Path('app/build.gradle.kts')
 g=gp.read_text()
-g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 126',g)
-g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-build126-week-tabs-safe"',g)
+g=re.sub(r'versionCode\s*=\s*\d+','versionCode = 127',g)
+g=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "1.0-build127-week-tabs-safe-touch"',g)
 gp.write_text(g)
 
 final=p.read_text()
@@ -162,12 +146,11 @@ checks={
     'yellow':'elapsed>=140*60',
     'red':'elapsed>=143*60',
     'tabState':'private fun setTabState(now:Boolean)',
-    'nowState':'setTabState(true)',
-    'historyState':'setTabState(false)'
+    'touchTabs':'android.view.MotionEvent.ACTION_UP'
 }
 missing=[k for k,v in checks.items() if v not in final]
 if missing:
-    raise SystemExit('Safe final patch missing: '+','.join(missing))
+    raise SystemExit('Final patch missing: '+','.join(missing))
 if 'activityLabel("📅"' in final:
     raise SystemExit('Unsafe activityLabel reference remains')
-print('Safe final patch applied: work45 + week144 + active tabs')
+print('Final patch applied safely: work45 + week144 + touch-based active tabs')
