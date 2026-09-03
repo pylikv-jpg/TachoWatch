@@ -62,6 +62,10 @@ else:
     print("Launcher icon already configured")
 
 icon_path.parent.mkdir(parents=True, exist_ok=True)
-raw = base64.b64decode(icon_b64_path.read_text(encoding="utf-8").strip())
+b64 = ''.join(icon_b64_path.read_text(encoding="utf-8").split())
+b64 += '=' * ((4 - len(b64) % 4) % 4)
+raw = base64.b64decode(b64)
+if not raw.startswith(b'\xff\xd8\xff'):
+    raise SystemExit("decoded launcher icon is not a JPEG")
 icon_path.write_bytes(raw)
 print(f"Decoded launcher icon: {icon_path} ({len(raw)} bytes)")
