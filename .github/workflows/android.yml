@@ -47,6 +47,9 @@ jobs:
             -storepass android \
             -alias androiddebugkey | grep 'SHA256:'
 
+      - name: Apply work-shift and dashboard fix
+        run: python3 tools/apply_shift_rest_dashboard_fix.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
