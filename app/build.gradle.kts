@@ -11,8 +11,8 @@ android {
         applicationId = "com.pylikv.tachowatch"
         minSdk = 26
         targetSdk = 35
-        versionCode = 108
-        versionName = "1.0-live-shift-driving-56d-history"
+        versionCode = 109
+        versionName = "1.0-driver-progress-dtco-picker"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
