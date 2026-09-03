@@ -11,8 +11,8 @@ android {
         applicationId = "com.pylikv.tachowatch"
         minSdk = 26
         targetSdk = 35
-        versionCode = 109
-        versionName = "1.0-driver-progress-dtco-picker"
+        versionCode = 110
+        versionName = "1.0.110-active-tabs-rest-workweek"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
