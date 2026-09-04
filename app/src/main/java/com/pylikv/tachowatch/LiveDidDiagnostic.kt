@@ -23,7 +23,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         private val FIFO = UUID.fromString("e413960c-75ba-4ca9-8a67-99bc052a1b13")
         private val CREDITS = UUID.fromString("e168d1a6-304f-42b4-ab96-4cd1d4efebd9")
         private const val RESPONSE_TIMEOUT = 3000L
-        private const val POLL_INTERVAL = 30000L
+        private const val POLL_INTERVAL = 0L
     }
 
     private val dids = intArrayOf(0xF903, 0xF923, 0xF925, 0xF927, 0xF931, 0xF938)
@@ -139,7 +139,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         if (a.size >= 3 && u(a[0]) == 0x62) {
             val did = (u(a[1]) shl 8) or u(a[2])
             val data = if (a.size > 3) a.copyOfRange(3, a.size) else byteArrayOf()
-            log("${hex4(did)}=${hex(data)} | ${decode(did, data)}")
+            log("${hex4(did)}=${hex(data)} | ${decode(did, data)}", notify = false)
             if (waiting && index < dids.size && did == dids[index]) {
                 waiting = false; token++; index++; handler.postDelayed({ requestNext(g) }, 140)
             }
@@ -223,8 +223,10 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         b.forEach { val x = u(it); if (x in 32..126) append(x.toChar()) else if (x == 0) append(' ') }
     }.trim()
 
-    private fun log(s: String) {
-        lines.add(s); while (lines.size > 300) lines.removeAt(0); listener.onLiveLog(lines.joinToString("\n"))
+    private fun log(s: String, notify: Boolean = true) {
+        lines.add(s)
+        while (lines.size > 300) lines.removeAt(0)
+        if (notify) listener.onLiveLog(lines.joinToString("\n"))
     }
 
     private fun u(b: Byte) = b.toInt() and 0xFF
