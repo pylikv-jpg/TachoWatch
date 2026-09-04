@@ -100,7 +100,7 @@ class RtoCoreTest {
     }
 
     @Test
-    fun fifteenMinuteWorkBreakInterruptsSixHourClock() {
+    fun fortyFiveMinuteWorkBreakInterruptsSixHourClock() {
         var state = RtoCore.initialState(
             sample(RtoCore.Activity.DRIVING, 300, 300),
             cardDailyDrivingMinutes = 300,
@@ -110,11 +110,13 @@ class RtoCoreTest {
         assertEquals(350, r.snapshot.continuousWorkMinutes)
 
         r = RtoCore.reduce(state, sample(RtoCore.Activity.REST, 15, 300)); state = r.state
+        assertEquals(350, r.snapshot.continuousWorkMinutes)
+
+        r = RtoCore.reduce(state, sample(RtoCore.Activity.REST, 45, 0)); state = r.state
         assertEquals(0, r.snapshot.continuousWorkMinutes)
 
-        r = RtoCore.reduce(state, sample(RtoCore.Activity.DRIVING, 20, 300))
+        r = RtoCore.reduce(state, sample(RtoCore.Activity.DRIVING, 20, 20))
         assertEquals(20, r.snapshot.continuousWorkMinutes)
-        assertEquals(15, r.snapshot.workBreakCreditedMinutes)
     }
 
     @Test
