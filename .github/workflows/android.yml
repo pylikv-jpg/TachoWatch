@@ -50,6 +50,9 @@ jobs:
       - name: Apply work-shift and dashboard fix
         run: python3 tools/apply_shift_rest_dashboard_fix.py
 
+      - name: Apply Sep 04 dashboard and history UI update
+        run: python3 tools/apply_ui_update_sep04.py
+
       - name: Apply launcher icon and Bluetooth reconnect fix
         run: python3 tools/apply_icon_reconnect_fix.py
 
