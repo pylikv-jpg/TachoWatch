@@ -50,6 +50,9 @@ jobs:
       - name: Apply canonical RTO v2 rules
         run: python3 tools/apply_rto_v2.py
 
+      - name: Restore DTCO auto-connect and history allowances
+        run: python3 tools/apply_restore_autoconnect_history_summary.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
