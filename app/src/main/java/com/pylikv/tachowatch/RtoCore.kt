@@ -207,7 +207,10 @@ object RtoCore {
                 availabilityCompletedMinutes = s.availabilityCompletedMinutes + minutes
             )
             Activity.REST -> {
-                if (minutes >= 15) {
+                // A short/ordinary work break belongs to the current workday and may be
+                // credited. A completed >=9h daily rest starts a NEW workday, so that
+                // long rest must never be carried forward as break credit.
+                if (minutes >= 15 && !s.dailyRestLatched) {
                     s = s.copy(
                         qualifyingWorkBreakCompletedMinutes = s.qualifyingWorkBreakCompletedMinutes + minutes,
                         continuousWorkCompletedMinutes = 0
@@ -225,6 +228,7 @@ object RtoCore {
                         reducedDailyRestsUsed = if (s.weeklyRestLatched) 0 else
                             (s.reducedDailyRestsUsed + if (reduced) 1 else 0)
                                 .coerceAtMost(MAX_REDUCED_DAILY_RESTS_BETWEEN_WEEKLY_RESTS),
+                        qualifyingWorkBreakCompletedMinutes = 0,
                         dailyRestLatched = false,
                         dailyRestWasSplit = false,
                         splitThreeHourPartTaken = false,
@@ -250,8 +254,8 @@ object RtoCore {
             if (sample.activity == Activity.DRIVING || sample.activity == Activity.OTHER_WORK) sample.activityMinutes else 0
 
         val dailyWork = state.dailyWorkCompletedMinutes + currentWork
-        val workBreakCredit = state.qualifyingWorkBreakCompletedMinutes +
-            if (sample.activity == Activity.REST && sample.activityMinutes >= 15) sample.activityMinutes else 0
+        val workBreakCredit = if (state.dailyRestLatched) 0 else state.qualifyingWorkBreakCompletedMinutes +
+            if (sample.activity == Activity.REST && sample.activityMinutes >= 15 && sample.activityMinutes < DAILY_REST_REDUCED) sample.activityMinutes else 0
         val workBreakRequired = when {
             dailyWork > 9 * 60 -> 45
             dailyWork > 6 * 60 -> 30
