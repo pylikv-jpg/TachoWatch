@@ -25,7 +25,16 @@ if old not in text:
     raise SystemExit("dashboard cards anchor not found")
 text = text.replace(old, '', 1)
 
-old = '    private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}\n    private fun persistCounters(){prefs.edit().putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).apply()}\n\n    private fun initializeShiftCounterFromCard(){if(shiftCounterInitialized)return;val cardDriving=history?.days?.lastOrNull()?.drivingMinutes?:0;shiftCompletedMinutes=(cardDriving-continuousMinutes).coerceAtLeast(0);previousContinuousMinutes=continuousMinutes;shiftCounterInitialized=true;persistCounters()}\n    private fun processCycle(){initializeShiftCounterFromCard();if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes&&breakMinutes>=45)shiftCompletedMinutes+=previousContinuousMinutes;previousContinuousMinutes=continuousMinutes;processWorkWindow();persistCounters();updateShiftDriving()}\n'
+old_prefix = '    private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}\n    private fun persistCounters(){prefs.edit().putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).apply()}\n\n    private fun initializeShiftCounterFromCard(){if(shiftCounterInitialized)return;val cardDriving=history?.days?.lastOrNull()?.drivingMinutes?:0;shiftCompletedMinutes=(cardDriving-continuousMinutes).coerceAtLeast(0);previousContinuousMinutes=continuousMinutes;shiftCounterInitialized=true;persistCounters()}\n'
+old_process_legacy = '    private fun processCycle(){initializeShiftCounterFromCard();if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes&&breakMinutes>=45)shiftCompletedMinutes+=previousContinuousMinutes;previousContinuousMinutes=continuousMinutes;processWorkWindow();persistCounters();updateShiftDriving()}\n'
+old_process_current = '    private fun processCycle(){initializeShiftCounterFromCard();if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes)shiftCompletedMinutes+=previousContinuousMinutes;previousContinuousMinutes=continuousMinutes;processWorkWindow();persistCounters();updateShiftDriving()}\n'
+old = None
+for candidate in (old_prefix + old_process_current, old_prefix + old_process_legacy):
+    if candidate in text:
+        old = candidate
+        break
+if old is None:
+    raise SystemExit("counter logic anchor not found")
 new = '''    private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0);dailyRestResetLatched=prefs.getBoolean(DAILY_REST_RESET_LATCH,false)}
     private fun persistCounters(){prefs.edit().putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).putBoolean(DAILY_REST_RESET_LATCH,dailyRestResetLatched).apply()}
 
@@ -79,12 +88,10 @@ new = '''    private fun restoreCounters(){shiftCounterInitialized=prefs.getBool
         }
         if(!currentActivity.contains("ОТДЫХ"))dailyRestResetLatched=false
         applyPendingCardShiftSync();initializeShiftCounterFromCard()
-        if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes&&breakMinutes>=45)shiftCompletedMinutes+=previousContinuousMinutes
+        if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes)shiftCompletedMinutes+=previousContinuousMinutes
         previousContinuousMinutes=continuousMinutes;processWorkWindow();persistCounters();updateShiftDriving()
     }
 '''
-if old not in text:
-    raise SystemExit("counter logic anchor not found")
 text = text.replace(old, new, 1)
 
 old = '    private fun resetAllWindows(){shiftCompletedMinutes=0;previousContinuousMinutes=0;shiftCounterInitialized=true;workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity="—";previousActivityDuration=0;persistCounters();updateShiftDriving()}\n    private fun onShiftClosedDetected(){resetAllWindows();startCardRead("Смена закрыта",true)}\n'
