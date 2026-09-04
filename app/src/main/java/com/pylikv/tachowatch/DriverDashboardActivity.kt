@@ -124,7 +124,15 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private fun processWorkWindow(){
         val restReached45=currentActivity.contains("ОТДЫХ")&&maxOf(breakMinutes,activityMinutes)>=45
         if(restReached45){workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return}
-        if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return}
+        if(previousActivity!=currentActivity){
+            val finished=previousActivityDuration.coerceAtLeast(0)
+            when{
+                previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished
+                previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished}
+                previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished
+            }
+            previousActivity=currentActivity;previousActivityDuration=activityMinutes;return
+        }
         previousActivityDuration=activityMinutes
     }
     private fun activeWorkTotal():Int=workWindowMinutes+when{currentActivity.contains("ВОЖДЕНИЕ")||currentActivity.contains("РАБОТА")->activityMinutes;else->0}
@@ -176,7 +184,18 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
 
     private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";live.disconnect();cardReader.connect(d)}
     override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(!cardReading)status.text=if(connected)"Онлайн • ${deviceName?:"DTCO"}" else "Нет связи с выбранным DTCO"}}
-    override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;processCycle();status.text="Онлайн • данные актуальны"};updateNow()}}
+    override fun onLiveLog(log:String){runOnUiThread{
+        val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
+        if(cycle==null||cycle<=lastProcessedCycle)return@runOnUiThread
+        lastProcessedCycle=cycle
+        last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}}
+        last(log,"F903")?.let{currentActivity=it}
+        mins(last(log,"F927"))?.let{activityMinutes=it}
+        mins(last(log,"F923"))?.let{continuousMinutes=it}
+        mins(last(log,"F925"))?.let{breakMinutes=it}
+        mins(last(log,"F938"))?.let{twoWeekMinutes=it}
+        processCycle();status.text="Онлайн • данные актуальны";updateNow()
+    }}
     override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
     private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • подключаю live";cardReader.disconnect();if(resume){val d=dtco?:return;status.postDelayed({live.connect(d)},500)}}
@@ -197,7 +216,12 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
             activityTitle.text="$icon  ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ • $currentActivity"
             activityTime.text=HistoryData.fmt(activityMinutes)
             val p:Float;val color:Int;val text:String
-            when{currentActivity.contains("ВОЖДЕНИЕ")->{p=continuousMinutes/270f;color=driveColor(continuousMinutes);text="непрерывно ${HistoryData.fmt(continuousMinutes)} из 4:30"};currentActivity.contains("РАБОТА")->{p=activeWorkTotal()/360f;color=workColor(activeWorkTotal());text="⚒ рабочее окно ${HistoryData.fmt(activeWorkTotal())} из 6:00"};currentActivity.contains("ГОТОВНОСТЬ")->{p=activityMinutes/360f;color=GREEN;text="✉ ожидание ${HistoryData.fmt(activityMinutes)}"};else->{p=0f;color=GREEN;text="ожидание данных"}}
+            when{
+                currentActivity.contains("ВОЖДЕНИЕ")->{p=continuousMinutes/270f;color=driveColor(continuousMinutes);text="непрерывно ${HistoryData.fmt(continuousMinutes)} из 4:30"}
+                currentActivity.contains("РАБОТА")->{val ow=activeOtherWorkTotal();p=ow/360f;color=workColor(ow);text="⚒ другая работа ${HistoryData.fmt(ow)}"}
+                currentActivity.contains("ГОТОВНОСТЬ")->{val av=activeAvailabilityTotal();p=av/360f;color=GREEN;text="✉ ожидание ${HistoryData.fmt(av)}"}
+                else->{p=0f;color=GREEN;text="ожидание данных"}
+            }
             activitySub.text=text;setProgress(activityFrame,activityProgress,p,color)
         }
         continuous.text="${HistoryData.fmt(continuousMinutes)} из 4:30";setProgress(continuousFrame,continuousProgress,continuousMinutes/270f,driveColor(continuousMinutes));updateShiftDriving()
