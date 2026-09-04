@@ -50,7 +50,9 @@ else:
     print("Automatic Bluetooth reconnect already applied")
 
 manifest = manifest_path.read_text(encoding="utf-8")
-if 'android:icon="@drawable/tachowatch_icon"' not in manifest:
+if 'android:icon=' in manifest:
+    print("Launcher icon already configured")
+else:
     old = '<application android:allowBackup="true" android:label="TachoWatch" android:supportsRtl="true" android:theme="@style/Theme.TachoWatch">'
     new = '<application android:allowBackup="true" android:label="TachoWatch" android:icon="@drawable/tachowatch_icon" android:roundIcon="@drawable/tachowatch_icon" android:supportsRtl="true" android:theme="@style/Theme.TachoWatch">'
     if old not in manifest:
@@ -58,8 +60,6 @@ if 'android:icon="@drawable/tachowatch_icon"' not in manifest:
     manifest = manifest.replace(old, new, 1)
     manifest_path.write_text(manifest, encoding="utf-8")
     print("Applied TachoWatch launcher icon in manifest")
-else:
-    print("Launcher icon already configured")
 
 icon_path.parent.mkdir(parents=True, exist_ok=True)
 b64 = ''.join(icon_b64_path.read_text(encoding="utf-8").split())
