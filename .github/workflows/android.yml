@@ -47,24 +47,15 @@ jobs:
             -storepass android \
             -alias androiddebugkey | grep 'SHA256:'
 
-      - name: Apply work-shift and dashboard fix
-        run: python3 tools/apply_shift_rest_dashboard_fix.py
-
-      - name: Apply Sep 04 dashboard and history UI update
-        run: python3 tools/apply_ui_update_sep04.py
-
-      - name: Restore current activity card title
-        run: python3 tools/apply_current_activity_title_fix.py
-
-      - name: Apply launcher icon and Bluetooth reconnect fix
-        run: python3 tools/apply_icon_reconnect_fix.py
+      - name: Apply canonical RTO v2 rules
+        run: python3 tools/apply_rto_v2.py
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK from current main sources
+      - name: Build debug APK from canonical RTO sources
         run: gradle assembleDebug
 
       - name: Verify APK signing certificate
