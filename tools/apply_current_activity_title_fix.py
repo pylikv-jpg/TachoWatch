@@ -2,16 +2,28 @@ from pathlib import Path
 
 p=Path('app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt')
 s=p.read_text(encoding='utf-8')
-marker='CURRENT_ACTIVITY_HEADER_SAFE_V1'
+marker='CURRENT_ACTIVITY_TITLE_FIX_V2'
 if marker in s:
-    print('safe current activity header already applied')
+    print('current activity title fix v2 already applied')
     raise SystemExit(0)
 
-old='val a=progressCard();activityFrame=a.first;activityProgress=a.second;activityTitle=label("ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ");a.third.addView(activityTitle)'
-new='val a=progressCard();activityFrame=a.first;activityProgress=a.second;a.third.addView(label("ТЕКУЩИЙ ВИД ДЕЯТЕЛЬНОСТИ"));activityTitle=label("ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ");a.third.addView(activityTitle) // CURRENT_ACTIVITY_HEADER_SAFE_V1'
+old='activityTitle=label("ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ")'
+new='activityTitle=label("ТЕКУЩИЙ ВИД ДЕЯТЕЛЬНОСТИ")/* CURRENT_ACTIVITY_TITLE_FIX_V2 */'
 if old not in s:
-    raise SystemExit('activity card anchor not found')
+    raise SystemExit('initial activity title anchor not found')
+s=s.replace(old,new,1)
+
+old='activityTitle.text="🛏  ОТДЫХ"'
+new='activityTitle.text="ТЕКУЩИЙ ВИД ДЕЯТЕЛЬНОСТИ • 🛏 ОТДЫХ"'
+if old not in s:
+    raise SystemExit('rest activity title anchor not found')
+s=s.replace(old,new,1)
+
+old='activityTitle.text="$icon  ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ • $currentActivity"'
+new='activityTitle.text="ТЕКУЩИЙ ВИД ДЕЯТЕЛЬНОСТИ • $icon $currentActivity"'
+if old not in s:
+    raise SystemExit('live activity title anchor not found')
 s=s.replace(old,new,1)
 
 p.write_text(s,encoding='utf-8')
-print('Added permanent current activity header without changing runtime activity logic')
+print('Applied current activity title fix v2 without line-comment truncation')
