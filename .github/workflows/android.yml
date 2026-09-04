@@ -55,8 +55,8 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK from canonical RTO sources
-        run: gradle assembleDebug
+      - name: Run RTO regression tests and build APK
+        run: gradle testDebugUnitTest assembleDebug
 
       - name: Verify APK signing certificate
         run: |
