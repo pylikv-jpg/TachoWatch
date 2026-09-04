@@ -53,6 +53,9 @@ jobs:
       - name: Apply Sep 04 dashboard and history UI update
         run: python3 tools/apply_ui_update_sep04.py
 
+      - name: Restore current activity card title
+        run: python3 tools/apply_current_activity_title_fix.py
+
       - name: Apply launcher icon and Bluetooth reconnect fix
         run: python3 tools/apply_icon_reconnect_fix.py
 
