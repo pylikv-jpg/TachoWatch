@@ -53,6 +53,9 @@ jobs:
       - name: Restore DTCO auto-connect and history allowances
         run: python3 tools/apply_restore_autoconnect_history_summary.py
 
+      - name: Apply confirmed DTCO counter sources
+        run: python3 tools/apply_counter_source_fix_v231.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
