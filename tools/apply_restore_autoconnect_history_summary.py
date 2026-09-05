@@ -8,7 +8,7 @@ s = p.read_text(encoding="utf-8")
 if "Восстановление связи с DTCO" in s and "private lateinit var restTime: TextView" in s:
     marker = "HISTORY_ALLOWANCE_SUMMARY_V2"
     if marker not in s:
-        helper_anchor = "    private fun loadHistory() {\n"
+        helper_anchor = "    private fun loadHistory(): Boolean {\n" if "    private fun loadHistory(): Boolean {\n" in s else "    private fun loadHistory() {\n"
         helpers = '''    // HISTORY_ALLOWANCE_SUMMARY_V2
     private fun historyReducedDailyRestUses(): Int? {
         val rests = history?.rests.orEmpty()
