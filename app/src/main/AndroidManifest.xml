@@ -15,6 +15,12 @@
         <activity android:name=".MainActivity" android:exported="false" />
         <activity android:name=".DashboardActivity" android:exported="false" />
         <activity android:name=".DriverDashboardActivityV2" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".FullDtcoScannerActivity" android:exported="true" android:label="DTCO Full Scanner" android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <activity android:name=".DriverDashboardActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
