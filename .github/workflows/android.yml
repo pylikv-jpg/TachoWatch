@@ -62,6 +62,9 @@ jobs:
       - name: Normalize full scanner source
         run: python3 tools/fix_full_scanner_source.py
 
+      - name: Apply ordered scanner handshake
+        run: python3 tools/fix_scanner_handshake_sequence.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
