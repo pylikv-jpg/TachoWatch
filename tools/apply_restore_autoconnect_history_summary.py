@@ -3,11 +3,62 @@ from pathlib import Path
 p = Path("app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt")
 s = p.read_text(encoding="utf-8")
 
-# The current dashboard already has automatic recovery in LiveDidDiagnostic plus
-# the selected-DTCO reconnect status. The older source-rewrite patch uses compact
-# one-line anchors and must not be applied to the rewritten dashboard.
+# New formatted dashboard: LiveDidDiagnostic owns reconnect/watchdog. Only restore
+# the history allowance summary that is still required on the History screen.
 if "Восстановление связи с DTCO" in s and "private lateinit var restTime: TextView" in s:
-    print("Current dashboard already contains reconnect handling")
+    marker = "HISTORY_ALLOWANCE_SUMMARY_V2"
+    if marker not in s:
+        helper_anchor = "    private fun loadHistory() {\n"
+        helpers = '''    // HISTORY_ALLOWANCE_SUMMARY_V2
+    private fun historyReducedDailyRestUses(): Int? {
+        val rests = history?.rests.orEmpty()
+        if (rests.isEmpty()) return null
+        val lastWeekly = rests.indexOfLast { it.weekly }
+        return rests.drop(lastWeekly + 1).count {
+            !it.weekly && !it.splitDaily && it.creditedDailyMinutes == RtoCore.DAILY_REST_REDUCED
+        }.coerceAtMost(RtoCore.MAX_REDUCED_DAILY_RESTS_BETWEEN_WEEKLY_RESTS)
+    }
+
+    private fun historyTenHourDrivingUses(): Int {
+        val now = isoCalendar(Date())
+        return history?.days.orEmpty().count { d ->
+            val date = parseDateOnly(d.date) ?: return@count false
+            val c = isoCalendar(date)
+            c.get(Calendar.WEEK_OF_YEAR) == now.get(Calendar.WEEK_OF_YEAR) &&
+                c.getWeekYear() == now.getWeekYear() &&
+                d.drivingMinutes > RtoCore.DAILY_DRIVING_NORMAL
+        }.coerceAtMost(RtoCore.MAX_TEN_HOUR_DRIVING_DAYS_PER_WEEK)
+    }
+
+'''
+        if helper_anchor not in s:
+            raise SystemExit("new dashboard history helper anchor not found")
+        s = s.replace(helper_anchor, helpers + helper_anchor, 1)
+
+        days_anchor = "        val days = history?.days?.takeLast(56)?.asReversed().orEmpty()\n"
+        summary = '''        val days = history?.days?.takeLast(56)?.asReversed().orEmpty()
+        val allowance = card()
+        allowance.addView(label("ДОСТУПНЫЕ ДОПУСКИ"))
+        val reducedUsed = historyReducedDailyRestUses()
+        val reducedRemaining = if (reducedUsed == null) null else
+            (RtoCore.MAX_REDUCED_DAILY_RESTS_BETWEEN_WEEKLY_RESTS - reducedUsed).coerceAtLeast(0)
+        allowance.addView(value(
+            if (reducedRemaining == null) "🛏 9-часовые отдыхи: данных недостаточно"
+            else "🛏 9-часовые отдыхи: осталось $reducedRemaining из ${RtoCore.MAX_REDUCED_DAILY_RESTS_BETWEEN_WEEKLY_RESTS}",
+            16f
+        ))
+        val tenUsed = historyTenHourDrivingUses()
+        val tenRemaining = (RtoCore.MAX_TEN_HOUR_DRIVING_DAYS_PER_WEEK - tenUsed).coerceAtLeast(0)
+        allowance.addView(value("🚗 10-часовые вождения: осталось $tenRemaining из ${RtoCore.MAX_TEN_HOUR_DRIVING_DAYS_PER_WEEK}", 16f))
+        allowance.addView(sub("9 ч — между недельными отдыхами • 10 ч — календарная неделя"))
+        c.addView(allowance)
+        c.addView(space(8))
+'''
+        if days_anchor not in s:
+            raise SystemExit("new dashboard history summary anchor not found")
+        s = s.replace(days_anchor, summary, 1)
+        p.write_text(s, encoding="utf-8")
+    print("Current dashboard reconnect kept; history allowance summary restored")
     raise SystemExit(0)
 
 marker = "RESTORE_AUTOCONNECT_HISTORY_V1"
