@@ -38,210 +38,730 @@ import java.util.TimeZone
 
 class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener, DtcoBluetoothDiagnostic.Listener {
     companion object {
-        private const val BG=0xFF0B1118.toInt(); private const val CARD=0xFF141D27.toInt(); private const val TEXT=0xFFF3F7FA.toInt()
-        private const val MUTED=0xFF9BAAB8.toInt(); private const val GREEN=0xFF238A52.toInt(); private const val YELLOW=0xFF9A7A1B.toInt()
-        private const val RED=0xFF9E3434.toInt(); private const val CYAN=0xFF29B6C8.toInt(); private const val BORDER=0xFF263545.toInt()
-        private const val PREFS="tachowatch_auto_card"; private const val FIRST_READ="first_card_read_done"; private const val SELECTED_DTCO="selected_dtco_address"; private const val CARD_NAME="driver_name_from_card"; private const val KEEP_SCREEN_ON="keep_screen_on"
-        private const val SHIFT_INITIALIZED="shift_counter_initialized"; private const val SHIFT_COMPLETED="shift_completed_driving"; private const val SHIFT_PREV_CONTINUOUS="shift_prev_continuous"
-        private const val WORK_WINDOW="work_window_minutes"; private const val WORK_PREV_ACTIVITY="work_prev_activity"; private const val WORK_PREV_DURATION="work_prev_duration"
-        private const val WORK_ACC="other_work_window_minutes"; private const val AVAIL_ACC="availability_window_minutes"
+        private const val BG = 0xFF0B1118.toInt()
+        private const val CARD = 0xFF141D27.toInt()
+        private const val TEXT = 0xFFF3F7FA.toInt()
+        private const val MUTED = 0xFF9BAAB8.toInt()
+        private const val GREEN = 0xFF238A52.toInt()
+        private const val YELLOW = 0xFF9A7A1B.toInt()
+        private const val RED = 0xFF9E3434.toInt()
+        private const val CYAN = 0xFF29B6C8.toInt()
+        private const val BORDER = 0xFF263545.toInt()
+
+        private const val PREFS = "tachowatch_auto_card"
+        private const val FIRST_READ = "first_card_read_done"
+        private const val SELECTED_DTCO = "selected_dtco_address"
+        private const val CARD_NAME = "driver_name_from_card"
+        private const val KEEP_SCREEN_ON = "keep_screen_on"
+        private const val SHIFT_INITIALIZED = "shift_counter_initialized"
+        private const val SHIFT_COMPLETED = "shift_completed_driving"
+        private const val SHIFT_PREV_CONTINUOUS = "shift_prev_continuous"
+        private const val WORK_PREV_ACTIVITY = "work_prev_activity"
+        private const val WORK_PREV_DURATION = "work_prev_duration"
+        private const val WORK_ACC = "other_work_window_minutes"
+        private const val AVAIL_ACC = "availability_window_minutes"
     }
 
-    private val btManager by lazy{getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager}; private val adapter by lazy{btManager.adapter}; private val prefs by lazy{getSharedPreferences(PREFS,Context.MODE_PRIVATE)}
-    private val mainHandler=Handler(Looper.getMainLooper())
-    private lateinit var live:LiveDidDiagnostic; private lateinit var cardReader:DtcoBluetoothDiagnostic
-    private var dtco:BluetoothDevice?=null; private var history:HistoryData.Model?=null; private var cardReading=false; private var resumeLive=false
+    private val btManager by lazy { getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
+    private val adapter by lazy { btManager.adapter }
+    private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private lateinit var status:TextView; private lateinit var nowTab:Button; private lateinit var historyTab:Button; private lateinit var nowRoot:LinearLayout; private lateinit var historyRoot:LinearLayout; private lateinit var driver:TextView
-    private lateinit var activityTitle:TextView; private lateinit var activityTime:TextView; private lateinit var activitySub:TextView; private lateinit var activityFrame:FrameLayout; private lateinit var activityProgress:View
-    private lateinit var continuous:TextView; private lateinit var continuousFrame:FrameLayout; private lateinit var continuousProgress:View
-    private lateinit var shiftDriving:TextView; private lateinit var shiftDrivingSub:TextView; private lateinit var shiftDrivingFrame:FrameLayout; private lateinit var shiftDrivingProgress:View
-    private lateinit var work6:TextView; private lateinit var work6Sub:TextView; private lateinit var work6Frame:FrameLayout; private lateinit var work6Progress:View
-    private lateinit var otherWork:TextView; private lateinit var otherWorkFrame:FrameLayout; private lateinit var otherWorkProgress:View
-    private lateinit var availability:TextView; private lateinit var availabilityFrame:FrameLayout; private lateinit var availabilityProgress:View
-    private lateinit var workWeek:TextView; private lateinit var workWeekSub:TextView; private lateinit var workWeekFrame:FrameLayout; private lateinit var workWeekProgress:View
-    private lateinit var week:TextView; private lateinit var weekSub:TextView; private lateinit var weekFrame:FrameLayout; private lateinit var weekProgress:View
-    private lateinit var twoWeek:TextView; private lateinit var twoWeekFrame:FrameLayout; private lateinit var twoWeekProgress:View
+    private lateinit var live: LiveDidDiagnostic
+    private lateinit var cardReader: DtcoBluetoothDiagnostic
+    private var dtco: BluetoothDevice? = null
+    private var history: HistoryData.Model? = null
+    private var cardReading = false
+    private var resumeLive = false
 
-    private var currentActivity="—"; private var activityMinutes=0; private var continuousMinutes=0; private var breakMinutes=0; private var twoWeekMinutes=0
-    private var shiftCounterInitialized=false; private var shiftCompletedMinutes=0; private var previousContinuousMinutes=0; private var lastProcessedCycle=0
-    private var workWindowMinutes=0; private var previousActivity="—"; private var previousActivityDuration=0; private var otherWorkWindowMinutes=0; private var availabilityWindowMinutes=0
+    private lateinit var status: TextView
+    private lateinit var nowTab: Button
+    private lateinit var historyTab: Button
+    private lateinit var nowRoot: LinearLayout
+    private lateinit var historyRoot: LinearLayout
+    private lateinit var driver: TextView
 
-    private val permissionLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){findAndAutoConnect()}
+    private lateinit var continuous: TextView
+    private lateinit var continuousFrame: FrameLayout
+    private lateinit var continuousProgress: View
+    private lateinit var shiftDriving: TextView
+    private lateinit var shiftDrivingSub: TextView
+    private lateinit var shiftDrivingFrame: FrameLayout
+    private lateinit var shiftDrivingProgress: View
+    private lateinit var work6: TextView
+    private lateinit var work6Sub: TextView
+    private lateinit var work6Frame: FrameLayout
+    private lateinit var work6Progress: View
+    private lateinit var otherWork: TextView
+    private lateinit var otherWorkFrame: FrameLayout
+    private lateinit var otherWorkProgress: View
+    private lateinit var availability: TextView
+    private lateinit var availabilityFrame: FrameLayout
+    private lateinit var availabilityProgress: View
+    private lateinit var restTime: TextView
+    private lateinit var restSub: TextView
+    private lateinit var restFrame: FrameLayout
+    private lateinit var restProgress: View
+    private lateinit var workWeek: TextView
+    private lateinit var workWeekSub: TextView
+    private lateinit var workWeekFrame: FrameLayout
+    private lateinit var workWeekProgress: View
+    private lateinit var week: TextView
+    private lateinit var weekSub: TextView
+    private lateinit var weekFrame: FrameLayout
+    private lateinit var weekProgress: View
+    private lateinit var twoWeek: TextView
+    private lateinit var twoWeekFrame: FrameLayout
+    private lateinit var twoWeekProgress: View
 
-    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=BG;window.navigationBarColor=BG;applyKeepScreenOn();live=LiveDidDiagnostic(applicationContext,this);cardReader=DtcoBluetoothDiagnostic(applicationContext,this);restoreCounters();buildUi();loadHistory();requestPermission()}
-    override fun onDestroy(){live.disconnect();cardReader.disconnect();super.onDestroy()}
+    private var currentActivity = "—"
+    private var activityMinutes = 0
+    private var continuousMinutes = 0
+    private var breakMinutes = 0
+    private var twoWeekMinutes = 0
 
-    private fun buildUi(){
-        val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(10),dp(12),dp(10));setBackgroundColor(BG)}
-        ViewCompat.setOnApplyWindowInsetsListener(root){v,insets->val bars=insets.getInsets(WindowInsetsCompat.Type.statusBars());v.setPadding(dp(12),dp(10)+bars.top,dp(12),dp(10));insets}
-        val top=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL};val titles=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
-        titles.addView(TextView(this).apply{text="TachoWatch";textSize=25f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)});status=TextView(this).apply{text="DTCO не подключён";textSize=11.5f;setTextColor(CYAN)};titles.addView(status)
-        top.addView(titles,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));top.addView(smallButton("☰").apply{textSize=20f;contentDescription="Меню";setOnClickListener{showMainMenu(this)}});root.addView(top);root.addView(space(7))
-        val tabs=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};nowTab=tabButton("Сейчас").apply{setOnClickListener{showNow()}};historyTab=tabButton("История").apply{setOnClickListener{showHistory()}};tabs.addView(nowTab,LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));tabs.addView(historyTab,LinearLayout.LayoutParams(0,dp(42),1f));root.addView(tabs);root.addView(space(7))
-        val viewport=FrameLayout(this);nowRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};historyRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};viewport.addView(nowRoot);viewport.addView(historyRoot);root.addView(viewport,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f));setContentView(root);ViewCompat.requestApplyInsets(root);buildNow();buildHistoryView();updateTabState(true)
+    private var shiftCounterInitialized = false
+    private var shiftCompletedMinutes = 0
+    private var previousContinuousMinutes = 0
+    private var lastProcessedCycle = 0
+
+    private var previousActivity = "—"
+    private var previousActivityDuration = 0
+    private var otherWorkWindowMinutes = 0
+    private var availabilityWindowMinutes = 0
+
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        findAndAutoConnect()
     }
 
-    private fun showMainMenu(anchor:View){
-        val popup=PopupMenu(this,anchor)
-        popup.menu.add(0,1,0,"Подключить DTCO")
-        popup.menu.add(0,2,1,"Диагностика")
-        popup.menu.add(0,3,2,"Не выключать экран").apply{isCheckable=true;isChecked=prefs.getBoolean(KEEP_SCREEN_ON,false)}
-        popup.setOnMenuItemClickListener{item->when(item.itemId){1->{showDtcoPicker();true};2->{startActivity(Intent(this,MainActivity::class.java));true};3->{val enabled=!prefs.getBoolean(KEEP_SCREEN_ON,false);prefs.edit().putBoolean(KEEP_SCREEN_ON,enabled).apply();applyKeepScreenOn();true};else->false}}
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = BG
+        window.navigationBarColor = BG
+        applyKeepScreenOn()
+        live = LiveDidDiagnostic(applicationContext, this)
+        cardReader = DtcoBluetoothDiagnostic(applicationContext, this)
+        restoreCounters()
+        buildUi()
+        loadHistory()
+        requestPermission()
+    }
+
+    override fun onDestroy() {
+        live.disconnect()
+        cardReader.disconnect()
+        super.onDestroy()
+    }
+
+    private fun buildUi() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(BG)
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            v.setPadding(dp(12), dp(10) + bars.top, dp(12), dp(10))
+            insets
+        }
+
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titles.addView(TextView(this).apply {
+            text = "TachoWatch"
+            textSize = 25f
+            setTextColor(TEXT)
+            setTypeface(typeface, Typeface.BOLD)
+        })
+        status = TextView(this).apply {
+            text = "DTCO не подключён"
+            textSize = 11.5f
+            setTextColor(CYAN)
+        }
+        titles.addView(status)
+        top.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(smallButton("☰").apply {
+            textSize = 20f
+            contentDescription = "Меню"
+            setOnClickListener { showMainMenu(this) }
+        })
+        root.addView(top)
+        root.addView(space(7))
+
+        val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        nowTab = tabButton("Сейчас").apply { setOnClickListener { showNow() } }
+        historyTab = tabButton("История").apply { setOnClickListener { showHistory() } }
+        tabs.addView(nowTab, LinearLayout.LayoutParams(0, dp(42), 1f))
+        tabs.addView(hspace(6))
+        tabs.addView(historyTab, LinearLayout.LayoutParams(0, dp(42), 1f))
+        root.addView(tabs)
+        root.addView(space(7))
+
+        val viewport = FrameLayout(this)
+        nowRoot = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        historyRoot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        viewport.addView(nowRoot)
+        viewport.addView(historyRoot)
+        root.addView(viewport, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        setContentView(root)
+        ViewCompat.requestApplyInsets(root)
+        buildNow()
+        buildHistoryView()
+        updateTabState(true)
+    }
+
+    private fun showMainMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(0, 1, 0, "Подключить DTCO")
+        popup.menu.add(0, 2, 1, "Диагностика")
+        popup.menu.add(0, 3, 2, "Не выключать экран").apply {
+            isCheckable = true
+            isChecked = prefs.getBoolean(KEEP_SCREEN_ON, false)
+        }
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> { showDtcoPicker(); true }
+                2 -> { startActivity(Intent(this, MainActivity::class.java)); true }
+                3 -> {
+                    val enabled = !prefs.getBoolean(KEEP_SCREEN_ON, false)
+                    prefs.edit().putBoolean(KEEP_SCREEN_ON, enabled).apply()
+                    applyKeepScreenOn()
+                    true
+                }
+                else -> false
+            }
+        }
         popup.show()
     }
 
-    private fun applyKeepScreenOn(){if(prefs.getBoolean(KEEP_SCREEN_ON,false))window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
-
-    private fun buildNow(){
-        val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};driver=TextView(this).apply{text=prefs.getString(CARD_NAME,null)?:"Водитель";textSize=25f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setPadding(dp(3),dp(4),0,dp(8))};c.addView(driver)
-        val a=progressCard();activityFrame=a.first;activityProgress=a.second;activityTitle=label("ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ");a.third.addView(activityTitle);activityTime=value("—",34f);a.third.addView(activityTime);activitySub=sub("ожидание онлайн-данных");a.third.addView(activitySub);c.addView(activityFrame);c.addView(space(7))
-        val d=progressCard();continuousFrame=d.first;continuousProgress=d.second;d.third.addView(label("🚗  НЕПРЕРЫВНОЕ ВОЖДЕНИЕ"));continuous=value("—",30f);d.third.addView(continuous);d.third.addView(sub("лимит 4:30"));c.addView(continuousFrame);c.addView(space(7))
-        val s=progressCard();shiftDrivingFrame=s.first;shiftDrivingProgress=s.second;s.third.addView(label("🚗  ВОЖДЕНИЕ ЗА СМЕНУ"));shiftDriving=value("—",28f);s.third.addView(shiftDriving);shiftDrivingSub=sub("онлайн");s.third.addView(shiftDrivingSub);c.addView(shiftDrivingFrame);c.addView(space(7))
-        val six=progressCard();work6Frame=six.first;work6Progress=six.second;six.third.addView(label("⚒  НЕПРЕРЫВНАЯ РАБОТА"));work6=value("—",28f);six.third.addView(work6);work6Sub=sub("вождение + другая работа • окно 6:00");six.third.addView(work6Sub);c.addView(work6Frame);c.addView(space(7))
-        val ow=progressCard();otherWorkFrame=ow.first;otherWorkProgress=ow.second;ow.third.addView(label("⚒  ДРУГАЯ РАБОТА"));otherWork=value("0:00",26f);ow.third.addView(otherWork);ow.third.addView(sub("в текущем 6-часовом рабочем окне"));c.addView(otherWorkFrame);c.addView(space(7))
-        val av=progressCard();availabilityFrame=av.first;availabilityProgress=av.second;av.third.addView(label("✉  ОЖИДАНИЕ / ГОТОВНОСТЬ"));availability=value("0:00",26f);av.third.addView(availability);av.third.addView(sub("в текущем рабочем окне"));c.addView(availabilityFrame);c.addView(space(7))
-        val ww=progressCard();workWeekFrame=ww.first;workWeekProgress=ww.second;ww.third.addView(label("⏳  РАБОЧАЯ НЕДЕЛЯ"));workWeek=value("—",28f);ww.third.addView(workWeek);workWeekSub=sub("144:00 от окончания последнего недельного отдыха");ww.third.addView(workWeekSub);c.addView(workWeekFrame);c.addView(space(7))
-        val w=progressCard();weekFrame=w.first;weekProgress=w.second;w.third.addView(label("🚗  ТЕКУЩАЯ НЕДЕЛЯ"));week=value("—",28f);w.third.addView(week);weekSub=sub("по карте водителя");w.third.addView(weekSub);c.addView(weekFrame);c.addView(space(7))
-        val tw=progressCard();twoWeekFrame=tw.first;twoWeekProgress=tw.second;tw.third.addView(label("🚗  ДВЕ НЕДЕЛИ"));twoWeek=value("—",28f);tw.third.addView(twoWeek);tw.third.addView(sub("лимит 90:00"));c.addView(twoWeekFrame)
-        scroll.addView(c);nowRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
+    private fun applyKeepScreenOn() {
+        if (prefs.getBoolean(KEEP_SCREEN_ON, false)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
-    private fun buildHistoryView(){
-        historyRoot.removeAllViews();val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};val days=history?.days?.takeLast(56)?.asReversed().orEmpty();c.addView(sub("История карты: ${days.size} из 56 дней"))
-        if(days.isEmpty())c.addView(value("История появится после полного считывания карты",17f))
-        days.forEachIndexed{i,day->val box=card();box.addView(TextView(this).apply{text=prettyDate(day.date);textSize=18f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)});box.addView(sub("${flag(day.startCountry)} ${day.startCountry?:"—"}  Начало смены  ${day.startTime?:"—"}"));box.addView(value("🚗 Вождение  ${HistoryData.fmt(day.drivingMinutes)}",18f));box.addView(sub("⚒ Другая работа  ${HistoryData.fmt(day.workMinutes)}"));box.addView(sub("✉ Готовность  ${HistoryData.fmt(day.availabilityMinutes)}"));box.addView(sub("Продолжительность смены  ${day.shiftMinutes?.let(HistoryData::fmt)?:"—"}"));box.addView(sub("${flag(day.endCountry)} ${day.endCountry?:"—"}  Конец смены  ${day.endTime?:"—"}"));c.addView(box);if(i<days.lastIndex)HistoryData.gapMinutes(days[i+1],day)?.let{gap->c.addView(TextView(this).apply{text=if(gap>=24*60)"🛏 Недельный отдых  ${HistoryData.fmt(gap)}" else "🛏 Межсуточный отдых  ${HistoryData.fmt(gap)}";textSize=14f;gravity=Gravity.CENTER;setTextColor(if(gap>=24*60)CYAN else MUTED);setPadding(0,dp(7),0,dp(7))})}}
-        scroll.addView(c);historyRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
-    }
-
-    private fun loadHistory(){val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))?:return;val r=TlvInventory.parse(f);if(r.error==null){history=HistoryData.load(r);if(::historyRoot.isInitialized)buildHistoryView();updateWeekCards();updateWorkWeekClock();updateShiftDriving()}}
-
-    private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
-    private fun persistCounters(){prefs.edit().putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).apply()}
-
-    private fun initializeShiftCounterFromCard(){if(shiftCounterInitialized)return;val cardDriving=history?.days?.lastOrNull()?.drivingMinutes?:0;shiftCompletedMinutes=(cardDriving-continuousMinutes).coerceAtLeast(0);previousContinuousMinutes=continuousMinutes;shiftCounterInitialized=true;persistCounters()}
-    private fun processCycle(){initializeShiftCounterFromCard();if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes)shiftCompletedMinutes+=previousContinuousMinutes;previousContinuousMinutes=continuousMinutes;processWorkWindow();persistCounters();updateShiftDriving()}
-    private fun processWorkWindow(){
-        val restReached45=currentActivity.contains("ОТДЫХ")&&maxOf(breakMinutes,activityMinutes)>=45
-        if(restReached45){workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return}
-        if(previousActivity!=currentActivity){
-            val finished=previousActivityDuration.coerceAtLeast(0)
-            when{
-                previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished
-                previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished}
-                previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished
-            }
-            previousActivity=currentActivity;previousActivityDuration=activityMinutes;return
+    private fun buildNow() {
+        val scroll = ScrollView(this)
+        val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        driver = TextView(this).apply {
+            text = prefs.getString(CARD_NAME, null) ?: "Водитель"
+            textSize = 25f
+            setTextColor(TEXT)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(3), dp(4), 0, dp(8))
         }
-        previousActivityDuration=activityMinutes
+        c.addView(driver)
+
+        val d = progressCard()
+        continuousFrame = d.first; continuousProgress = d.second
+        d.third.addView(label("🚗  НЕПРЕРЫВНОЕ ВОЖДЕНИЕ"))
+        continuous = value("—", 30f); d.third.addView(continuous); d.third.addView(sub("лимит 4:30"))
+        c.addView(continuousFrame); c.addView(space(7))
+
+        val s = progressCard()
+        shiftDrivingFrame = s.first; shiftDrivingProgress = s.second
+        s.third.addView(label("🚗  ВОЖДЕНИЕ ЗА СМЕНУ"))
+        shiftDriving = value("—", 28f); s.third.addView(shiftDriving)
+        shiftDrivingSub = sub("онлайн"); s.third.addView(shiftDrivingSub)
+        c.addView(shiftDrivingFrame); c.addView(space(7))
+
+        val six = progressCard()
+        work6Frame = six.first; work6Progress = six.second
+        six.third.addView(label("⚒  НЕПРЕРЫВНАЯ РАБОТА"))
+        work6 = value("—", 28f); six.third.addView(work6)
+        work6Sub = sub("вождение + другая работа • лимит 6:00"); six.third.addView(work6Sub)
+        c.addView(work6Frame); c.addView(space(7))
+
+        val ow = progressCard()
+        otherWorkFrame = ow.first; otherWorkProgress = ow.second
+        ow.third.addView(label("⚒  ДРУГАЯ РАБОТА"))
+        otherWork = value("0:00", 26f); ow.third.addView(otherWork)
+        ow.third.addView(sub("молотки после последней паузы 45 мин"))
+        c.addView(otherWorkFrame); c.addView(space(7))
+
+        val av = progressCard()
+        availabilityFrame = av.first; availabilityProgress = av.second
+        av.third.addView(label("✉  ОЖИДАНИЕ / ГОТОВНОСТЬ"))
+        availability = value("0:00", 26f); av.third.addView(availability)
+        av.third.addView(sub("не входит в 6-часовую непрерывную работу"))
+        c.addView(availabilityFrame); c.addView(space(7))
+
+        val r = progressCard()
+        restFrame = r.first; restProgress = r.second
+        r.third.addView(label("🛏  ОТДЫХ"))
+        restTime = value("0:00", 30f); r.third.addView(restTime)
+        restSub = sub("ожидание онлайн-данных"); r.third.addView(restSub)
+        c.addView(restFrame); c.addView(space(7))
+
+        val ww = progressCard()
+        workWeekFrame = ww.first; workWeekProgress = ww.second
+        ww.third.addView(label("⏳  РАБОЧАЯ НЕДЕЛЯ"))
+        workWeek = value("—", 28f); ww.third.addView(workWeek)
+        workWeekSub = sub("144:00 от окончания последнего недельного отдыха"); ww.third.addView(workWeekSub)
+        c.addView(workWeekFrame); c.addView(space(7))
+
+        val w = progressCard()
+        weekFrame = w.first; weekProgress = w.second
+        w.third.addView(label("🚗  ТЕКУЩАЯ НЕДЕЛЯ"))
+        week = value("—", 28f); w.third.addView(week)
+        weekSub = sub("по карте водителя"); w.third.addView(weekSub)
+        c.addView(weekFrame); c.addView(space(7))
+
+        val tw = progressCard()
+        twoWeekFrame = tw.first; twoWeekProgress = tw.second
+        tw.third.addView(label("🚗  ДВЕ НЕДЕЛИ"))
+        twoWeek = value("—", 28f); tw.third.addView(twoWeek); tw.third.addView(sub("лимит 90:00"))
+        c.addView(twoWeekFrame)
+
+        scroll.addView(c)
+        nowRoot.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
     }
-    private fun activeWorkTotal():Int=workWindowMinutes+when{currentActivity.contains("ВОЖДЕНИЕ")||currentActivity.contains("РАБОТА")->activityMinutes;else->0}
-    private fun activeOtherWorkTotal():Int=otherWorkWindowMinutes+if(currentActivity.contains("РАБОТА"))activityMinutes else 0
-    private fun activeAvailabilityTotal():Int=availabilityWindowMinutes+if(currentActivity.contains("ГОТОВНОСТЬ"))activityMinutes else 0
 
-    private fun updateShiftDriving(){if(!::shiftDriving.isInitialized)return;if(!shiftCounterInitialized){shiftDriving.text="—";shiftDrivingSub.text="ожидание первого live-цикла";return};val total=shiftCompletedMinutes+continuousMinutes;val limit=shiftDrivingLimit();val remain=(limit-total).coerceAtLeast(0);shiftDriving.text="${HistoryData.fmt(total)} из ${HistoryData.fmt(limit)}";shiftDrivingSub.text=if(remain<=30)"⚠ Осталось ${HistoryData.fmt(remain)} вождения" else "осталось ${HistoryData.fmt(remain)} • онлайн";setProgress(shiftDrivingFrame,shiftDrivingProgress,total.toFloat()/limit,shiftDriveColor(total,limit))}
-    private fun shiftDrivingLimit():Int=if(currentWeekTenHourUses()>=2)540 else 600
-    private fun currentWeekTenHourUses():Int{val now=isoCalendar(Date());return history?.days.orEmpty().count{d->val date=parseDateOnly(d.date)?:return@count false;val c=isoCalendar(date);c.get(Calendar.WEEK_OF_YEAR)==now.get(Calendar.WEEK_OF_YEAR)&&c.getWeekYear()==now.getWeekYear()&&d.drivingMinutes>540}}
-    private fun shiftDriveColor(v:Int,limit:Int)=when{v>=limit-30->RED;v>=limit-60->YELLOW;else->GREEN}
-
-    private fun updateWorkWeekClock(){
-        if(!::workWeek.isInitialized)return
-        val start=history?.let{HistoryData.lastWeeklyRestEndMillis(it.days)}
-        if(start==null){workWeek.text="—";workWeekSub.text="не найден законченный недельный отдых на карте";setProgress(workWeekFrame,workWeekProgress,0f,GREEN);return}
-        val total=144*60
-        val elapsed=((System.currentTimeMillis()-start)/60000L).toInt().coerceAtLeast(0)
-        val remain=(total-elapsed).coerceAtLeast(0)
-        workWeek.text="${HistoryData.fmt(remain)} осталось"
-        val stamp=SimpleDateFormat("dd.MM HH:mm",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.format(Date(start))
-        workWeekSub.text="от конца недельного отдыха $stamp • лимит 144:00"
-        val color=when{remain<=12*60->RED;remain<=24*60->YELLOW;else->GREEN}
-        setProgress(workWeekFrame,workWeekProgress,elapsed.coerceAtMost(total).toFloat()/total,color)
-    }
-
-    private fun resetAllWindows(){shiftCompletedMinutes=0;previousContinuousMinutes=0;shiftCounterInitialized=true;workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity="—";previousActivityDuration=0;persistCounters();updateShiftDriving()}
-    private fun onShiftClosedDetected(){resetAllWindows();startCardRead("Смена закрыта",true)}
-
-    private fun showNow(){nowRoot.visibility=View.VISIBLE;historyRoot.visibility=View.GONE;updateTabState(true)}
-    private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;updateTabState(false)}
-    private fun updateTabState(nowSelected:Boolean){
-        if(!::nowTab.isInitialized||!::historyTab.isInitialized)return
-        nowTab.background=rounded(if(nowSelected)GREEN else CARD,dp(11).toFloat(),if(nowSelected)GREEN else BORDER)
-        historyTab.background=rounded(if(nowSelected)CARD else GREEN,dp(11).toFloat(),if(nowSelected)BORDER else GREEN)
-    }
-
-    private fun requestPermission(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN))else findAndAutoConnect()}
-    @SuppressLint("MissingPermission") private fun findAndAutoConnect(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)return;val saved=prefs.getString(SELECTED_DTCO,null);dtco=try{adapter?.bondedDevices?.firstOrNull{it.address==saved}}catch(_:Throwable){null};val d=dtco;if(d==null){status.text="Выберите DTCO";return};connectSelected(d)}
-    private fun connectSelected(d:BluetoothDevice){dtco=d;if(!prefs.getBoolean(FIRST_READ,false))startCardRead("Первое подключение",true)else{status.text="Подключение к DTCO…";live.connect(d)}}
-
-    @SuppressLint("MissingPermission") private fun showDtcoPicker(){
-        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&(ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED||ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_SCAN)!=PackageManager.PERMISSION_GRANTED)){permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN));return}
-        val devices=linkedMapOf<String,BluetoothDevice>();try{adapter?.bondedDevices?.filter{(it.name?:"").contains("DTCO",true)}?.forEach{devices[it.address]=it}}catch(_:Throwable){}
-        val labels=mutableListOf<String>();val listAdapter=ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,labels);fun refresh(){labels.clear();devices.values.forEach{labels.add("${safeName(it)}\n${it.address}")};listAdapter.notifyDataSetChanged()};refresh()
-        val dialog=AlertDialog.Builder(this).setTitle("Выберите DTCO").setAdapter(listAdapter){_,which->val d=devices.values.toList().getOrNull(which)?:return@setAdapter;prefs.edit().putString(SELECTED_DTCO,d.address).putBoolean(FIRST_READ,false).apply();dtco=d;status.text="Выбран ${safeName(d)}";connectSelected(d)}.setNegativeButton("Закрыть",null).create();dialog.setOnShowListener{startNearbyScan(devices,::refresh)};dialog.show()
-    }
-    @SuppressLint("MissingPermission") private fun startNearbyScan(devices:MutableMap<String,BluetoothDevice>,refresh:()->Unit){val a=adapter?:return;val cb=BluetoothAdapter.LeScanCallback{device,_,_->val n=try{device.name}catch(_:Throwable){null};if((n?:"").contains("DTCO",true)){devices[device.address]=device;runOnUiThread{refresh()}}};try{a.startLeScan(cb);mainHandler.postDelayed({try{a.stopLeScan(cb)}catch(_:Throwable){}},4000)}catch(_:Throwable){}}
-    @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:"DTCO"}catch(_:Throwable){"DTCO"}
-
-    private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";live.disconnect();cardReader.connect(d)}
-    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(!cardReading)status.text=if(connected)"Онлайн • ${deviceName?:"DTCO"}" else "Нет связи с выбранным DTCO"}}
-    override fun onLiveLog(log:String){runOnUiThread{
-        val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
-        if(cycle==null||cycle<=lastProcessedCycle)return@runOnUiThread
-        lastProcessedCycle=cycle
-        last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}}
-        last(log,"F903")?.let{currentActivity=it}
-        mins(last(log,"F927"))?.let{activityMinutes=it}
-        mins(last(log,"F923"))?.let{continuousMinutes=it}
-        mins(last(log,"F925"))?.let{breakMinutes=it}
-        mins(last(log,"F938"))?.let{twoWeekMinutes=it}
-        processCycle();status.text="Онлайн • данные актуальны";updateNow()
-    }}
-    override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
-    override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
-    private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • подключаю live";cardReader.disconnect();if(resume){val d=dtco?:return;status.postDelayed({live.connect(d)},500)}}
-
-    private fun updateNow(){
-        val resting=currentActivity.contains("ОТДЫХ")
-        val restActual=maxOf(activityMinutes,breakMinutes)
-        val restCredited=HistoryData.creditedRestMinutes(restActual)
-        val restNext=HistoryData.nextRestMilestone(restActual)
-        val icon=when{currentActivity.contains("ВОЖДЕНИЕ")->"🚗";currentActivity.contains("РАБОТА")->"⚒";currentActivity.contains("ГОТОВНОСТЬ")->"✉";resting->"🛏";else->"•"}
-        if(resting){
-            activityTitle.text="🛏  ОТДЫХ"
-            activityTime.text=HistoryData.fmt(restCredited)
-            activitySub.text=if(restNext!=null)"засчитано ${HistoryData.fmt(restCredited)} • фактически ${HistoryData.fmt(restActual)} • следующая ступень ${HistoryData.fmt(restNext)}" else "засчитано 45:00 • фактически ${HistoryData.fmt(restActual)}"
-            val target=restNext?:45*60
-            setProgress(activityFrame,activityProgress,if(target>0)restActual.toFloat()/target else 1f,restMilestoneColor(restCredited))
-        }else{
-            activityTitle.text="$icon  ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ • $currentActivity"
-            activityTime.text=HistoryData.fmt(activityMinutes)
-            val p:Float;val color:Int;val text:String
-            when{
-                currentActivity.contains("ВОЖДЕНИЕ")->{p=continuousMinutes/270f;color=driveColor(continuousMinutes);text="непрерывно ${HistoryData.fmt(continuousMinutes)} из 4:30"}
-                currentActivity.contains("РАБОТА")->{val ow=activeOtherWorkTotal();p=ow/360f;color=workColor(ow);text="⚒ другая работа ${HistoryData.fmt(ow)}"}
-                currentActivity.contains("ГОТОВНОСТЬ")->{val av=activeAvailabilityTotal();p=av/360f;color=GREEN;text="✉ ожидание ${HistoryData.fmt(av)}"}
-                else->{p=0f;color=GREEN;text="ожидание данных"}
+    private fun buildHistoryView() {
+        historyRoot.removeAllViews()
+        val scroll = ScrollView(this)
+        val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val days = history?.days?.takeLast(56)?.asReversed().orEmpty()
+        c.addView(sub("История карты: ${days.size} из 56 дней"))
+        if (days.isEmpty()) c.addView(value("История появится после полного считывания карты", 17f))
+        days.forEachIndexed { i, day ->
+            val box = card()
+            box.addView(TextView(this).apply {
+                text = prettyDate(day.date); textSize = 18f; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD)
+            })
+            box.addView(sub("${flag(day.startCountry)} ${day.startCountry ?: "—"}  Начало смены  ${day.startTime ?: "—"}"))
+            box.addView(value("🚗 Вождение  ${HistoryData.fmt(day.drivingMinutes)}", 18f))
+            box.addView(sub("⚒ Другая работа  ${HistoryData.fmt(day.workMinutes)}"))
+            box.addView(sub("✉ Готовность  ${HistoryData.fmt(day.availabilityMinutes)}"))
+            box.addView(sub("Продолжительность смены  ${day.shiftMinutes?.let(HistoryData::fmt) ?: "—"}"))
+            box.addView(sub("${flag(day.endCountry)} ${day.endCountry ?: "—"}  Конец смены  ${day.endTime ?: "—"}"))
+            c.addView(box)
+            if (i < days.lastIndex) {
+                HistoryData.gapMinutes(days[i + 1], day)?.let { gap ->
+                    c.addView(TextView(this).apply {
+                        text = if (gap >= 24 * 60) "🛏 Недельный отдых  ${HistoryData.fmt(gap)}" else "🛏 Межсуточный отдых  ${HistoryData.fmt(gap)}"
+                        textSize = 14f
+                        gravity = Gravity.CENTER
+                        setTextColor(if (gap >= 24 * 60) CYAN else MUTED)
+                        setPadding(0, dp(7), 0, dp(7))
+                    })
+                }
             }
-            activitySub.text=text;setProgress(activityFrame,activityProgress,p,color)
         }
-        continuous.text="${HistoryData.fmt(continuousMinutes)} из 4:30";setProgress(continuousFrame,continuousProgress,continuousMinutes/270f,driveColor(continuousMinutes));updateShiftDriving()
-        val wt=activeWorkTotal();work6.text="${HistoryData.fmt(wt)} из 6:00";work6Sub.text=if(wt>=330)"⚠ До 6 часов осталось ${HistoryData.fmt((360-wt).coerceAtLeast(0))}" else "вождение + другая работа";setProgress(work6Frame,work6Progress,wt/360f,workColor(wt))
-        val ow=activeOtherWorkTotal();otherWork.text=HistoryData.fmt(ow);setProgress(otherWorkFrame,otherWorkProgress,ow/360f,workColor(ow))
-        val av=activeAvailabilityTotal();availability.text=HistoryData.fmt(av);setProgress(availabilityFrame,availabilityProgress,av/360f,GREEN)
-        twoWeek.text="${HistoryData.fmt(twoWeekMinutes)} из 90:00";setProgress(twoWeekFrame,twoWeekProgress,twoWeekMinutes/(90f*60f),limitColor(twoWeekMinutes,90*60));updateWeekCards();updateWorkWeekClock()
+        scroll.addView(c)
+        historyRoot.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
     }
 
-    private fun updateWeekCards(){if(!::week.isInitialized)return;val current=history?.currentWeekCardMinutes?:0;val prev=history?.previousWeekDrivingMinutes?:0;val limit=minOf(56*60,(90*60-prev).coerceAtLeast(0));week.text="${HistoryData.fmt(current)} из ${HistoryData.fmt(limit)}";weekSub.text="прошлая неделя ${HistoryData.fmt(prev)} • 10-часовых смен: ${currentWeekTenHourUses()}/2";setProgress(weekFrame,weekProgress,if(limit>0)current.toFloat()/limit else 1f,limitColor(current,limit))}
-    private fun isDailyRestNow():Boolean{if(!currentActivity.contains("ОТДЫХ"))return false;if(activityMinutes>=9*60||breakMinutes>=9*60)return true;val last=history?.days?.lastOrNull{it.endTime!=null}?:return false;val end=parseUtc("${last.date} ${last.endTime}")?:return false;val elapsed=(System.currentTimeMillis()-end.time)/60000L;return elapsed in 9*60..900}
-    private fun parseUtc(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull();private fun parseDateOnly(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull();private fun isoCalendar(d:Date)=Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US).apply{firstDayOfWeek=Calendar.MONDAY;minimalDaysInFirstWeek=4;time=d}
-    private fun last(log:String,did:String)=log.lines().asReversed().firstOrNull{it.startsWith("$did=")}?.substringAfter(" | ")?.trim();private fun mins(v:String?):Int?=v?.let{Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull()}
-    private fun driveColor(m:Int)=when{m>=255->RED;m>=240->YELLOW;else->GREEN};private fun breakColor(m:Int)=when{m>=45->GREEN;m>=15->YELLOW;else->RED};private fun dailyRestColor(m:Int)=when{m>=660->GREEN;m>=540->YELLOW;else->RED};private fun restMilestoneColor(m:Int)=when{m>=45*60->CYAN;m>=24*60->GREEN;m>=11*60->GREEN;m>=9*60->GREEN;m>=3*60->YELLOW;m>=45->GREEN;m>=15->YELLOW;else->RED};private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN};private fun limitColor(v:Int,limit:Int)=when{limit<=0||v>=limit-120->RED;v>=limit-360->YELLOW;else->GREEN}
+    private fun loadHistory() {
+        val f = TlvInventory.findLatestDdd(getExternalFilesDir(null)) ?: return
+        val r = TlvInventory.parse(f)
+        if (r.error == null) {
+            history = HistoryData.load(r)
+            if (::historyRoot.isInitialized) buildHistoryView()
+            updateWeekCards()
+            updateWorkWeekClock()
+            updateShiftDriving()
+        }
+    }
 
-    private fun progressCard():Triple<FrameLayout,View,LinearLayout>{val f=FrameLayout(this).apply{background=rounded(CARD,dp(15).toFloat(),BORDER)};val p=View(this).apply{background=rounded(GREEN,dp(15).toFloat())};f.addView(p,FrameLayout.LayoutParams(0,FrameLayout.LayoutParams.MATCH_PARENT));val b=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(11),dp(12),dp(11))};f.addView(b,FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.WRAP_CONTENT));return Triple(f,p,b)}
-    private fun setProgress(frame:FrameLayout,bar:View,p:Float,color:Int){frame.post{val w=(frame.width*p.coerceIn(0f,1f)).toInt();val lp=bar.layoutParams as FrameLayout.LayoutParams;if(lp.width!=w){lp.width=w;bar.layoutParams=lp};bar.background=rounded(color,dp(15).toFloat())}}
-    private fun card()=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(10),dp(12),dp(10));background=rounded(CARD,dp(14).toFloat(),BORDER)}
-    private fun label(t:String)=TextView(this).apply{text=t;textSize=11.5f;setTextColor(MUTED);setTypeface(typeface,Typeface.BOLD)};private fun value(t:String,s:Float)=TextView(this).apply{text=t;textSize=s;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setPadding(0,dp(2),0,0)};private fun sub(t:String)=TextView(this).apply{text=t;textSize=13f;setTextColor(MUTED);setPadding(0,dp(2),0,0)}
-    private fun tabButton(t:String)=Button(this).apply{text=t;isAllCaps=false;textSize=14f;setTextColor(TEXT);background=rounded(CARD,dp(11).toFloat(),BORDER)};private fun smallButton(t:String)=tabButton(t).apply{textSize=11f;minWidth=0;minimumWidth=0;setPadding(dp(9),0,dp(9),0)}
-    private fun rounded(c:Int,r:Float,stroke:Int?=null)=GradientDrawable().apply{shape=GradientDrawable.RECTANGLE;cornerRadius=r;setColor(c);if(stroke!=null)setStroke(dp(1),stroke)};private fun space(h:Int)=View(this).apply{layoutParams=LinearLayout.LayoutParams(1,dp(h))};private fun hspace(w:Int)=View(this).apply{layoutParams=LinearLayout.LayoutParams(dp(w),1)};private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
-    private fun prettyDate(d:String)=runCatching{val p=d.split('-');"${p[2]}.${p[1]}.${p[0]}"}.getOrDefault(d);private fun flag(c:String?)=when(c){"B"->"🇧🇪";"F"->"🇫🇷";"D"->"🇩🇪";"NL"->"🇳🇱";"L"->"🇱🇺";"E"->"🇪🇸";"LT"->"🇱🇹";"LV"->"🇱🇻";else->"🌐"}
+    private fun restoreCounters() {
+        shiftCounterInitialized = prefs.getBoolean(SHIFT_INITIALIZED, false)
+        shiftCompletedMinutes = prefs.getInt(SHIFT_COMPLETED, 0)
+        previousContinuousMinutes = prefs.getInt(SHIFT_PREV_CONTINUOUS, 0)
+        previousActivity = prefs.getString(WORK_PREV_ACTIVITY, "—") ?: "—"
+        previousActivityDuration = prefs.getInt(WORK_PREV_DURATION, 0)
+        otherWorkWindowMinutes = prefs.getInt(WORK_ACC, 0)
+        availabilityWindowMinutes = prefs.getInt(AVAIL_ACC, 0)
+    }
+
+    private fun persistCounters() {
+        prefs.edit()
+            .putBoolean(SHIFT_INITIALIZED, shiftCounterInitialized)
+            .putInt(SHIFT_COMPLETED, shiftCompletedMinutes)
+            .putInt(SHIFT_PREV_CONTINUOUS, previousContinuousMinutes)
+            .putString(WORK_PREV_ACTIVITY, previousActivity)
+            .putInt(WORK_PREV_DURATION, previousActivityDuration)
+            .putInt(WORK_ACC, otherWorkWindowMinutes)
+            .putInt(AVAIL_ACC, availabilityWindowMinutes)
+            .apply()
+    }
+
+    private fun initializeShiftCounterFromCard() {
+        if (shiftCounterInitialized) return
+        val cardDriving = history?.days?.lastOrNull()?.drivingMinutes ?: 0
+        shiftCompletedMinutes = (cardDriving - continuousMinutes).coerceAtLeast(0)
+        previousContinuousMinutes = continuousMinutes
+        shiftCounterInitialized = true
+        persistCounters()
+    }
+
+    private fun processCycle() {
+        initializeShiftCounterFromCard()
+        if (previousContinuousMinutes > 0 && continuousMinutes < previousContinuousMinutes && maxOf(breakMinutes, activityMinutes) >= 45) {
+            shiftCompletedMinutes += previousContinuousMinutes
+        }
+        previousContinuousMinutes = continuousMinutes
+        processActivityAccumulators()
+        persistCounters()
+        updateShiftDriving()
+    }
+
+    private fun processActivityAccumulators() {
+        val restReached45 = currentActivity.contains("ОТДЫХ") && maxOf(breakMinutes, activityMinutes) >= 45
+        if (restReached45) {
+            otherWorkWindowMinutes = 0
+            availabilityWindowMinutes = 0
+            previousActivity = currentActivity
+            previousActivityDuration = activityMinutes
+            return
+        }
+
+        if (previousActivity != currentActivity) {
+            val finished = previousActivityDuration.coerceAtLeast(0)
+            when {
+                previousActivity.contains("РАБОТА") -> otherWorkWindowMinutes += finished
+                previousActivity.contains("ГОТОВНОСТЬ") -> availabilityWindowMinutes += finished
+            }
+            previousActivity = currentActivity
+            previousActivityDuration = activityMinutes
+            return
+        }
+        previousActivityDuration = activityMinutes
+    }
+
+    private fun activeOtherWorkTotal(): Int = otherWorkWindowMinutes + if (currentActivity.contains("РАБОТА")) activityMinutes else 0
+    private fun activeAvailabilityTotal(): Int = availabilityWindowMinutes + if (currentActivity.contains("ГОТОВНОСТЬ")) activityMinutes else 0
+
+    // 6-часовая непрерывная работа: только вождение + молотки.
+    // F923 уже содержит актуальное непрерывное вождение после последней квалифицирующей паузы.
+    private fun activeWorkTotal(): Int = continuousMinutes + activeOtherWorkTotal()
+
+    private fun updateShiftDriving() {
+        if (!::shiftDriving.isInitialized) return
+        if (!shiftCounterInitialized) {
+            shiftDriving.text = "—"
+            shiftDrivingSub.text = "ожидание первого live-цикла"
+            return
+        }
+        val total = shiftCompletedMinutes + continuousMinutes
+        val limit = shiftDrivingLimit()
+        val remain = (limit - total).coerceAtLeast(0)
+        shiftDriving.text = "${HistoryData.fmt(total)} из ${HistoryData.fmt(limit)}"
+        shiftDrivingSub.text = if (remain <= 30) "⚠ Осталось ${HistoryData.fmt(remain)} вождения" else "осталось ${HistoryData.fmt(remain)} • онлайн"
+        setProgress(shiftDrivingFrame, shiftDrivingProgress, total.toFloat() / limit, shiftDriveColor(total, limit))
+    }
+
+    private fun shiftDrivingLimit(): Int = if (currentWeekTenHourUses() >= 2) 540 else 600
+
+    private fun currentWeekTenHourUses(): Int {
+        val now = isoCalendar(Date())
+        return history?.days.orEmpty().count { d ->
+            val date = parseDateOnly(d.date) ?: return@count false
+            val c = isoCalendar(date)
+            c.get(Calendar.WEEK_OF_YEAR) == now.get(Calendar.WEEK_OF_YEAR) && c.getWeekYear() == now.getWeekYear() && d.drivingMinutes > 540
+        }
+    }
+
+    private fun shiftDriveColor(v: Int, limit: Int) = when {
+        v >= limit - 30 -> RED
+        v >= limit - 60 -> YELLOW
+        else -> GREEN
+    }
+
+    private fun updateWorkWeekClock() {
+        if (!::workWeek.isInitialized) return
+        val start = history?.let { HistoryData.lastWeeklyRestEndMillis(it.days) }
+        if (start == null) {
+            workWeek.text = "—"
+            workWeekSub.text = "не найден законченный недельный отдых на карте"
+            setProgress(workWeekFrame, workWeekProgress, 0f, GREEN)
+            return
+        }
+        val total = 144 * 60
+        val elapsed = ((System.currentTimeMillis() - start) / 60000L).toInt().coerceAtLeast(0)
+        val remain = (total - elapsed).coerceAtLeast(0)
+        workWeek.text = "${HistoryData.fmt(remain)} осталось"
+        val stamp = SimpleDateFormat("dd.MM HH:mm", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(start))
+        workWeekSub.text = "от конца недельного отдыха $stamp • лимит 144:00"
+        setProgress(workWeekFrame, workWeekProgress, elapsed.coerceAtMost(total).toFloat() / total, when {
+            remain <= 12 * 60 -> RED
+            remain <= 24 * 60 -> YELLOW
+            else -> GREEN
+        })
+    }
+
+    private fun showNow() {
+        nowRoot.visibility = View.VISIBLE
+        historyRoot.visibility = View.GONE
+        updateTabState(true)
+    }
+
+    private fun showHistory() {
+        loadHistory()
+        nowRoot.visibility = View.GONE
+        historyRoot.visibility = View.VISIBLE
+        updateTabState(false)
+    }
+
+    private fun updateTabState(nowSelected: Boolean) {
+        if (!::nowTab.isInitialized || !::historyTab.isInitialized) return
+        nowTab.background = rounded(if (nowSelected) GREEN else CARD, dp(11).toFloat(), if (nowSelected) GREEN else BORDER)
+        historyTab.background = rounded(if (nowSelected) CARD else GREEN, dp(11).toFloat(), if (nowSelected) BORDER else GREEN)
+    }
+
+    private fun requestPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+            permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN))
+        else findAndAutoConnect()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun findAndAutoConnect() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
+        val saved = prefs.getString(SELECTED_DTCO, null)
+        dtco = try { adapter?.bondedDevices?.firstOrNull { it.address == saved } } catch (_: Throwable) { null }
+        val d = dtco
+        if (d == null) {
+            status.text = "Выберите DTCO"
+            return
+        }
+        connectSelected(d)
+    }
+
+    private fun connectSelected(d: BluetoothDevice) {
+        dtco = d
+        if (!prefs.getBoolean(FIRST_READ, false)) startCardRead("Первое подключение", true)
+        else {
+            status.text = "Подключение к DTCO…"
+            live.connect(d)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun showDtcoPicker() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED)) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN))
+            return
+        }
+        val devices = linkedMapOf<String, BluetoothDevice>()
+        try { adapter?.bondedDevices?.filter { (it.name ?: "").contains("DTCO", true) }?.forEach { devices[it.address] = it } } catch (_: Throwable) {}
+        val labels = mutableListOf<String>()
+        val listAdapter = ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels)
+        fun refresh() {
+            labels.clear()
+            devices.values.forEach { labels.add("${safeName(it)}\n${it.address}") }
+            listAdapter.notifyDataSetChanged()
+        }
+        refresh()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Выберите DTCO")
+            .setAdapter(listAdapter) { _, which ->
+                val d = devices.values.toList().getOrNull(which) ?: return@setAdapter
+                prefs.edit().putString(SELECTED_DTCO, d.address).putBoolean(FIRST_READ, false).apply()
+                dtco = d
+                status.text = "Выбран ${safeName(d)}"
+                connectSelected(d)
+            }
+            .setNegativeButton("Закрыть", null)
+            .create()
+        dialog.setOnShowListener { startNearbyScan(devices, ::refresh) }
+        dialog.show()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startNearbyScan(devices: MutableMap<String, BluetoothDevice>, refresh: () -> Unit) {
+        val a = adapter ?: return
+        val cb = BluetoothAdapter.LeScanCallback { device, _, _ ->
+            val n = try { device.name } catch (_: Throwable) { null }
+            if ((n ?: "").contains("DTCO", true)) {
+                devices[device.address] = device
+                runOnUiThread { refresh() }
+            }
+        }
+        try {
+            a.startLeScan(cb)
+            mainHandler.postDelayed({ try { a.stopLeScan(cb) } catch (_: Throwable) {} }, 4000)
+        } catch (_: Throwable) {}
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun safeName(d: BluetoothDevice) = try { d.name ?: "DTCO" } catch (_: Throwable) { "DTCO" }
+
+    private fun startCardRead(reason: String, resume: Boolean) {
+        if (cardReading) return
+        val d = dtco ?: return
+        cardReading = true
+        resumeLive = resume
+        status.text = "Считывание карты • $reason"
+        live.disconnect()
+        cardReader.connect(d)
+    }
+
+    override fun onLiveConnection(connected: Boolean, deviceName: String?) {
+        runOnUiThread {
+            if (!cardReading) {
+                status.text = if (connected) "Онлайн • ${deviceName ?: "DTCO"} • проверяю данные" else "Восстановление связи с DTCO…"
+            }
+        }
+    }
+
+    override fun onLiveLog(log: String) {
+        runOnUiThread {
+            val cycle = Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
+            if (cycle == null || cycle <= lastProcessedCycle) return@runOnUiThread
+            lastProcessedCycle = cycle
+            last(log, "F931")?.let {
+                if (it.isNotBlank() && it != "—") {
+                    driver.text = it
+                    prefs.edit().putString(CARD_NAME, it).apply()
+                }
+            }
+            last(log, "F903")?.let { currentActivity = it }
+            mins(last(log, "F927"))?.let { activityMinutes = it }
+            mins(last(log, "F923"))?.let { continuousMinutes = it }
+            mins(last(log, "F925"))?.let { breakMinutes = it }
+            mins(last(log, "F938"))?.let { twoWeekMinutes = it }
+            processCycle()
+            status.text = "Онлайн • данные актуальны"
+            updateNow()
+        }
+    }
+
+    override fun onLogChanged(fullLog: String) {
+        if (!cardReading) return
+        when {
+            fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=SUCCESS") -> runOnUiThread {
+                prefs.edit().putBoolean(FIRST_READ, true).apply()
+                loadHistory()
+                finishCardRead(true)
+            }
+            fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=FAILED") -> runOnUiThread { finishCardRead(false) }
+        }
+    }
+
+    override fun onConnectionStateChanged(connected: Boolean, deviceName: String?) {
+        if (cardReading && connected) runOnUiThread { status.text = "Считывание карты…" }
+    }
+
+    private fun finishCardRead(ok: Boolean) {
+        val resume = resumeLive
+        cardReading = false
+        resumeLive = false
+        status.text = if (ok) "Карта считана • данные обновлены" else "Ошибка чтения карты • подключаю live"
+        cardReader.disconnect()
+        if (resume) {
+            val d = dtco ?: return
+            status.postDelayed({ live.connect(d) }, 500)
+        }
+    }
+
+    private fun updateNow() {
+        continuous.text = "${HistoryData.fmt(continuousMinutes)} из 4:30"
+        setProgress(continuousFrame, continuousProgress, continuousMinutes / 270f, driveColor(continuousMinutes))
+        updateShiftDriving()
+
+        val wt = activeWorkTotal()
+        work6.text = "${HistoryData.fmt(wt)} из 6:00"
+        work6Sub.text = if (wt >= 330) "⚠ До 6 часов осталось ${HistoryData.fmt((360 - wt).coerceAtLeast(0))}" else "вождение + другая работа"
+        setProgress(work6Frame, work6Progress, wt / 360f, workColor(wt))
+
+        val ow = activeOtherWorkTotal()
+        otherWork.text = HistoryData.fmt(ow)
+        setProgress(otherWorkFrame, otherWorkProgress, ow / 360f, workColor(ow))
+
+        val av = activeAvailabilityTotal()
+        availability.text = HistoryData.fmt(av)
+        setProgress(availabilityFrame, availabilityProgress, av / 360f, GREEN)
+
+        val resting = currentActivity.contains("ОТДЫХ")
+        val actual = if (resting) maxOf(activityMinutes, breakMinutes) else breakMinutes
+        val credited = HistoryData.creditedRestMinutes(actual)
+        val next = HistoryData.nextRestMilestone(actual)
+        restTime.text = HistoryData.fmt(actual)
+        restSub.text = if (resting) {
+            if (next != null) "Засчитано: ${HistoryData.fmt(credited)} • следующая ступень ${HistoryData.fmt(next)}"
+            else "Засчитано: ${HistoryData.fmt(credited)}"
+        } else "Сейчас не отдых • накоплено ${HistoryData.fmt(actual)}"
+        val target = next ?: 45 * 60
+        setProgress(restFrame, restProgress, if (target > 0) actual.toFloat() / target else 0f, restMilestoneColor(credited))
+
+        twoWeek.text = "${HistoryData.fmt(twoWeekMinutes)} из 90:00"
+        setProgress(twoWeekFrame, twoWeekProgress, twoWeekMinutes / (90f * 60f), limitColor(twoWeekMinutes, 90 * 60))
+        updateWeekCards()
+        updateWorkWeekClock()
+    }
+
+    private fun updateWeekCards() {
+        if (!::week.isInitialized) return
+        val current = history?.currentWeekCardMinutes ?: 0
+        val prev = history?.previousWeekDrivingMinutes ?: 0
+        val limit = minOf(56 * 60, (90 * 60 - prev).coerceAtLeast(0))
+        week.text = "${HistoryData.fmt(current)} из ${HistoryData.fmt(limit)}"
+        weekSub.text = "прошлая неделя ${HistoryData.fmt(prev)} • 10-часовых смен: ${currentWeekTenHourUses()}/2"
+        setProgress(weekFrame, weekProgress, if (limit > 0) current.toFloat() / limit else 1f, limitColor(current, limit))
+    }
+
+    private fun parseDateOnly(v: String): Date? = runCatching {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(v)
+    }.getOrNull()
+
+    private fun isoCalendar(d: Date) = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.US).apply {
+        firstDayOfWeek = Calendar.MONDAY
+        minimalDaysInFirstWeek = 4
+        time = d
+    }
+
+    private fun last(log: String, did: String) = log.lines().asReversed().firstOrNull { it.startsWith("$did=") }?.substringAfter(" | ")?.trim()
+    private fun mins(v: String?): Int? = v?.let { Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+
+    private fun driveColor(m: Int) = when { m >= 255 -> RED; m >= 240 -> YELLOW; else -> GREEN }
+    private fun restMilestoneColor(m: Int) = when { m >= 45 * 60 -> CYAN; m >= 24 * 60 -> GREEN; m >= 11 * 60 -> GREEN; m >= 9 * 60 -> GREEN; m >= 3 * 60 -> YELLOW; m >= 45 -> GREEN; m >= 15 -> YELLOW; else -> RED }
+    private fun workColor(m: Int) = when { m >= 360 -> RED; m >= 330 -> YELLOW; else -> GREEN }
+    private fun limitColor(v: Int, limit: Int) = when { limit <= 0 || v >= limit - 120 -> RED; v >= limit - 360 -> YELLOW; else -> GREEN }
+
+    private fun progressCard(): Triple<FrameLayout, View, LinearLayout> {
+        val f = FrameLayout(this).apply { background = rounded(CARD, dp(15).toFloat(), BORDER) }
+        val p = View(this).apply { background = rounded(GREEN, dp(15).toFloat()) }
+        f.addView(p, FrameLayout.LayoutParams(0, FrameLayout.LayoutParams.MATCH_PARENT))
+        val b = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(11), dp(12), dp(11))
+        }
+        f.addView(b, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        return Triple(f, p, b)
+    }
+
+    private fun setProgress(frame: FrameLayout, bar: View, p: Float, color: Int) {
+        frame.post {
+            val w = (frame.width * p.coerceIn(0f, 1f)).toInt()
+            val lp = bar.layoutParams as FrameLayout.LayoutParams
+            if (lp.width != w) { lp.width = w; bar.layoutParams = lp }
+            bar.background = rounded(color, dp(15).toFloat())
+        }
+    }
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        background = rounded(CARD, dp(14).toFloat(), BORDER)
+    }
+
+    private fun label(t: String) = TextView(this).apply { text = t; textSize = 11.5f; setTextColor(MUTED); setTypeface(typeface, Typeface.BOLD) }
+    private fun value(t: String, s: Float) = TextView(this).apply { text = t; textSize = s; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(2), 0, 0) }
+    private fun sub(t: String) = TextView(this).apply { text = t; textSize = 13f; setTextColor(MUTED); setPadding(0, dp(2), 0, 0) }
+    private fun tabButton(t: String) = Button(this).apply { text = t; isAllCaps = false; textSize = 14f; setTextColor(TEXT); background = rounded(CARD, dp(11).toFloat(), BORDER) }
+    private fun smallButton(t: String) = tabButton(t).apply { textSize = 11f; minWidth = 0; minimumWidth = 0; setPadding(dp(9), 0, dp(9), 0) }
+    private fun rounded(c: Int, r: Float, stroke: Int? = null) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = r; setColor(c); if (stroke != null) setStroke(dp(1), stroke) }
+    private fun space(h: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(h)) }
+    private fun hspace(w: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(w), 1) }
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun prettyDate(d: String) = runCatching { val p = d.split('-'); "${p[2]}.${p[1]}.${p[0]}" }.getOrDefault(d)
+    private fun flag(c: String?) = when (c) { "B" -> "🇧🇪"; "F" -> "🇫🇷"; "D" -> "🇩🇪"; "NL" -> "🇳🇱"; "L" -> "🇱🇺"; "E" -> "🇪🇸"; "LT" -> "🇱🇹"; "LV" -> "🇱🇻"; else -> "🌐" }
 }
