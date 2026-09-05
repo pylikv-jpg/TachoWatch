@@ -2,12 +2,19 @@ from pathlib import Path
 
 p = Path("app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt")
 s = p.read_text(encoding="utf-8")
+
+# The current dashboard already has automatic recovery in LiveDidDiagnostic plus
+# the selected-DTCO reconnect status. The older source-rewrite patch uses compact
+# one-line anchors and must not be applied to the rewritten dashboard.
+if "Восстановление связи с DTCO" in s and "private lateinit var restTime: TextView" in s:
+    print("Current dashboard already contains reconnect handling")
+    raise SystemExit(0)
+
 marker = "RESTORE_AUTOCONNECT_HISTORY_V1"
 if marker in s:
     print("auto-connect/history summary already restored")
     raise SystemExit(0)
 
-# Restore retrying connection to the already selected DTCO without touching RTO counters.
 old = '    private lateinit var live:LiveDidDiagnostic; private lateinit var cardReader:DtcoBluetoothDiagnostic\n'
 new = old + '    private var activityDestroyed=false // RESTORE_AUTOCONNECT_HISTORY_V1\n    private val reconnectRunnable=Runnable{if(activityDestroyed||cardReading)return@Runnable;val d=dtco?:return@Runnable;status.text="Переподключение к DTCO…";live.connect(d)}\n'
 if old not in s:
@@ -37,7 +44,6 @@ if old not in s:
     raise SystemExit("live connection anchor not found")
 s = s.replace(old, new, 1)
 
-# History-only allowance counters. They are derived from card history, not live UI state.
 anchor = '    private fun loadHistory(){'
 helpers = '''    private fun historyReducedDailyRestUses():Int?{
         val rests=history?.rests.orEmpty()
