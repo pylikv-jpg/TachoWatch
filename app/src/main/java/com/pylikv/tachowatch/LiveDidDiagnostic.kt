@@ -24,6 +24,8 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         private val CREDITS = UUID.fromString("e168d1a6-304f-42b4-ab96-4cd1d4efebd9")
         private const val RESPONSE_TIMEOUT = 3000L
         private const val POLL_INTERVAL = 0L
+        private const val RECONNECT_MIN_DELAY = 1500L
+        private const val RECONNECT_MAX_DELAY = 15000L
     }
 
     private val dids = intArrayOf(0xF903, 0xF923, 0xF925, 0xF927, 0xF931, 0xF938)
@@ -40,43 +42,95 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     private var cycle = 0
     private val lines = ArrayList<String>()
 
+    private var targetDevice: BluetoothDevice? = null
+    private var reconnectEnabled = false
+    private var reconnectAttempt = 0
+    private var reconnectGeneration = 0L
+
     fun hasPermission(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
         if (!hasPermission()) return
-        disconnect(false)
-        lines.clear(); txCredits = 0; openSent = false; statusSent = false; rhmi = false
-        index = 0; waiting = false; cycle = 0; token++
-        log("LIVE START")
-        gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-            device.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
-        else device.connectGatt(context, false, cb)
+        targetDevice = device
+        reconnectEnabled = true
+        reconnectAttempt = 0
+        reconnectGeneration++
+        startConnection(device, clearLog = true)
     }
 
     @SuppressLint("MissingPermission")
-    fun disconnect() = disconnect(true)
+    private fun startConnection(device: BluetoothDevice, clearLog: Boolean) {
+        if (!hasPermission() || !reconnectEnabled) return
+        closeCurrentGatt(notify = false)
+        if (clearLog) lines.clear()
+        txCredits = 0; openSent = false; statusSent = false; rhmi = false
+        index = 0; waiting = false; cycle = 0; token++
+        log(if (clearLog) "LIVE START" else "LIVE RECONNECT #$reconnectAttempt")
+        gatt = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                device.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
+            else device.connectGatt(context, false, cb)
+        } catch (_: Throwable) {
+            null
+        }
+        if (gatt == null) scheduleReconnect()
+    }
 
     @SuppressLint("MissingPermission")
-    private fun disconnect(notify: Boolean) {
+    fun disconnect() {
+        reconnectEnabled = false
+        targetDevice = null
+        reconnectGeneration++
+        handler.removeCallbacksAndMessages(null)
+        closeCurrentGatt(notify = true)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun closeCurrentGatt(notify: Boolean) {
         token++
-        try { gatt?.disconnect() } catch (_: Throwable) {}
-        try { gatt?.close() } catch (_: Throwable) {}
-        gatt = null; connected = false; waiting = false
+        val old = gatt
+        gatt = null
+        connected = false
+        waiting = false
+        try { old?.disconnect() } catch (_: Throwable) {}
+        try { old?.close() } catch (_: Throwable) {}
         if (notify) listener.onLiveConnection(false, null)
+    }
+
+    private fun scheduleReconnect() {
+        val device = targetDevice ?: return
+        if (!reconnectEnabled || !hasPermission()) return
+        val generation = ++reconnectGeneration
+        reconnectAttempt++
+        val shift = (reconnectAttempt - 1).coerceIn(0, 4)
+        val delay = (RECONNECT_MIN_DELAY * (1L shl shift)).coerceAtMost(RECONNECT_MAX_DELAY)
+        handler.postDelayed({
+            if (!reconnectEnabled || generation != reconnectGeneration || connected) return@postDelayed
+            startConnection(device, clearLog = false)
+        }, delay)
     }
 
     private val cb = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (gatt != g && newState != BluetoothProfile.STATE_CONNECTED) {
+                try { g.close() } catch (_: Throwable) {}
+                return
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                reconnectGeneration++
+                reconnectAttempt = 0
                 connected = true; gatt = g
                 listener.onLiveConnection(true, try { g.device.name } catch (_: Throwable) { "DTCO" })
                 try { if (!g.requestMtu(512)) g.discoverServices() } catch (_: Throwable) { g.discoverServices() }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                if (gatt == g) gatt = null
                 connected = false; waiting = false; token++
+                try { g.close() } catch (_: Throwable) {}
                 listener.onLiveConnection(false, null)
+                scheduleReconnect()
             }
         }
 
@@ -151,14 +205,14 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     }
 
     private fun requestNext(g: BluetoothGatt) {
-        if (!connected || !rhmi || waiting) return
+        if (!connected || !rhmi || waiting || gatt != g) return
 
         if (index >= dids.size) {
             cycle++
             log("LIVE CYCLE #$cycle COMPLETE")
             val t = ++token
             handler.postDelayed({
-                if (!connected || !rhmi || t != token) return@postDelayed
+                if (!connected || !rhmi || t != token || gatt != g) return@postDelayed
                 index = 0; waiting = false; requestNext(g)
             }, POLL_INTERVAL)
             return
@@ -166,7 +220,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
 
         grant(g)
         handler.postDelayed({
-            if (!connected || waiting || index >= dids.size) return@postDelayed
+            if (!connected || waiting || index >= dids.size || gatt != g) return@postDelayed
             if (txCredits <= 0) { requestNext(g); return@postDelayed }
             val did = dids[index]
             val fifo = g.getService(SERVICE)?.getCharacteristic(FIFO) ?: return@postDelayed
@@ -175,7 +229,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
                 txCredits--; waiting = true
                 val t = ++token
                 handler.postDelayed({
-                    if (t == token && waiting) { waiting = false; index++; requestNext(g) }
+                    if (t == token && waiting && gatt == g) { waiting = false; index++; requestNext(g) }
                 }, RESPONSE_TIMEOUT)
             }
         }, 180)
