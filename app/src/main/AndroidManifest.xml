@@ -8,14 +8,23 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
-    <application android:allowBackup="true" android:label="TachoWatch" android:icon="@drawable/ic_launcher_tachowatch" android:roundIcon="@drawable/ic_launcher_tachowatch" android:supportsRtl="true" android:theme="@style/Theme.TachoWatch">
+
+    <application
+        android:allowBackup="true"
+        android:label="TachoWatch"
+        android:icon="@drawable/ic_launcher_tachowatch"
+        android:roundIcon="@drawable/ic_launcher_tachowatch"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TachoWatch">
+
         <activity android:name=".DriverActivity" android:exported="false" />
         <activity android:name=".Test14Activity" android:exported="false" />
         <activity android:name=".Test15Activity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="false" />
         <activity android:name=".DashboardActivity" android:exported="false" />
         <activity android:name=".DriverDashboardActivityV2" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
-        <activity android:name=".DriverDashboardActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
+        <activity android:name=".DriverDashboardActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".TachoWatchActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
