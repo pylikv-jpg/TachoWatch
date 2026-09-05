@@ -4,9 +4,13 @@ import re
 p = Path("app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivity.kt")
 text = p.read_text(encoding="utf-8")
 
-# The current dashboard already contains the confirmed direct-DTCO counter logic,
-# the dedicated rest card, and the six-hour driving+other-work calculation.
-# Do not re-apply the older source-rewrite integration to this layout.
+# Direct VDO/ISO counter dashboard supersedes the older RTO source rewrite.
+# Its 6-hour fallback is already implemented against atomic live activity deltas.
+if "directDailyDrivingMinutes" in text and "private fun processWorkingWindow()" in text:
+    print("Direct VDO/ISO dashboard detected; legacy RTO dashboard rewrite skipped")
+    raise SystemExit(0)
+
+# The previous formatted dashboard already contained the confirmed live/RTO logic.
 if "private lateinit var restTime: TextView" in text and "private fun activeWorkTotal(): Int = continuousMinutes + activeOtherWorkTotal()" in text:
     print("Current dashboard already contains the confirmed live/RTO logic")
     raise SystemExit(0)

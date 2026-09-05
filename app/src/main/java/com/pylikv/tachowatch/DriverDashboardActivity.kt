@@ -36,7 +36,18 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
+/**
+ * Main driver dashboard.
+ *
+ * Data-source policy (important):
+ * 1. Use direct tachograph/ISO 16844-7 driver timers whenever the DTCO supports them.
+ * 2. Never derive daily/shift driving from a sum of completed F923 periods when F99A exists.
+ * 3. Keep a conservative card + live fallback for older DTCO units that reject optional DIDs.
+ * 4. The 6-hour working-time counter remains read-only/local: driving + other work only;
+ *    availability and rest are excluded, and a qualifying 45-minute rest resets that window.
+ */
 class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener, DtcoBluetoothDiagnostic.Listener {
+
     companion object {
         private const val BG = 0xFF0B1118.toInt()
         private const val CARD = 0xFF141D27.toInt()
@@ -53,21 +64,18 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         private const val SELECTED_DTCO = "selected_dtco_address"
         private const val CARD_NAME = "driver_name_from_card"
         private const val KEEP_SCREEN_ON = "keep_screen_on"
+        private const val SHIFT_CLOSE_HANDLED = "direct_shift_close_handled"
 
-        // Shift-driving counter v3. Old SHIFT_COMPLETED logic is intentionally not reused:
-        // it lost completed F923 periods whenever F923 fell on WORK/short REST.
-        private const val SHIFT_STATE_VERSION = "shift_state_version"
-        private const val SHIFT_STATE_VERSION_CURRENT = 3
-        private const val SHIFT_INITIALIZED = "shift_counter_initialized_v3"
-        private const val SHIFT_TOTAL = "shift_total_driving_v3"
-        private const val SHIFT_PREV_CONTINUOUS = "shift_prev_continuous_v3"
-        private const val SHIFT_CLOSE_HANDLED = "shift_close_handled_v3"
-        private const val SHIFT_RESYNC_REQUIRED = "shift_resync_required_v3"
+        private const val FALLBACK_SHIFT_BASE = "fallback_shift_base"
+        private const val FALLBACK_SHIFT_LIVE = "fallback_shift_live"
+        private const val FALLBACK_PREV_CONT = "fallback_prev_cont"
+        private const val FALLBACK_INITIALIZED = "fallback_shift_initialized"
 
-        private const val WORK_PREV_ACTIVITY = "work_prev_activity"
-        private const val WORK_PREV_DURATION = "work_prev_duration"
-        private const val WORK_ACC = "other_work_window_minutes"
-        private const val AVAIL_ACC = "availability_window_minutes"
+        private const val WORK_TOTAL = "work6_direct_v4"
+        private const val WORK_OTHER = "work_other_direct_v4"
+        private const val WORK_AVAIL = "work_avail_direct_v4"
+        private const val WORK_PREV_ACTIVITY = "work_prev_activity_direct_v4"
+        private const val WORK_PREV_DURATION = "work_prev_duration_direct_v4"
     }
 
     private val btManager by lazy { getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
@@ -90,6 +98,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private lateinit var driver: TextView
 
     private lateinit var continuous: TextView
+    private lateinit var continuousSub: TextView
     private lateinit var continuousFrame: FrameLayout
     private lateinit var continuousProgress: View
     private lateinit var shiftDriving: TextView
@@ -122,22 +131,44 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private lateinit var twoWeekFrame: FrameLayout
     private lateinit var twoWeekProgress: View
 
+    // Established live DIDs.
     private var currentActivity = "—"
     private var activityMinutes = 0
     private var continuousMinutes = 0
     private var breakMinutes = 0
     private var twoWeekMinutes = 0
 
-    private var shiftCounterInitialized = false
-    private var shiftDrivingTotalMinutes = 0
-    private var previousContinuousMinutes = 0
-    private var shiftCloseHandled = false
-    private var lastProcessedCycle = 0
+    // Direct ISO/VDO-derived driver timers. Null = unsupported/not received yet.
+    private var directDailyDrivingMinutes: Int? = null       // F99A
+    private var directWeeklyDrivingMinutes: Int? = null      // F99B
+    private var directTimeUntilDailyRest: Int? = null        // F99C
+    private var directUninterruptedRest: Int? = null         // F9A2
+    private var directMinimumDailyRest: Int? = null          // F9A3
+    private var directMaximumDailyPeriod: Int? = null        // F9A5
+    private var directMaximumDailyDriving: Int? = null       // F9A6
+    private var directReducedDailyRestUses: Int? = null      // F9AB
+    private var directRemainingContinuousDriving: Int? = null// F9AD
+    private var directRemainingShiftDriving: Int? = null     // F9AF
+    private var directRemainingWeeklyDriving: Int? = null    // F9B1
+    private var directRemainingTwoWeekDriving: Int? = null   // F9B3
+    private var directNextBreakDuration: Int? = null         // F9B9
+    private var directRemainingCurrentBreak: Int? = null     // F9C0
+    private var directUntilNextBreakOrRest: Int? = null      // F9C2
 
-    private var previousActivity = "—"
-    private var previousActivityDuration = 0
+    // Old-DTCO fallback for shift driving only.
+    private var fallbackShiftBase = 0
+    private var fallbackShiftLive = 0
+    private var fallbackPreviousContinuous = 0
+    private var fallbackInitialized = false
+
+    // Local 6-hour working window (driving + work only).
+    private var workWindowMinutes = 0
     private var otherWorkWindowMinutes = 0
     private var availabilityWindowMinutes = 0
+    private var previousActivity = "—"
+    private var previousActivityDuration = 0
+    private var shiftCloseHandled = false
+    private var lastProcessedCycle = 0
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         findAndAutoConnect()
@@ -147,10 +178,10 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         super.onCreate(savedInstanceState)
         window.statusBarColor = BG
         window.navigationBarColor = BG
-        applyKeepScreenOn()
         live = LiveDidDiagnostic(applicationContext, this)
         cardReader = DtcoBluetoothDiagnostic(applicationContext, this)
-        restoreCounters()
+        restoreState()
+        applyKeepScreenOn()
         buildUi()
         loadHistory()
         requestPermission()
@@ -159,7 +190,37 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     override fun onDestroy() {
         live.disconnect()
         cardReader.disconnect()
+        persistState()
         super.onDestroy()
+    }
+
+    private fun restoreState() {
+        fallbackShiftBase = prefs.getInt(FALLBACK_SHIFT_BASE, 0)
+        fallbackShiftLive = prefs.getInt(FALLBACK_SHIFT_LIVE, 0)
+        fallbackPreviousContinuous = prefs.getInt(FALLBACK_PREV_CONT, 0)
+        fallbackInitialized = prefs.getBoolean(FALLBACK_INITIALIZED, false)
+
+        workWindowMinutes = prefs.getInt(WORK_TOTAL, 0)
+        otherWorkWindowMinutes = prefs.getInt(WORK_OTHER, 0)
+        availabilityWindowMinutes = prefs.getInt(WORK_AVAIL, 0)
+        previousActivity = prefs.getString(WORK_PREV_ACTIVITY, "—") ?: "—"
+        previousActivityDuration = prefs.getInt(WORK_PREV_DURATION, 0)
+        shiftCloseHandled = prefs.getBoolean(SHIFT_CLOSE_HANDLED, false)
+    }
+
+    private fun persistState() {
+        prefs.edit()
+            .putInt(FALLBACK_SHIFT_BASE, fallbackShiftBase)
+            .putInt(FALLBACK_SHIFT_LIVE, fallbackShiftLive)
+            .putInt(FALLBACK_PREV_CONT, fallbackPreviousContinuous)
+            .putBoolean(FALLBACK_INITIALIZED, fallbackInitialized)
+            .putInt(WORK_TOTAL, workWindowMinutes)
+            .putInt(WORK_OTHER, otherWorkWindowMinutes)
+            .putInt(WORK_AVAIL, availabilityWindowMinutes)
+            .putString(WORK_PREV_ACTIVITY, previousActivity)
+            .putInt(WORK_PREV_DURATION, previousActivityDuration)
+            .putBoolean(SHIFT_CLOSE_HANDLED, shiftCloseHandled)
+            .apply()
     }
 
     private fun buildUi() {
@@ -174,29 +235,15 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
             insets
         }
 
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(TextView(this).apply {
-            text = "TachoWatch"
-            textSize = 25f
-            setTextColor(TEXT)
-            setTypeface(typeface, Typeface.BOLD)
+            text = "TachoWatch"; textSize = 25f; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD)
         })
-        status = TextView(this).apply {
-            text = "DTCO не подключён"
-            textSize = 11.5f
-            setTextColor(CYAN)
-        }
+        status = TextView(this).apply { text = "DTCO не подключён"; textSize = 11.5f; setTextColor(CYAN) }
         titles.addView(status)
         top.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        top.addView(smallButton("☰").apply {
-            textSize = 20f
-            contentDescription = "Меню"
-            setOnClickListener { showMainMenu(this) }
-        })
+        top.addView(smallButton("☰").apply { textSize = 20f; contentDescription = "Меню"; setOnClickListener { showMainMenu(this) } })
         root.addView(top)
         root.addView(space(7))
 
@@ -211,10 +258,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
 
         val viewport = FrameLayout(this)
         nowRoot = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        historyRoot = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-        }
+        historyRoot = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
         viewport.addView(nowRoot)
         viewport.addView(historyRoot)
         root.addView(viewport, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -240,8 +284,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
                 3 -> {
                     val enabled = !prefs.getBoolean(KEEP_SCREEN_ON, false)
                     prefs.edit().putBoolean(KEEP_SCREEN_ON, enabled).apply()
-                    applyKeepScreenOn()
-                    true
+                    applyKeepScreenOn(); true
                 }
                 else -> false
             }
@@ -259,70 +302,59 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         driver = TextView(this).apply {
             text = prefs.getString(CARD_NAME, null) ?: "Водитель"
-            textSize = 25f
-            setTextColor(TEXT)
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(dp(3), dp(4), 0, dp(8))
+            textSize = 25f; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD); setPadding(dp(3), dp(4), 0, dp(8))
         }
         c.addView(driver)
 
-        val d = progressCard()
-        continuousFrame = d.first; continuousProgress = d.second
+        val d = progressCard(); continuousFrame = d.first; continuousProgress = d.second
         d.third.addView(label("🚗  НЕПРЕРЫВНОЕ ВОЖДЕНИЕ"))
-        continuous = value("—", 30f); d.third.addView(continuous); d.third.addView(sub("лимит 4:30"))
+        continuous = value("—", 30f); d.third.addView(continuous)
+        continuousSub = sub("лимит 4:30"); d.third.addView(continuousSub)
         c.addView(continuousFrame); c.addView(space(7))
 
-        val s = progressCard()
-        shiftDrivingFrame = s.first; shiftDrivingProgress = s.second
+        val s = progressCard(); shiftDrivingFrame = s.first; shiftDrivingProgress = s.second
         s.third.addView(label("🚗  ВОЖДЕНИЕ ЗА СМЕНУ"))
         shiftDriving = value("—", 28f); s.third.addView(shiftDriving)
-        shiftDrivingSub = sub("онлайн"); s.third.addView(shiftDrivingSub)
+        shiftDrivingSub = sub("ожидание прямого счётчика DTCO"); s.third.addView(shiftDrivingSub)
         c.addView(shiftDrivingFrame); c.addView(space(7))
 
-        val six = progressCard()
-        work6Frame = six.first; work6Progress = six.second
+        val six = progressCard(); work6Frame = six.first; work6Progress = six.second
         six.third.addView(label("⚒  НЕПРЕРЫВНАЯ РАБОТА"))
         work6 = value("—", 28f); six.third.addView(work6)
         work6Sub = sub("вождение + другая работа • лимит 6:00"); six.third.addView(work6Sub)
         c.addView(work6Frame); c.addView(space(7))
 
-        val ow = progressCard()
-        otherWorkFrame = ow.first; otherWorkProgress = ow.second
+        val ow = progressCard(); otherWorkFrame = ow.first; otherWorkProgress = ow.second
         ow.third.addView(label("⚒  ДРУГАЯ РАБОТА"))
         otherWork = value("0:00", 26f); ow.third.addView(otherWork)
-        ow.third.addView(sub("молотки после последней паузы 45 мин"))
+        ow.third.addView(sub("молотки после последней засчитанной паузы 45 мин"))
         c.addView(otherWorkFrame); c.addView(space(7))
 
-        val av = progressCard()
-        availabilityFrame = av.first; availabilityProgress = av.second
+        val av = progressCard(); availabilityFrame = av.first; availabilityProgress = av.second
         av.third.addView(label("✉  ОЖИДАНИЕ / ГОТОВНОСТЬ"))
         availability = value("0:00", 26f); av.third.addView(availability)
         av.third.addView(sub("не входит в 6-часовую непрерывную работу"))
         c.addView(availabilityFrame); c.addView(space(7))
 
-        val r = progressCard()
-        restFrame = r.first; restProgress = r.second
+        val r = progressCard(); restFrame = r.first; restProgress = r.second
         r.third.addView(label("🛏  ОТДЫХ"))
         restTime = value("0:00", 30f); r.third.addView(restTime)
         restSub = sub("ожидание онлайн-данных"); r.third.addView(restSub)
         c.addView(restFrame); c.addView(space(7))
 
-        val ww = progressCard()
-        workWeekFrame = ww.first; workWeekProgress = ww.second
+        val ww = progressCard(); workWeekFrame = ww.first; workWeekProgress = ww.second
         ww.third.addView(label("⏳  РАБОЧАЯ НЕДЕЛЯ"))
         workWeek = value("—", 28f); ww.third.addView(workWeek)
         workWeekSub = sub("144:00 от окончания последнего недельного отдыха"); ww.third.addView(workWeekSub)
         c.addView(workWeekFrame); c.addView(space(7))
 
-        val w = progressCard()
-        weekFrame = w.first; weekProgress = w.second
+        val w = progressCard(); weekFrame = w.first; weekProgress = w.second
         w.third.addView(label("🚗  ТЕКУЩАЯ НЕДЕЛЯ"))
         week = value("—", 28f); w.third.addView(week)
-        weekSub = sub("по карте водителя"); w.third.addView(weekSub)
+        weekSub = sub("прямой счётчик DTCO / карта"); w.third.addView(weekSub)
         c.addView(weekFrame); c.addView(space(7))
 
-        val tw = progressCard()
-        twoWeekFrame = tw.first; twoWeekProgress = tw.second
+        val tw = progressCard(); twoWeekFrame = tw.first; twoWeekProgress = tw.second
         tw.third.addView(label("🚗  ДВЕ НЕДЕЛИ"))
         twoWeek = value("—", 28f); tw.third.addView(twoWeek); tw.third.addView(sub("лимит 90:00"))
         c.addView(twoWeekFrame)
@@ -340,9 +372,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         if (days.isEmpty()) c.addView(value("История появится после полного считывания карты", 17f))
         days.forEachIndexed { i, day ->
             val box = card()
-            box.addView(TextView(this).apply {
-                text = prettyDate(day.date); textSize = 18f; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD)
-            })
+            box.addView(TextView(this).apply { text = prettyDate(day.date); textSize = 18f; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD) })
             box.addView(sub("${flag(day.startCountry)} ${day.startCountry ?: "—"}  Начало смены  ${day.startTime ?: "—"}"))
             box.addView(value("🚗 Вождение  ${HistoryData.fmt(day.drivingMinutes)}", 18f))
             box.addView(sub("⚒ Другая работа  ${HistoryData.fmt(day.workMinutes)}"))
@@ -354,10 +384,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
                 HistoryData.gapMinutes(days[i + 1], day)?.let { gap ->
                     c.addView(TextView(this).apply {
                         text = if (gap >= 24 * 60) "🛏 Недельный отдых  ${HistoryData.fmt(gap)}" else "🛏 Межсуточный отдых  ${HistoryData.fmt(gap)}"
-                        textSize = 14f
-                        gravity = Gravity.CENTER
-                        setTextColor(if (gap >= 24 * 60) CYAN else MUTED)
-                        setPadding(0, dp(7), 0, dp(7))
+                        textSize = 14f; gravity = Gravity.CENTER; setTextColor(if (gap >= 24 * 60) CYAN else MUTED); setPadding(0, dp(7), 0, dp(7))
                     })
                 }
             }
@@ -372,143 +399,63 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         if (r.error != null) return false
         history = HistoryData.load(r)
         if (::historyRoot.isInitialized) buildHistoryView()
+        if (!fallbackInitialized) initialiseFallbackFromCard()
         updateWeekCards()
         updateWorkWeekClock()
-        updateShiftDriving()
         return true
     }
 
-    private fun restoreCounters() {
-        val storedVersion = prefs.getInt(SHIFT_STATE_VERSION, 0)
-        if (storedVersion != SHIFT_STATE_VERSION_CURRENT) {
-            // One-time migration: the old accumulator is known-corrupt, so do not carry it forward.
-            shiftCounterInitialized = false
-            shiftDrivingTotalMinutes = 0
-            previousContinuousMinutes = 0
-            shiftCloseHandled = false
-            prefs.edit()
-                .putInt(SHIFT_STATE_VERSION, SHIFT_STATE_VERSION_CURRENT)
-                .putBoolean(SHIFT_INITIALIZED, false)
-                .putInt(SHIFT_TOTAL, 0)
-                .putInt(SHIFT_PREV_CONTINUOUS, 0)
-                .putBoolean(SHIFT_CLOSE_HANDLED, false)
-                .putBoolean(SHIFT_RESYNC_REQUIRED, true)
-                .apply()
-        } else {
-            shiftCounterInitialized = prefs.getBoolean(SHIFT_INITIALIZED, false)
-            shiftDrivingTotalMinutes = prefs.getInt(SHIFT_TOTAL, 0)
-            previousContinuousMinutes = prefs.getInt(SHIFT_PREV_CONTINUOUS, 0)
-            shiftCloseHandled = prefs.getBoolean(SHIFT_CLOSE_HANDLED, false)
-        }
-
-        previousActivity = prefs.getString(WORK_PREV_ACTIVITY, "—") ?: "—"
-        previousActivityDuration = prefs.getInt(WORK_PREV_DURATION, 0)
-        otherWorkWindowMinutes = prefs.getInt(WORK_ACC, 0)
-        availabilityWindowMinutes = prefs.getInt(AVAIL_ACC, 0)
-    }
-
-    private fun persistCounters() {
-        prefs.edit()
-            .putInt(SHIFT_STATE_VERSION, SHIFT_STATE_VERSION_CURRENT)
-            .putBoolean(SHIFT_INITIALIZED, shiftCounterInitialized)
-            .putInt(SHIFT_TOTAL, shiftDrivingTotalMinutes)
-            .putInt(SHIFT_PREV_CONTINUOUS, previousContinuousMinutes)
-            .putBoolean(SHIFT_CLOSE_HANDLED, shiftCloseHandled)
-            .putString(WORK_PREV_ACTIVITY, previousActivity)
-            .putInt(WORK_PREV_DURATION, previousActivityDuration)
-            .putInt(WORK_ACC, otherWorkWindowMinutes)
-            .putInt(AVAIL_ACC, availabilityWindowMinutes)
-            .apply()
-    }
-
-    /**
-     * Reconstruct the current shift from the card history. We sum backwards until the
-     * first inter-day rest of at least 9h. This is substantially safer than taking only
-     * the last calendar day and also covers shifts crossing midnight.
-     */
     private fun cardShiftDrivingMinutes(): Int {
-        val h = history ?: return 0
-        val days = h.days
+        val days = history?.days ?: return 0
         if (days.isEmpty()) return 0
         var total = 0
         for (i in days.indices.reversed()) {
             total += days[i].drivingMinutes
             if (i == 0) break
-            val previous = days[i - 1]
-            val current = days[i]
-            val rest = h.restBetween(previous, current)?.actualMinutes ?: HistoryData.actualGapMinutes(previous, current)
-            if (rest != null && rest >= 9 * 60) break
+            val gap = HistoryData.gapMinutes(days[i - 1], days[i])
+            if (gap != null && gap >= 9 * 60) break
         }
         return total
     }
 
-    private fun initializeShiftCounterFromCard() {
-        if (shiftCounterInitialized) return
-        val dailyRestReached = currentActivity.contains("ОТДЫХ") && activityMinutes >= 9 * 60
-        shiftDrivingTotalMinutes = if (dailyRestReached) 0 else cardShiftDrivingMinutes()
-        previousContinuousMinutes = continuousMinutes
-        shiftCloseHandled = dailyRestReached
-        shiftCounterInitialized = true
-        persistCounters()
+    private fun initialiseFallbackFromCard() {
+        fallbackShiftBase = cardShiftDrivingMinutes()
+        fallbackShiftLive = 0
+        fallbackPreviousContinuous = continuousMinutes
+        fallbackInitialized = true
+        persistState()
     }
 
     private fun processCycle() {
-        if (!shiftCounterInitialized) {
-            // First live cycle is a baseline. Card history already contains driving up to
-            // the card-read point, so we must not add F923 again here.
-            initializeShiftCounterFromCard()
-            processActivityAccumulators()
-            persistCounters()
-            updateShiftDriving()
-            return
-        }
-
-        val isDriving = currentActivity.contains("ВОЖДЕНИЕ")
-        val wasDriving = previousActivity.contains("ВОЖДЕНИЕ")
-
-        // F923 can fall to zero/smaller value immediately when the mode changes to WORK
-        // or REST. Therefore shift driving is accumulated by positive deltas and NEVER
-        // derived as "saved + current F923". A falling F923 cannot reduce the shift total.
-        val drivingDelta = when {
-            isDriving && !wasDriving -> continuousMinutes.coerceAtLeast(0)
-            isDriving && continuousMinutes >= previousContinuousMinutes -> continuousMinutes - previousContinuousMinutes
-            isDriving && continuousMinutes < previousContinuousMinutes -> continuousMinutes.coerceAtLeast(0)
-            else -> 0
-        }
-        if (drivingDelta > 0) shiftDrivingTotalMinutes += drivingDelta
-        previousContinuousMinutes = continuousMinutes
-
-        val dailyRestReached = currentActivity.contains("ОТДЫХ") && activityMinutes >= 9 * 60
-        var closedShiftNow = false
-        if (dailyRestReached) {
-            if (!shiftCloseHandled) {
-                // A 9h/11h/weekly rest closes the previous shift. Reset once and request
-                // a fresh card read so history and the next shift start from the card.
-                shiftDrivingTotalMinutes = 0
-                previousContinuousMinutes = continuousMinutes
-                shiftCloseHandled = true
-                prefs.edit().putBoolean(SHIFT_RESYNC_REQUIRED, true).apply()
-                closedShiftNow = true
-            }
-        } else if (!currentActivity.contains("ОТДЫХ")) {
-            // New active shift after the qualifying daily rest.
-            shiftCloseHandled = false
-        }
-
-        processActivityAccumulators()
-        persistCounters()
-        updateShiftDriving()
-
-        if (closedShiftNow && !cardReading) {
-            mainHandler.post {
-                if (!cardReading) startCardRead("Смена завершена", true)
-            }
-        }
+        processFallbackShiftDriving()
+        processWorkingWindow()
+        processShiftClosure()
+        persistState()
     }
 
-    private fun processActivityAccumulators() {
-        val restReached45 = currentActivity.contains("ОТДЫХ") && maxOf(breakMinutes, activityMinutes) >= 45
-        if (restReached45) {
+    private fun processFallbackShiftDriving() {
+        if (!fallbackInitialized) initialiseFallbackFromCard()
+        if (directDailyDrivingMinutes != null) {
+            // Direct F99A is authoritative. Keep fallback baseline ready, but never mix it into F99A.
+            fallbackPreviousContinuous = continuousMinutes
+            return
+        }
+        val driving = currentActivity.contains("ВОЖДЕНИЕ")
+        if (driving) {
+            val delta = when {
+                continuousMinutes >= fallbackPreviousContinuous -> continuousMinutes - fallbackPreviousContinuous
+                else -> continuousMinutes
+            }.coerceAtLeast(0)
+            if (delta in 1..30) fallbackShiftLive += delta
+        }
+        fallbackPreviousContinuous = continuousMinutes
+    }
+
+    private fun processWorkingWindow() {
+        val resting = currentActivity.contains("ОТДЫХ")
+        val qualifying45 = resting && maxOf(activityMinutes, breakMinutes, directUninterruptedRest ?: 0) >= 45
+        if (qualifying45) {
+            workWindowMinutes = 0
             otherWorkWindowMinutes = 0
             availabilityWindowMinutes = 0
             previousActivity = currentActivity
@@ -516,42 +463,93 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
             return
         }
 
-        if (previousActivity != currentActivity) {
-            val finished = previousActivityDuration.coerceAtLeast(0)
-            when {
-                previousActivity.contains("РАБОТА") -> otherWorkWindowMinutes += finished
-                previousActivity.contains("ГОТОВНОСТЬ") -> availabilityWindowMinutes += finished
+        val delta = if (currentActivity == previousActivity) {
+            (activityMinutes - previousActivityDuration).coerceAtLeast(0)
+        } else {
+            // Mode changed between polls. F927 is duration of the new mode; count only
+            // that observed duration rather than reusing the previous mode's total.
+            activityMinutes.coerceAtLeast(0)
+        }.coerceAtMost(30)
+
+        when {
+            currentActivity.contains("ВОЖДЕНИЕ") -> workWindowMinutes += delta
+            currentActivity.contains("РАБОТА") -> {
+                workWindowMinutes += delta
+                otherWorkWindowMinutes += delta
             }
-            previousActivity = currentActivity
-            previousActivityDuration = activityMinutes
-            return
+            currentActivity.contains("ГОТОВНОСТЬ") -> availabilityWindowMinutes += delta
         }
+        previousActivity = currentActivity
         previousActivityDuration = activityMinutes
     }
 
-    private fun activeOtherWorkTotal(): Int = otherWorkWindowMinutes + if (currentActivity.contains("РАБОТА")) activityMinutes else 0
-    private fun activeAvailabilityTotal(): Int = availabilityWindowMinutes + if (currentActivity.contains("ГОТОВНОСТЬ")) activityMinutes else 0
-
-    // 6-hour work card is unchanged in this patch; its own source accounting remains
-    // separate from the corrected shift-driving accumulator.
-    private fun activeWorkTotal(): Int = continuousMinutes + activeOtherWorkTotal()
-
-    private fun updateShiftDriving() {
-        if (!::shiftDriving.isInitialized) return
-        if (!shiftCounterInitialized) {
-            shiftDriving.text = "—"
-            shiftDrivingSub.text = "ожидание синхронизации карты/live"
-            return
+    private fun processShiftClosure() {
+        val actualRest = maxOf(activityMinutes, directUninterruptedRest ?: 0)
+        val dailyRestReached = currentActivity.contains("ОТДЫХ") && actualRest >= 9 * 60
+        if (dailyRestReached && !shiftCloseHandled) {
+            shiftCloseHandled = true
+            fallbackShiftBase = 0
+            fallbackShiftLive = 0
+            fallbackPreviousContinuous = continuousMinutes
+            fallbackInitialized = true
+            if (!cardReading) mainHandler.post { if (!cardReading) startCardRead("Смена завершена", true) }
+        } else if (!currentActivity.contains("ОТДЫХ")) {
+            shiftCloseHandled = false
         }
-        val total = shiftDrivingTotalMinutes
-        val limit = shiftDrivingLimit()
-        val remain = (limit - total).coerceAtLeast(0)
-        shiftDriving.text = "${HistoryData.fmt(total)} из ${HistoryData.fmt(limit)}"
-        shiftDrivingSub.text = if (remain <= 30) "⚠ Осталось ${HistoryData.fmt(remain)} вождения" else "осталось ${HistoryData.fmt(remain)} • онлайн"
-        setProgress(shiftDrivingFrame, shiftDrivingProgress, total.toFloat() / limit, shiftDriveColor(total, limit))
     }
 
-    private fun shiftDrivingLimit(): Int = if (currentWeekTenHourUses() >= 2) 540 else 600
+    private fun updateNow() {
+        val remainingContinuous = directRemainingContinuousDriving
+        continuous.text = "${HistoryData.fmt(continuousMinutes)} из 4:30"
+        continuousSub.text = if (remainingContinuous != null) "осталось ${HistoryData.fmt(remainingContinuous)} • прямой DTCO" else "лимит 4:30"
+        setProgress(continuousFrame, continuousProgress, continuousMinutes / 270f, driveColor(continuousMinutes))
+
+        val shiftTotal = directDailyDrivingMinutes ?: (fallbackShiftBase + fallbackShiftLive)
+        val shiftLimit = directMaximumDailyDriving?.takeIf { it in 540..600 } ?: fallbackDailyLimit()
+        val shiftRemaining = directRemainingShiftDriving ?: (shiftLimit - shiftTotal).coerceAtLeast(0)
+        shiftDriving.text = "${HistoryData.fmt(shiftTotal)} из ${HistoryData.fmt(shiftLimit)}"
+        shiftDrivingSub.text = if (directDailyDrivingMinutes != null) {
+            if (shiftRemaining <= 30) "⚠ Осталось ${HistoryData.fmt(shiftRemaining)} • прямой DTCO" else "осталось ${HistoryData.fmt(shiftRemaining)} • прямой DTCO"
+        } else {
+            "осталось ${HistoryData.fmt(shiftRemaining)} • резерв: карта + live"
+        }
+        setProgress(shiftDrivingFrame, shiftDrivingProgress, shiftTotal.toFloat() / shiftLimit.coerceAtLeast(1), shiftDriveColor(shiftTotal, shiftLimit))
+
+        work6.text = "${HistoryData.fmt(workWindowMinutes)} из 6:00"
+        work6Sub.text = if (workWindowMinutes >= 330) "⚠ До 6 часов осталось ${HistoryData.fmt((360 - workWindowMinutes).coerceAtLeast(0))}" else "вождение + другая работа"
+        setProgress(work6Frame, work6Progress, workWindowMinutes / 360f, workColor(workWindowMinutes))
+
+        otherWork.text = HistoryData.fmt(otherWorkWindowMinutes)
+        setProgress(otherWorkFrame, otherWorkProgress, otherWorkWindowMinutes / 360f, workColor(otherWorkWindowMinutes))
+        availability.text = HistoryData.fmt(availabilityWindowMinutes)
+        setProgress(availabilityFrame, availabilityProgress, availabilityWindowMinutes / 360f, GREEN)
+
+        val resting = currentActivity.contains("ОТДЫХ")
+        val actual = if (resting) maxOf(activityMinutes, breakMinutes, directUninterruptedRest ?: 0) else breakMinutes
+        val credited = HistoryData.creditedRestMinutes(actual)
+        val nextLocal = HistoryData.nextRestMilestone(actual)
+        restTime.text = HistoryData.fmt(actual)
+        restSub.text = if (resting) {
+            val directText = when {
+                directRemainingCurrentBreak != null && directRemainingCurrentBreak!! > 0 -> " • до конца текущего отдыха ${HistoryData.fmt(directRemainingCurrentBreak!!)}"
+                directNextBreakDuration != null && directNextBreakDuration!! > 0 -> " • следующий перерыв ${HistoryData.fmt(directNextBreakDuration!!)}"
+                else -> ""
+            }
+            "Засчитано ${HistoryData.fmt(credited)}$directText"
+        } else {
+            val until = directUntilNextBreakOrRest
+            if (until != null) "до следующего перерыва/отдыха ${HistoryData.fmt(until)}" else "сейчас не отдых • накоплено ${HistoryData.fmt(actual)}"
+        }
+        val target = nextLocal ?: 45 * 60
+        setProgress(restFrame, restProgress, if (target > 0) actual.toFloat() / target else 0f, restMilestoneColor(credited))
+
+        twoWeek.text = "${HistoryData.fmt(twoWeekMinutes)} из 90:00"
+        setProgress(twoWeekFrame, twoWeekProgress, twoWeekMinutes / (90f * 60f), limitColor(twoWeekMinutes, 90 * 60))
+        updateWeekCards()
+        updateWorkWeekClock()
+    }
+
+    private fun fallbackDailyLimit(): Int = if (currentWeekTenHourUses() >= 2) 540 else 600
 
     private fun currentWeekTenHourUses(): Int {
         val now = isoCalendar(Date())
@@ -562,17 +560,24 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         }
     }
 
-    private fun shiftDriveColor(v: Int, limit: Int) = when {
-        v >= limit - 30 -> RED
-        v >= limit - 60 -> YELLOW
-        else -> GREEN
+    private fun updateWeekCards() {
+        if (!::week.isInitialized) return
+        val current = directWeeklyDrivingMinutes ?: history?.currentWeekCardMinutes ?: 0
+        val prev = history?.previousWeekDrivingMinutes ?: 0
+        val calculatedLimit = minOf(56 * 60, (90 * 60 - prev).coerceAtLeast(0))
+        val directRemaining = directRemainingWeeklyDriving
+        val limit = if (directRemaining != null && current + directRemaining in 0..56 * 60) current + directRemaining else calculatedLimit
+        week.text = "${HistoryData.fmt(current)} из ${HistoryData.fmt(limit)}"
+        val src = if (directWeeklyDrivingMinutes != null) "прямой DTCO" else "карта"
+        weekSub.text = if (directRemaining != null) "$src • осталось ${HistoryData.fmt(directRemaining)}" else "$src • прошл. неделя ${HistoryData.fmt(prev)}"
+        setProgress(weekFrame, weekProgress, if (limit > 0) current.toFloat() / limit else 1f, limitColor(current, limit))
     }
 
     private fun updateWorkWeekClock() {
         if (!::workWeek.isInitialized) return
         val start = history?.let { HistoryData.lastWeeklyRestEndMillis(it.days) }
         if (start == null) {
-            workWeek.text = "—"
+            workWeek.text = directTimeUntilDailyRest?.let { "${HistoryData.fmt(it)} до суточного отдыха" } ?: "—"
             workWeekSub.text = "не найден законченный недельный отдых на карте"
             setProgress(workWeekFrame, workWeekProgress, 0f, GREEN)
             return
@@ -590,23 +595,53 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         })
     }
 
-    private fun showNow() {
-        nowRoot.visibility = View.VISIBLE
-        historyRoot.visibility = View.GONE
-        updateTabState(true)
+    private fun loadDirectValues(log: String) {
+        mins(last(log, "F99A"))?.let { directDailyDrivingMinutes = it }
+        mins(last(log, "F99B"))?.let { directWeeklyDrivingMinutes = it }
+        mins(last(log, "F99C"))?.let { directTimeUntilDailyRest = it }
+        mins(last(log, "F9A2"))?.let { directUninterruptedRest = it }
+        mins(last(log, "F9A3"))?.let { directMinimumDailyRest = it }
+        mins(last(log, "F9A5"))?.let { directMaximumDailyPeriod = it }
+        mins(last(log, "F9A6"))?.let { directMaximumDailyDriving = it }
+        count(last(log, "F9AB"))?.let { directReducedDailyRestUses = it }
+        mins(last(log, "F9AD"))?.let { directRemainingContinuousDriving = it }
+        mins(last(log, "F9AF"))?.let { directRemainingShiftDriving = it }
+        mins(last(log, "F9B1"))?.let { directRemainingWeeklyDriving = it }
+        mins(last(log, "F9B3"))?.let { directRemainingTwoWeekDriving = it }
+        mins(last(log, "F9B9"))?.let { directNextBreakDuration = it }
+        mins(last(log, "F9C0"))?.let { directRemainingCurrentBreak = it }
+        mins(last(log, "F9C2"))?.let { directUntilNextBreakOrRest = it }
     }
 
-    private fun showHistory() {
-        loadHistory()
-        nowRoot.visibility = View.GONE
-        historyRoot.visibility = View.VISIBLE
-        updateTabState(false)
+    override fun onLiveLog(log: String) {
+        runOnUiThread {
+            val cycle = Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
+            if (cycle == null || cycle <= lastProcessedCycle) return@runOnUiThread
+            lastProcessedCycle = cycle
+
+            last(log, "F931")?.let {
+                if (it.isNotBlank() && it != "—") {
+                    driver.text = it
+                    prefs.edit().putString(CARD_NAME, it).apply()
+                }
+            }
+            last(log, "F903")?.let { currentActivity = it }
+            mins(last(log, "F927"))?.let { activityMinutes = it }
+            mins(last(log, "F923"))?.let { continuousMinutes = it }
+            mins(last(log, "F925"))?.let { breakMinutes = it }
+            mins(last(log, "F938"))?.let { twoWeekMinutes = it }
+            loadDirectValues(log)
+
+            processCycle()
+            status.text = if (directDailyDrivingMinutes != null) "Онлайн • прямые счётчики DTCO" else "Онлайн • совместимый режим"
+            updateNow()
+        }
     }
 
-    private fun updateTabState(nowSelected: Boolean) {
-        if (!::nowTab.isInitialized || !::historyTab.isInitialized) return
-        nowTab.background = rounded(if (nowSelected) GREEN else CARD, dp(11).toFloat(), if (nowSelected) GREEN else BORDER)
-        historyTab.background = rounded(if (nowSelected) CARD else GREEN, dp(11).toFloat(), if (nowSelected) BORDER else GREEN)
+    override fun onLiveConnection(connected: Boolean, deviceName: String?) {
+        runOnUiThread {
+            if (!cardReading) status.text = if (connected) "Онлайн • ${deviceName ?: "DTCO"} • читаю счётчики" else "Восстановление связи с DTCO…"
+        }
     }
 
     private fun requestPermission() {
@@ -621,23 +656,14 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         val saved = prefs.getString(SELECTED_DTCO, null)
         dtco = try { adapter?.bondedDevices?.firstOrNull { it.address == saved } } catch (_: Throwable) { null }
         val d = dtco
-        if (d == null) {
-            status.text = "Выберите DTCO"
-            return
-        }
+        if (d == null) { status.text = "Выберите DTCO"; return }
         connectSelected(d)
     }
 
     private fun connectSelected(d: BluetoothDevice) {
         dtco = d
-        val firstReadNeeded = !prefs.getBoolean(FIRST_READ, false)
-        val resyncNeeded = prefs.getBoolean(SHIFT_RESYNC_REQUIRED, false)
-        if (firstReadNeeded || resyncNeeded) {
-            startCardRead(if (firstReadNeeded) "Первое подключение" else "Синхронизация счётчика смены", true)
-        } else {
-            status.text = "Подключение к DTCO…"
-            live.connect(d)
-        }
+        if (!prefs.getBoolean(FIRST_READ, false)) startCardRead("Первое подключение", true)
+        else { status.text = "Подключение к DTCO…"; live.connect(d) }
     }
 
     @SuppressLint("MissingPermission")
@@ -645,36 +671,21 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED)) {
-            permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN))
-            return
+            permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)); return
         }
         val devices = linkedMapOf<String, BluetoothDevice>()
         try { adapter?.bondedDevices?.filter { (it.name ?: "").contains("DTCO", true) }?.forEach { devices[it.address] = it } } catch (_: Throwable) {}
         val labels = mutableListOf<String>()
         val listAdapter = ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels)
-        fun refresh() {
-            labels.clear()
-            devices.values.forEach { labels.add("${safeName(it)}\n${it.address}") }
-            listAdapter.notifyDataSetChanged()
-        }
+        fun refresh() { labels.clear(); devices.values.forEach { labels.add("${safeName(it)}\n${it.address}") }; listAdapter.notifyDataSetChanged() }
         refresh()
         val dialog = AlertDialog.Builder(this)
             .setTitle("Выберите DTCO")
             .setAdapter(listAdapter) { _, which ->
                 val d = devices.values.toList().getOrNull(which) ?: return@setAdapter
-                shiftCounterInitialized = false
-                shiftDrivingTotalMinutes = 0
-                previousContinuousMinutes = 0
-                shiftCloseHandled = false
-                prefs.edit()
-                    .putString(SELECTED_DTCO, d.address)
-                    .putBoolean(FIRST_READ, false)
-                    .putBoolean(SHIFT_RESYNC_REQUIRED, true)
-                    .putBoolean(SHIFT_INITIALIZED, false)
-                    .putInt(SHIFT_TOTAL, 0)
-                    .putInt(SHIFT_PREV_CONTINUOUS, 0)
-                    .putBoolean(SHIFT_CLOSE_HANDLED, false)
-                    .apply()
+                prefs.edit().putString(SELECTED_DTCO, d.address).putBoolean(FIRST_READ, false).apply()
+                fallbackInitialized = false
+                directDailyDrivingMinutes = null
                 dtco = d
                 status.text = "Выбран ${safeName(d)}"
                 connectSelected(d)
@@ -686,19 +697,13 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     }
 
     @SuppressLint("MissingPermission")
-    private fun startNearbyScan(devices: MutableMap<String,BluetoothDevice>, refresh: () -> Unit) {
+    private fun startNearbyScan(devices: MutableMap<String, BluetoothDevice>, refresh: () -> Unit) {
         val a = adapter ?: return
         val cb = BluetoothAdapter.LeScanCallback { device, _, _ ->
             val n = try { device.name } catch (_: Throwable) { null }
-            if ((n ?: "").contains("DTCO", true)) {
-                devices[device.address] = device
-                runOnUiThread { refresh() }
-            }
+            if ((n ?: "").contains("DTCO", true)) { devices[device.address] = device; runOnUiThread { refresh() } }
         }
-        try {
-            a.startLeScan(cb)
-            mainHandler.postDelayed({ try { a.stopLeScan(cb) } catch (_: Throwable) {} }, 4000)
-        } catch (_: Throwable) {}
+        try { a.startLeScan(cb); mainHandler.postDelayed({ try { a.stopLeScan(cb) } catch (_: Throwable) {} }, 4000) } catch (_: Throwable) {}
     }
 
     @SuppressLint("MissingPermission")
@@ -714,60 +719,16 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         cardReader.connect(d)
     }
 
-    override fun onLiveConnection(connected: Boolean, deviceName: String?) {
-        runOnUiThread {
-            if (!cardReading) {
-                status.text = if (connected) "Онлайн • ${deviceName ?: "DTCO"} • проверяю данные" else "Восстановление связи с DTCO…"
-            }
-        }
-    }
-
-    override fun onLiveLog(log: String) {
-        runOnUiThread {
-            val cycle = Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
-            if (cycle == null || cycle <= lastProcessedCycle) return@runOnUiThread
-            lastProcessedCycle = cycle
-            last(log, "F931")?.let {
-                if (it.isNotBlank() && it != "—") {
-                    driver.text = it
-                    prefs.edit().putString(CARD_NAME, it).apply()
-                }
-            }
-            last(log, "F903")?.let { currentActivity = it }
-            mins(last(log, "F927"))?.let { activityMinutes = it }
-            mins(last(log, "F923"))?.let { continuousMinutes = it }
-            mins(last(log, "F925"))?.let { breakMinutes = it }
-            mins(last(log, "F938"))?.let { twoWeekMinutes = it }
-            processCycle()
-            status.text = "Онлайн • данные актуальны"
-            updateNow()
-        }
-    }
-
     override fun onLogChanged(fullLog: String) {
         if (!cardReading) return
         when {
             fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=SUCCESS") -> runOnUiThread {
                 prefs.edit().putBoolean(FIRST_READ, true).apply()
-                val historyLoaded = loadHistory()
-                if (historyLoaded) {
-                    // Force a clean baseline from the newly read card on the next live cycle.
-                    shiftCounterInitialized = false
-                    shiftDrivingTotalMinutes = 0
-                    previousContinuousMinutes = 0
-                    prefs.edit()
-                        .putBoolean(SHIFT_INITIALIZED, false)
-                        .putInt(SHIFT_TOTAL, 0)
-                        .putInt(SHIFT_PREV_CONTINUOUS, 0)
-                        .putBoolean(SHIFT_RESYNC_REQUIRED, false)
-                        .apply()
-                }
+                loadHistory()
+                initialiseFallbackFromCard()
                 finishCardRead(true)
             }
-            fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=FAILED") -> runOnUiThread {
-                // Keep SHIFT_RESYNC_REQUIRED=true; a later reconnect will retry the card sync.
-                finishCardRead(false)
-            }
+            fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=FAILED") -> runOnUiThread { finishCardRead(false) }
         }
     }
 
@@ -781,56 +742,14 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         resumeLive = false
         status.text = if (ok) "Карта считана • данные обновлены" else "Ошибка чтения карты • подключаю live"
         cardReader.disconnect()
-        if (resume) {
-            val d = dtco ?: return
-            status.postDelayed({ live.connect(d) }, 500)
-        }
+        if (resume) dtco?.let { d -> status.postDelayed({ live.connect(d) }, 500) }
     }
 
-    private fun updateNow() {
-        continuous.text = "${HistoryData.fmt(continuousMinutes)} из 4:30"
-        setProgress(continuousFrame, continuousProgress, continuousMinutes / 270f, driveColor(continuousMinutes))
-        updateShiftDriving()
-
-        val wt = activeWorkTotal()
-        work6.text = "${HistoryData.fmt(wt)} из 6:00"
-        work6Sub.text = if (wt >= 330) "⚠ До 6 часов осталось ${HistoryData.fmt((360 - wt).coerceAtLeast(0))}" else "вождение + другая работа"
-        setProgress(work6Frame, work6Progress, wt / 360f, workColor(wt))
-
-        val ow = activeOtherWorkTotal()
-        otherWork.text = HistoryData.fmt(ow)
-        setProgress(otherWorkFrame, otherWorkProgress, ow / 360f, workColor(ow))
-
-        val av = activeAvailabilityTotal()
-        availability.text = HistoryData.fmt(av)
-        setProgress(availabilityFrame, availabilityProgress, av / 360f, GREEN)
-
-        val resting = currentActivity.contains("ОТДЫХ")
-        val actual = if (resting) maxOf(activityMinutes, breakMinutes) else breakMinutes
-        val credited = HistoryData.creditedRestMinutes(actual)
-        val next = HistoryData.nextRestMilestone(actual)
-        restTime.text = HistoryData.fmt(actual)
-        restSub.text = if (resting) {
-            if (next != null) "Засчитано: ${HistoryData.fmt(credited)} • следующая ступень ${HistoryData.fmt(next)}"
-            else "Засчитано: ${HistoryData.fmt(credited)}"
-        } else "Сейчас не отдых • накоплено ${HistoryData.fmt(actual)}"
-        val target = next ?: 45 * 60
-        setProgress(restFrame, restProgress, if (target > 0) actual.toFloat() / target else 0f, restMilestoneColor(credited))
-
-        twoWeek.text = "${HistoryData.fmt(twoWeekMinutes)} из 90:00"
-        setProgress(twoWeekFrame, twoWeekProgress, twoWeekMinutes / (90f * 60f), limitColor(twoWeekMinutes, 90 * 60))
-        updateWeekCards()
-        updateWorkWeekClock()
-    }
-
-    private fun updateWeekCards() {
-        if (!::week.isInitialized) return
-        val current = history?.currentWeekCardMinutes ?: 0
-        val prev = history?.previousWeekDrivingMinutes ?: 0
-        val limit = minOf(56 * 60, (90 * 60 - prev).coerceAtLeast(0))
-        week.text = "${HistoryData.fmt(current)} из ${HistoryData.fmt(limit)}"
-        weekSub.text = "прошлая неделя ${HistoryData.fmt(prev)} • 10-часовых смен: ${currentWeekTenHourUses()}/2"
-        setProgress(weekFrame, weekProgress, if (limit > 0) current.toFloat() / limit else 1f, limitColor(current, limit))
+    private fun showNow() { nowRoot.visibility = View.VISIBLE; historyRoot.visibility = View.GONE; updateTabState(true) }
+    private fun showHistory() { loadHistory(); nowRoot.visibility = View.GONE; historyRoot.visibility = View.VISIBLE; updateTabState(false) }
+    private fun updateTabState(nowSelected: Boolean) {
+        nowTab.background = rounded(if (nowSelected) GREEN else CARD, dp(11).toFloat(), if (nowSelected) GREEN else BORDER)
+        historyTab.background = rounded(if (nowSelected) CARD else GREEN, dp(11).toFloat(), if (nowSelected) BORDER else GREEN)
     }
 
     private fun parseDateOnly(v: String): Date? = runCatching {
@@ -838,15 +757,15 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     }.getOrNull()
 
     private fun isoCalendar(d: Date) = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.US).apply {
-        firstDayOfWeek = Calendar.MONDAY
-        minimalDaysInFirstWeek = 4
-        time = d
+        firstDayOfWeek = Calendar.MONDAY; minimalDaysInFirstWeek = 4; time = d
     }
 
     private fun last(log: String, did: String) = log.lines().asReversed().firstOrNull { it.startsWith("$did=") }?.substringAfter(" | ")?.trim()
     private fun mins(v: String?): Int? = v?.let { Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+    private fun count(v: String?): Int? = v?.let { Regex("^(\\d+) count").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
 
     private fun driveColor(m: Int) = when { m >= 255 -> RED; m >= 240 -> YELLOW; else -> GREEN }
+    private fun shiftDriveColor(v: Int, limit: Int) = when { v >= limit - 30 -> RED; v >= limit - 60 -> YELLOW; else -> GREEN }
     private fun restMilestoneColor(m: Int) = when { m >= 45 * 60 -> CYAN; m >= 24 * 60 -> GREEN; m >= 11 * 60 -> GREEN; m >= 9 * 60 -> GREEN; m >= 3 * 60 -> YELLOW; m >= 45 -> GREEN; m >= 15 -> YELLOW; else -> RED }
     private fun workColor(m: Int) = when { m >= 360 -> RED; m >= 330 -> YELLOW; else -> GREEN }
     private fun limitColor(v: Int, limit: Int) = when { limit <= 0 || v >= limit - 120 -> RED; v >= limit - 360 -> YELLOW; else -> GREEN }
@@ -855,10 +774,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         val f = FrameLayout(this).apply { background = rounded(CARD, dp(15).toFloat(), BORDER) }
         val p = View(this).apply { background = rounded(GREEN, dp(15).toFloat()) }
         f.addView(p, FrameLayout.LayoutParams(0, FrameLayout.LayoutParams.MATCH_PARENT))
-        val b = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(11), dp(12), dp(11))
-        }
+        val b = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(11), dp(12), dp(11)) }
         f.addView(b, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         return Triple(f, p, b)
     }
@@ -872,12 +788,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         }
     }
 
-    private fun card() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(12), dp(10), dp(12), dp(10))
-        background = rounded(CARD, dp(14).toFloat(), BORDER)
-    }
-
+    private fun card() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(CARD, dp(14).toFloat(), BORDER) }
     private fun label(t: String) = TextView(this).apply { text = t; textSize = 11.5f; setTextColor(MUTED); setTypeface(typeface, Typeface.BOLD) }
     private fun value(t: String, s: Float) = TextView(this).apply { text = t; textSize = s; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(2), 0, 0) }
     private fun sub(t: String) = TextView(this).apply { text = t; textSize = 13f; setTextColor(MUTED); setPadding(0, dp(2), 0, 0) }

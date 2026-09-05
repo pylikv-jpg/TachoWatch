@@ -16,6 +16,17 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import java.util.UUID
 
+/**
+ * Read-only Remote HMI diagnostics reader.
+ *
+ * The transport/service UUIDs are the Smart Tachograph V2 Diagnostics service.
+ * We only open the Remote HMI diagnostic routine and issue ReadDataByIdentifier
+ * requests (SID 0x22). No activity, place or manual-entry write operations are used.
+ *
+ * Important source rule:
+ * - direct tachograph timer DIDs are authoritative when supported;
+ * - legacy F9xx values remain available for old units/fallback logic.
+ */
 class LiveDidDiagnostic(private val context: Context, private val listener: Listener) {
     interface Listener {
         fun onLiveLog(log: String)
@@ -35,7 +46,43 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         private const val STALE_TIMEOUT = 20000L
     }
 
-    private val dids = intArrayOf(0xF903, 0xF923, 0xF925, 0xF927, 0xF931, 0xF938)
+    /*
+     * Mandatory/established live values first, then ISO 16844-7 optional driver-1
+     * derived timers used by current DTCO generations and mirrored by VDO Fleet.
+     * Unsupported optional DIDs are simply skipped on NRC from SID 0x22.
+     */
+    private val dids = intArrayOf(
+        0xF903, // Driver1WorkingState
+        0xF905, // DriveRecognize
+        0xF906, // Driver1TimeRelatedStates
+        0xF923, // Driver1ContinuousDrivingTime
+        0xF925, // Driver1CumulativeBreakTime
+        0xF927, // Driver1CurrentDurationOfSelectedActivity
+        0xF931, // Driver1Name
+        0xF938, // Driver1CumulatedDrivingTimePreviousAndCurrentWeek
+
+        0xF99A, // Driver1CurrentDailyDrivingTime
+        0xF99B, // Driver1CurrentWeeklyDrivingTime
+        0xF99C, // Driver1TimeLeftUntilNewDailyRestPeriod
+        0xF9A0, // Driver1NumberOfTimes9hDailyDrivingTimesExceeded
+        0xF9A1, // Driver1TimeLeftUntilNewWeeklyRestPeriod
+        0xF9A2, // Driver1CumulativeUninterruptedRestTime
+        0xF9A3, // Driver1MinimumDailyRest
+        0xF9A4, // Driver1MinimumWeeklyRest
+        0xF9A5, // Driver1MaximumDailyPeriod
+        0xF9A6, // Driver1MaximumDailyDrivingTime
+        0xF9AB, // Driver1NumberOfUsedReducedDailyRestPeriods
+        0xF9AD, // Driver1RemainingCurrentDrivingTime
+        0xF9AF, // Driver1RemainingDrivingTimeOnCurrentShift
+        0xF9B1, // Driver1RemainingDrivingTimeOfCurrentWeek
+        0xF9B3, // Driver1Remaining2WeeksDrivingTime
+        0xF9B5, // Driver1TimeLeftUntilNextDrivingPeriod
+        0xF9B7, // Driver1DurationOfNextDrivingPeriod
+        0xF9B9, // Driver1DurationOfNextBreakRest
+        0xF9C0, // Driver1RemainingTimeOfCurrentBreakRest
+        0xF9C2  // Driver1RemainingTimeUntilNextBreakOrRest
+    )
+
     private val handler = Handler(Looper.getMainLooper())
     private var gatt: BluetoothGatt? = null
     private var connected = false
@@ -285,6 +332,8 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
             return
         }
         if (a.size >= 3 && u(a[0]) == 0x7F && u(a[1]) == 0x22 && waiting) {
+            // Optional ISO DIDs are not guaranteed on every tachograph. NRC means
+            // unsupported/unavailable here, not a broken live session.
             markFresh()
             waiting = false
             token++
@@ -379,12 +428,24 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
             3 -> "ВОЖДЕНИЕ"
             else -> "КОД ${u(b[0]) and 7}"
         }
-        0xF923, 0xF925, 0xF927, 0xF938 -> if (b.size < 2) "—" else {
-            val m = (u(b[0]) shl 8) or u(b[1])
-            "$m мин = ${m / 60}:${String.format("%02d", m % 60)}"
-        }
+        0xF905 -> if (b.isEmpty()) "—" else "motion=${u(b[0])}"
+        0xF906 -> if (b.isEmpty()) "—" else "warning=${u(b[0]) and 0x0F}"
         0xF931 -> if (b.size >= 72) "${clean(b.copyOfRange(0, 36))} ${clean(b.copyOfRange(36, 72))}".trim() else clean(b)
+        0xF9A0, 0xF9AB -> if (b.isEmpty()) "—" else "${u(b[0])} count"
+        in minuteDids -> minuteValue(b)
         else -> hex(b)
+    }
+
+    private val minuteDids = setOf(
+        0xF923, 0xF925, 0xF927, 0xF938,
+        0xF99A, 0xF99B, 0xF99C, 0xF9A1, 0xF9A2, 0xF9A3, 0xF9A4, 0xF9A5, 0xF9A6,
+        0xF9AD, 0xF9AF, 0xF9B1, 0xF9B3, 0xF9B5, 0xF9B7, 0xF9B9, 0xF9C0, 0xF9C2
+    )
+
+    private fun minuteValue(b: ByteArray): String {
+        if (b.size < 2) return "—"
+        val m = (u(b[0]) shl 8) or u(b[1])
+        return "$m мин = ${m / 60}:${String.format("%02d", m % 60)}"
     }
 
     private fun clean(b: ByteArray) = buildString {
@@ -396,7 +457,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
 
     private fun log(s: String, notify: Boolean = true) {
         lines.add(s)
-        while (lines.size > 300) lines.removeAt(0)
+        while (lines.size > 500) lines.removeAt(0)
         if (notify) listener.onLiveLog(lines.joinToString("\n"))
     }
 
