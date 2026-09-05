@@ -53,9 +53,17 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         private const val SELECTED_DTCO = "selected_dtco_address"
         private const val CARD_NAME = "driver_name_from_card"
         private const val KEEP_SCREEN_ON = "keep_screen_on"
-        private const val SHIFT_INITIALIZED = "shift_counter_initialized"
-        private const val SHIFT_COMPLETED = "shift_completed_driving"
-        private const val SHIFT_PREV_CONTINUOUS = "shift_prev_continuous"
+
+        // Shift-driving counter v3. Old SHIFT_COMPLETED logic is intentionally not reused:
+        // it lost completed F923 periods whenever F923 fell on WORK/short REST.
+        private const val SHIFT_STATE_VERSION = "shift_state_version"
+        private const val SHIFT_STATE_VERSION_CURRENT = 3
+        private const val SHIFT_INITIALIZED = "shift_counter_initialized_v3"
+        private const val SHIFT_TOTAL = "shift_total_driving_v3"
+        private const val SHIFT_PREV_CONTINUOUS = "shift_prev_continuous_v3"
+        private const val SHIFT_CLOSE_HANDLED = "shift_close_handled_v3"
+        private const val SHIFT_RESYNC_REQUIRED = "shift_resync_required_v3"
+
         private const val WORK_PREV_ACTIVITY = "work_prev_activity"
         private const val WORK_PREV_DURATION = "work_prev_duration"
         private const val WORK_ACC = "other_work_window_minutes"
@@ -121,8 +129,9 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private var twoWeekMinutes = 0
 
     private var shiftCounterInitialized = false
-    private var shiftCompletedMinutes = 0
+    private var shiftDrivingTotalMinutes = 0
     private var previousContinuousMinutes = 0
+    private var shiftCloseHandled = false
     private var lastProcessedCycle = 0
 
     private var previousActivity = "—"
@@ -357,22 +366,41 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         historyRoot.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
     }
 
-    private fun loadHistory() {
-        val f = TlvInventory.findLatestDdd(getExternalFilesDir(null)) ?: return
+    private fun loadHistory(): Boolean {
+        val f = TlvInventory.findLatestDdd(getExternalFilesDir(null)) ?: return false
         val r = TlvInventory.parse(f)
-        if (r.error == null) {
-            history = HistoryData.load(r)
-            if (::historyRoot.isInitialized) buildHistoryView()
-            updateWeekCards()
-            updateWorkWeekClock()
-            updateShiftDriving()
-        }
+        if (r.error != null) return false
+        history = HistoryData.load(r)
+        if (::historyRoot.isInitialized) buildHistoryView()
+        updateWeekCards()
+        updateWorkWeekClock()
+        updateShiftDriving()
+        return true
     }
 
     private fun restoreCounters() {
-        shiftCounterInitialized = prefs.getBoolean(SHIFT_INITIALIZED, false)
-        shiftCompletedMinutes = prefs.getInt(SHIFT_COMPLETED, 0)
-        previousContinuousMinutes = prefs.getInt(SHIFT_PREV_CONTINUOUS, 0)
+        val storedVersion = prefs.getInt(SHIFT_STATE_VERSION, 0)
+        if (storedVersion != SHIFT_STATE_VERSION_CURRENT) {
+            // One-time migration: the old accumulator is known-corrupt, so do not carry it forward.
+            shiftCounterInitialized = false
+            shiftDrivingTotalMinutes = 0
+            previousContinuousMinutes = 0
+            shiftCloseHandled = false
+            prefs.edit()
+                .putInt(SHIFT_STATE_VERSION, SHIFT_STATE_VERSION_CURRENT)
+                .putBoolean(SHIFT_INITIALIZED, false)
+                .putInt(SHIFT_TOTAL, 0)
+                .putInt(SHIFT_PREV_CONTINUOUS, 0)
+                .putBoolean(SHIFT_CLOSE_HANDLED, false)
+                .putBoolean(SHIFT_RESYNC_REQUIRED, true)
+                .apply()
+        } else {
+            shiftCounterInitialized = prefs.getBoolean(SHIFT_INITIALIZED, false)
+            shiftDrivingTotalMinutes = prefs.getInt(SHIFT_TOTAL, 0)
+            previousContinuousMinutes = prefs.getInt(SHIFT_PREV_CONTINUOUS, 0)
+            shiftCloseHandled = prefs.getBoolean(SHIFT_CLOSE_HANDLED, false)
+        }
+
         previousActivity = prefs.getString(WORK_PREV_ACTIVITY, "—") ?: "—"
         previousActivityDuration = prefs.getInt(WORK_PREV_DURATION, 0)
         otherWorkWindowMinutes = prefs.getInt(WORK_ACC, 0)
@@ -381,9 +409,11 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
 
     private fun persistCounters() {
         prefs.edit()
+            .putInt(SHIFT_STATE_VERSION, SHIFT_STATE_VERSION_CURRENT)
             .putBoolean(SHIFT_INITIALIZED, shiftCounterInitialized)
-            .putInt(SHIFT_COMPLETED, shiftCompletedMinutes)
+            .putInt(SHIFT_TOTAL, shiftDrivingTotalMinutes)
             .putInt(SHIFT_PREV_CONTINUOUS, previousContinuousMinutes)
+            .putBoolean(SHIFT_CLOSE_HANDLED, shiftCloseHandled)
             .putString(WORK_PREV_ACTIVITY, previousActivity)
             .putInt(WORK_PREV_DURATION, previousActivityDuration)
             .putInt(WORK_ACC, otherWorkWindowMinutes)
@@ -391,24 +421,89 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
             .apply()
     }
 
+    /**
+     * Reconstruct the current shift from the card history. We sum backwards until the
+     * first inter-day rest of at least 9h. This is substantially safer than taking only
+     * the last calendar day and also covers shifts crossing midnight.
+     */
+    private fun cardShiftDrivingMinutes(): Int {
+        val h = history ?: return 0
+        val days = h.days
+        if (days.isEmpty()) return 0
+        var total = 0
+        for (i in days.indices.reversed()) {
+            total += days[i].drivingMinutes
+            if (i == 0) break
+            val previous = days[i - 1]
+            val current = days[i]
+            val rest = h.restBetween(previous, current)?.actualMinutes ?: HistoryData.actualGapMinutes(previous, current)
+            if (rest != null && rest >= 9 * 60) break
+        }
+        return total
+    }
+
     private fun initializeShiftCounterFromCard() {
         if (shiftCounterInitialized) return
-        val cardDriving = history?.days?.lastOrNull()?.drivingMinutes ?: 0
-        shiftCompletedMinutes = (cardDriving - continuousMinutes).coerceAtLeast(0)
+        val dailyRestReached = currentActivity.contains("ОТДЫХ") && activityMinutes >= 9 * 60
+        shiftDrivingTotalMinutes = if (dailyRestReached) 0 else cardShiftDrivingMinutes()
         previousContinuousMinutes = continuousMinutes
+        shiftCloseHandled = dailyRestReached
         shiftCounterInitialized = true
         persistCounters()
     }
 
     private fun processCycle() {
-        initializeShiftCounterFromCard()
-        if (previousContinuousMinutes > 0 && continuousMinutes < previousContinuousMinutes && maxOf(breakMinutes, activityMinutes) >= 45) {
-            shiftCompletedMinutes += previousContinuousMinutes
+        if (!shiftCounterInitialized) {
+            // First live cycle is a baseline. Card history already contains driving up to
+            // the card-read point, so we must not add F923 again here.
+            initializeShiftCounterFromCard()
+            processActivityAccumulators()
+            persistCounters()
+            updateShiftDriving()
+            return
         }
+
+        val isDriving = currentActivity.contains("ВОЖДЕНИЕ")
+        val wasDriving = previousActivity.contains("ВОЖДЕНИЕ")
+
+        // F923 can fall to zero/smaller value immediately when the mode changes to WORK
+        // or REST. Therefore shift driving is accumulated by positive deltas and NEVER
+        // derived as "saved + current F923". A falling F923 cannot reduce the shift total.
+        val drivingDelta = when {
+            isDriving && !wasDriving -> continuousMinutes.coerceAtLeast(0)
+            isDriving && continuousMinutes >= previousContinuousMinutes -> continuousMinutes - previousContinuousMinutes
+            isDriving && continuousMinutes < previousContinuousMinutes -> continuousMinutes.coerceAtLeast(0)
+            else -> 0
+        }
+        if (drivingDelta > 0) shiftDrivingTotalMinutes += drivingDelta
         previousContinuousMinutes = continuousMinutes
+
+        val dailyRestReached = currentActivity.contains("ОТДЫХ") && activityMinutes >= 9 * 60
+        var closedShiftNow = false
+        if (dailyRestReached) {
+            if (!shiftCloseHandled) {
+                // A 9h/11h/weekly rest closes the previous shift. Reset once and request
+                // a fresh card read so history and the next shift start from the card.
+                shiftDrivingTotalMinutes = 0
+                previousContinuousMinutes = continuousMinutes
+                shiftCloseHandled = true
+                prefs.edit().putBoolean(SHIFT_RESYNC_REQUIRED, true).apply()
+                closedShiftNow = true
+            }
+        } else if (!currentActivity.contains("ОТДЫХ")) {
+            // New active shift after the qualifying daily rest.
+            shiftCloseHandled = false
+        }
+
         processActivityAccumulators()
         persistCounters()
         updateShiftDriving()
+
+        if (closedShiftNow && !cardReading) {
+            mainHandler.post {
+                if (!cardReading) startCardRead("Смена завершена", true)
+            }
+        }
     }
 
     private fun processActivityAccumulators() {
@@ -437,18 +532,18 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     private fun activeOtherWorkTotal(): Int = otherWorkWindowMinutes + if (currentActivity.contains("РАБОТА")) activityMinutes else 0
     private fun activeAvailabilityTotal(): Int = availabilityWindowMinutes + if (currentActivity.contains("ГОТОВНОСТЬ")) activityMinutes else 0
 
-    // 6-часовая непрерывная работа: только вождение + молотки.
-    // F923 уже содержит актуальное непрерывное вождение после последней квалифицирующей паузы.
+    // 6-hour work card is unchanged in this patch; its own source accounting remains
+    // separate from the corrected shift-driving accumulator.
     private fun activeWorkTotal(): Int = continuousMinutes + activeOtherWorkTotal()
 
     private fun updateShiftDriving() {
         if (!::shiftDriving.isInitialized) return
         if (!shiftCounterInitialized) {
             shiftDriving.text = "—"
-            shiftDrivingSub.text = "ожидание первого live-цикла"
+            shiftDrivingSub.text = "ожидание синхронизации карты/live"
             return
         }
-        val total = shiftCompletedMinutes + continuousMinutes
+        val total = shiftDrivingTotalMinutes
         val limit = shiftDrivingLimit()
         val remain = (limit - total).coerceAtLeast(0)
         shiftDriving.text = "${HistoryData.fmt(total)} из ${HistoryData.fmt(limit)}"
@@ -535,8 +630,11 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
 
     private fun connectSelected(d: BluetoothDevice) {
         dtco = d
-        if (!prefs.getBoolean(FIRST_READ, false)) startCardRead("Первое подключение", true)
-        else {
+        val firstReadNeeded = !prefs.getBoolean(FIRST_READ, false)
+        val resyncNeeded = prefs.getBoolean(SHIFT_RESYNC_REQUIRED, false)
+        if (firstReadNeeded || resyncNeeded) {
+            startCardRead(if (firstReadNeeded) "Первое подключение" else "Синхронизация счётчика смены", true)
+        } else {
             status.text = "Подключение к DTCO…"
             live.connect(d)
         }
@@ -564,7 +662,19 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
             .setTitle("Выберите DTCO")
             .setAdapter(listAdapter) { _, which ->
                 val d = devices.values.toList().getOrNull(which) ?: return@setAdapter
-                prefs.edit().putString(SELECTED_DTCO, d.address).putBoolean(FIRST_READ, false).apply()
+                shiftCounterInitialized = false
+                shiftDrivingTotalMinutes = 0
+                previousContinuousMinutes = 0
+                shiftCloseHandled = false
+                prefs.edit()
+                    .putString(SELECTED_DTCO, d.address)
+                    .putBoolean(FIRST_READ, false)
+                    .putBoolean(SHIFT_RESYNC_REQUIRED, true)
+                    .putBoolean(SHIFT_INITIALIZED, false)
+                    .putInt(SHIFT_TOTAL, 0)
+                    .putInt(SHIFT_PREV_CONTINUOUS, 0)
+                    .putBoolean(SHIFT_CLOSE_HANDLED, false)
+                    .apply()
                 dtco = d
                 status.text = "Выбран ${safeName(d)}"
                 connectSelected(d)
@@ -576,7 +686,7 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
     }
 
     @SuppressLint("MissingPermission")
-    private fun startNearbyScan(devices: MutableMap<String, BluetoothDevice>, refresh: () -> Unit) {
+    private fun startNearbyScan(devices: MutableMap<String,BluetoothDevice>, refresh: () -> Unit) {
         val a = adapter ?: return
         val cb = BluetoothAdapter.LeScanCallback { device, _, _ ->
             val n = try { device.name } catch (_: Throwable) { null }
@@ -639,10 +749,25 @@ class DriverDashboardActivity : AppCompatActivity(), LiveDidDiagnostic.Listener,
         when {
             fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=SUCCESS") -> runOnUiThread {
                 prefs.edit().putBoolean(FIRST_READ, true).apply()
-                loadHistory()
+                val historyLoaded = loadHistory()
+                if (historyLoaded) {
+                    // Force a clean baseline from the newly read card on the next live cycle.
+                    shiftCounterInitialized = false
+                    shiftDrivingTotalMinutes = 0
+                    previousContinuousMinutes = 0
+                    prefs.edit()
+                        .putBoolean(SHIFT_INITIALIZED, false)
+                        .putInt(SHIFT_TOTAL, 0)
+                        .putInt(SHIFT_PREV_CONTINUOUS, 0)
+                        .putBoolean(SHIFT_RESYNC_REQUIRED, false)
+                        .apply()
+                }
                 finishCardRead(true)
             }
-            fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=FAILED") -> runOnUiThread { finishCardRead(false) }
+            fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER) && fullLog.contains("STATUS=FAILED") -> runOnUiThread {
+                // Keep SHIFT_RESYNC_REQUIRED=true; a later reconnect will retry the card sync.
+                finishCardRead(false)
+            }
         }
     }
 
