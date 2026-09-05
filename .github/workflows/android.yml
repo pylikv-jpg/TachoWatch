@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - rewrite-from-scratch-231
 
 jobs:
   build:
@@ -47,21 +48,18 @@ jobs:
             -storepass android \
             -alias androiddebugkey | grep 'SHA256:'
 
-      - name: Apply canonical RTO v2 rules
-        run: python3 tools/apply_rto_v2.py
-
-      - name: Restore DTCO auto-connect and history allowances
-        run: python3 tools/apply_restore_autoconnect_history_summary.py
-
-      - name: Apply confirmed DTCO counter sources
-        run: python3 tools/apply_counter_source_fix_v231.py
+      - name: Apply legacy compatibility patches
+        run: |
+          python3 tools/apply_rto_v2.py
+          python3 tools/apply_restore_autoconnect_history_summary.py
+          python3 tools/apply_counter_source_fix_v231.py
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Run RTO regression tests and build APK
+      - name: Run all regression tests and build APK
         run: gradle testDebugUnitTest assembleDebug
 
       - name: Verify APK signing certificate
