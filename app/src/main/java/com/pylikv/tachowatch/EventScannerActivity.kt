@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.view.Gravity
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -40,6 +39,14 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         if (it.values.all { ok -> ok }) loadDevices() else status.text = "Нет разрешения Bluetooth"
     }
 
+    private val saveReport = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val ok = try {
+            contentResolver.openOutputStream(uri, "w")?.use { out -> monitor.exportCurrentLog(out) } ?: false
+        } catch (_: Throwable) { false }
+        Toast.makeText(this, if (ok) "Отчёт сохранён" else "Не удалось сохранить отчёт", Toast.LENGTH_LONG).show()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = BG; window.navigationBarColor = BG
@@ -55,8 +62,8 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
 
     private fun buildUi(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(10),dp(12),dp(10));setBackgroundColor(BG)}
-        root.addView(TextView(this).apply{text="DTCO Target Event Scanner v9";textSize=22f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)})
-        root.addView(TextView(this).apply{text="READ ONLY • F930 / F979 / F9D5 / F90B + controls";textSize=12f;setTextColor(GREEN)})
+        root.addView(TextView(this).apply{text="DTCO Target Event Scanner v9.1";textSize=22f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)})
+        root.addView(TextView(this).apply{text="READ ONLY • автосохранение каждой строки + ручной экспорт";textSize=12f;setTextColor(GREEN)})
         status=TextView(this).apply{text="Выбери DTCO";textSize=14f;setTextColor(ORANGE);setPadding(0,dp(8),0,dp(8))}
         root.addView(status)
 
@@ -66,17 +73,29 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         devCard.addView(devices)
         root.addView(devCard)
 
-        val connect=button("Подключить и начать мониторинг",BLUE).apply{setOnClickListener{ val d=selected?:return@setOnClickListener; logText.text=""; status.text="Подключение..."; monitor.connect(d)}}
+        val connect=button("Подключить и начать мониторинг",BLUE).apply{setOnClickListener{
+            val d=selected?:return@setOnClickListener
+            logText.text=""
+            status.text="Подключение..."
+            monitor.connect(d)
+            Toast.makeText(this@EventScannerActivity,"Автосохранение включено: ${monitor.getCurrentLogFileName() ?: "внутренний файл"}",Toast.LENGTH_LONG).show()
+        }}
         root.addView(connect,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(52)).apply{topMargin=dp(8)})
 
         val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
         row.addView(button("Статус",GREEN).apply{setOnClickListener{monitor.manualGattCheck()}},LinearLayout.LayoutParams(0,dp(48),1f))
         row.addView(Space(this),LinearLayout.LayoutParams(dp(6),1))
-        row.addView(button("Очистить",CARD).apply{setOnClickListener{monitor.clearLog()}},LinearLayout.LayoutParams(0,dp(48),1f))
+        row.addView(button("Очистить экран",CARD).apply{setOnClickListener{monitor.clearLog()}},LinearLayout.LayoutParams(0,dp(48),1f))
         root.addView(row,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(48)).apply{topMargin=dp(6)})
 
+        val export=button("Сохранить отчёт",ORANGE).apply{setOnClickListener{
+            val name=monitor.getCurrentLogFileName() ?: "DTCO_TARGET_v9_1.txt"
+            saveReport.launch(name)
+        }}
+        root.addView(export,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(48)).apply{topMargin=dp(6)})
+
         scroll=ScrollView(this).apply{isFillViewport=false;isVerticalScrollBarEnabled=true}
-        logText=TextView(this).apply{text="После подключения каждые 15 секунд выполняется целевой цикл. Ищи строки CHANGED.";textSize=11.5f;setTextColor(TEXT);typeface=Typeface.MONOSPACE;setTextIsSelectable(true);setPadding(dp(8),dp(8),dp(8),dp(12));background=rounded(CARD)}
+        logText=TextView(this).apply{text="После подключения каждая строка сразу записывается во внутренний файл. Кнопка «Сохранить отчёт» экспортирует его в выбранное место.";textSize=11.5f;setTextColor(TEXT);typeface=Typeface.MONOSPACE;setTextIsSelectable(true);setPadding(dp(8),dp(8),dp(8),dp(12));background=rounded(CARD)}
         scroll.addView(logText)
         root.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f).apply{topMargin=dp(8)})
         setContentView(root)
