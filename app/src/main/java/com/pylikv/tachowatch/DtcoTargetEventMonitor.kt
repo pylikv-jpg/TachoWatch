@@ -17,10 +17,11 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
     interface Listener {
         fun onLogChanged(fullLog: String)
         fun onConnectionStateChanged(connected: Boolean, deviceName: String?)
+        fun onDidUpdate(did: Int, rawHex: String, decoded: String, changed: Boolean, byteDiff: String, timestamp: String) {}
     }
 
     companion object {
-        private const val VERSION = "DTCO-TARGET-EVENT-v9.1"
+        private const val VERSION = "DTCO-LIVE-DID-v9.2"
         private const val NEXT_CYCLE_MS = 15000L
         private const val RESPONSE_TIMEOUT_MS = 3500L
         private const val MAX_LOG_LINES = 20000
@@ -72,12 +73,12 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
         openSent=false; statusSent=false; rhmiOpen=false; index=0; cycle=0; waitingDid=null; timeoutToken++
         startLogFile()
         log("============================================================")
-        log("DTCO TARGET EVENT MONITOR v9.1")
+        log("DTCO LIVE DID MONITOR v9.2")
         log("READ ONLY: UDS 0x22 only")
         log("AUTOSAVE: every log line is appended immediately to ${getCurrentLogFileName() ?: "internal file"}")
         log("DIDs: ${dids.joinToString { did(it) }}")
-        log("F907 = card-presence control, NOT a rest-counter candidate")
-        log("Unknown count=1 candidates: F930 / F979 / F9D5")
+        log("F907 = card-presence control")
+        log("Unknown candidates: F930 / F979 / F9D5")
         log("F90B monitored byte-by-byte")
         log("Cycle interval: ${NEXT_CYCLE_MS/1000}s")
         log("============================================================")
@@ -92,7 +93,7 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
             val dir = File(context.filesDir, "target_scanner_logs")
             if (!dir.exists()) dir.mkdirs()
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            logFile = File(dir, "DTCO_TARGET_v9_1_$stamp.txt")
+            logFile = File(dir, "DTCO_LIVE_DID_v9_2_$stamp.txt")
             try { logFile?.createNewFile() } catch (_: Throwable) { logFile = null }
         }
     }
@@ -207,22 +208,54 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
         if(waitingDid!=id){ log("UNEXPECTED ${did(id)}=${hex(data)}"); return }
         timeoutToken++
         val old=previous[id]
+        val changed = old != null && !old.contentEquals(data)
+        val diff = if (old == null) "baseline" else if (changed) byteDiff(old,data) else "none"
         if(old==null) log("BASELINE ${did(id)} ${names[id]} = ${hex(data)}")
-        else if(!old.contentEquals(data)){
+        else if(changed){
             log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             log("CHANGED ${did(id)} ${names[id]}")
             log("OLD = ${hex(old)}")
             log("NEW = ${hex(data)}")
-            log("BYTE DIFF = ${byteDiff(old,data)}")
+            log("BYTE DIFF = $diff")
             log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         } else log("UNCHANGED ${did(id)} = ${hex(data)}")
         previous[id]=data.copyOf()
-        if(data.size>=2 && id in intArrayOf(0xF923,0xF925,0xF927,0xF938)){
-            val mins=(u(data[0]) shl 8) or u(data[1]); log("DECODE ${did(id)} = $mins min = ${mins/60}:${String.format(Locale.US,"%02d",mins%60)}")
-            if(id==0xF938){ val rem=(90*60-mins).coerceAtLeast(0); log("DERIVED 2-week remaining = ${rem/60}:${String.format(Locale.US,"%02d",rem%60)}") }
-            if(id==0xF925 || id==0xF927){ val rem=(24*60-mins).coerceAtLeast(0); log("DERIVED to 24h rest = ${rem/60}:${String.format(Locale.US,"%02d",rem%60)}") }
-        }
+
+        val decoded = decodeDid(id, data)
+        if (decoded.isNotBlank()) log("DECODE ${did(id)} = $decoded")
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        handler.post { listener?.onDidUpdate(id, hex(data), decoded.ifBlank { "Пока не расшифровано" }, changed, diff, ts) }
+
         waitingDid=null; index++; handler.postDelayed({sendNext(g)},180)
+    }
+
+    private fun decodeDid(id:Int,data:ByteArray):String {
+        if (data.size < 2) {
+            return when(id) {
+                0xF907 -> "Карта в слоте 1: raw=${hex(data)}"
+                0xF930,0xF979,0xF9D5 -> "Неизвестный однобайтовый параметр: ${hex(data)}"
+                else -> ""
+            }
+        }
+        val mins=(u(data[0]) shl 8) or u(data[1])
+        val time="${mins/60}:${String.format(Locale.US,"%02d",mins%60)}"
+        return when(id) {
+            0xF923 -> "$mins мин = $time • непрерывное вождение"
+            0xF925 -> {
+                val rem=(24*60-mins).coerceAtLeast(0)
+                "$mins мин = $time • отдых/пауза • до 24ч ${rem/60}:${String.format(Locale.US,"%02d",rem%60)}"
+            }
+            0xF927 -> {
+                val rem=(24*60-mins).coerceAtLeast(0)
+                "$mins мин = $time • длительность выбранной деятельности • до 24ч ${rem/60}:${String.format(Locale.US,"%02d",rem%60)}"
+            }
+            0xF938 -> {
+                val rem=(90*60-mins).coerceAtLeast(0)
+                "$mins мин = $time • вождение за 2 недели использовано • осталось ${rem/60}:${String.format(Locale.US,"%02d",rem%60)}"
+            }
+            0xF90B -> "Структурированный динамический канал • байты: ${hex(data)}"
+            else -> "Пока не расшифровано"
+        }
     }
 
     @SuppressLint("MissingPermission") private fun grantRx(g:BluetoothGatt,n:Int){
@@ -241,6 +274,7 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
         else { @Suppress("DEPRECATION") d.value=data; @Suppress("DEPRECATION") g.writeDescriptor(d) }
 
     fun manualGattCheck(){ log("STATUS connected=$connected fifo=$fifoSubscribed credits=$creditsSubscribed rhmi=$rhmiOpen cycle=$cycle waiting=${waitingDid?.let{did(it)} ?: "none"} autosave=${getCurrentLogFileName() ?: "OFF"}") }
+    fun addMarker(text:String){ if(text.isNotBlank()) log("========== USER MARKER: ${text.trim()} ==========") }
     fun clearLog(){ lines.clear(); log("Visible log cleared; autosaved file preserved") }
     fun getLog():String=lines.joinToString("\n")
     fun disconnect(){ connected=false; rhmiOpen=false; timeoutToken++; waitingDid=null; closeGatt(); listener?.onConnectionStateChanged(false,device?.let{safeName(it)}) }
