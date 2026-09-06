@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.*
 import androidx.core.content.ContextCompat
+import java.io.File
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CopyOnWriteArrayList
@@ -18,7 +20,7 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
     }
 
     companion object {
-        private const val VERSION = "DTCO-TARGET-EVENT-v9"
+        private const val VERSION = "DTCO-TARGET-EVENT-v9.1"
         private const val NEXT_CYCLE_MS = 15000L
         private const val RESPONSE_TIMEOUT_MS = 3500L
         private const val MAX_LOG_LINES = 20000
@@ -44,6 +46,8 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
     private val handler = Handler(Looper.getMainLooper())
     private val lines = CopyOnWriteArrayList<String>()
     private val previous = linkedMapOf<Int,ByteArray>()
+    private val fileLock = Any()
+    private var logFile: File? = null
     private var gatt: BluetoothGatt? = null
     private var device: BluetoothDevice? = null
     private var connected = false
@@ -66,9 +70,11 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
         closeGatt()
         lines.clear(); previous.clear(); device=d; connected=false; fifoSubscribed=false; creditsSubscribed=false
         openSent=false; statusSent=false; rhmiOpen=false; index=0; cycle=0; waitingDid=null; timeoutToken++
+        startLogFile()
         log("============================================================")
-        log("DTCO TARGET EVENT MONITOR v9")
+        log("DTCO TARGET EVENT MONITOR v9.1")
         log("READ ONLY: UDS 0x22 only")
+        log("AUTOSAVE: every log line is appended immediately to ${getCurrentLogFileName() ?: "internal file"}")
         log("DIDs: ${dids.joinToString { did(it) }}")
         log("F907 = card-presence control, NOT a rest-counter candidate")
         log("Unknown count=1 candidates: F930 / F979 / F9D5")
@@ -79,6 +85,28 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
             gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) d.connectGatt(context,false,cb,BluetoothDevice.TRANSPORT_LE)
                    else d.connectGatt(context,false,cb)
         } catch (e:Throwable) { log("connectGatt ERROR ${e.javaClass.simpleName}: ${e.message}") }
+    }
+
+    private fun startLogFile() {
+        synchronized(fileLock) {
+            val dir = File(context.filesDir, "target_scanner_logs")
+            if (!dir.exists()) dir.mkdirs()
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            logFile = File(dir, "DTCO_TARGET_v9_1_$stamp.txt")
+            try { logFile?.createNewFile() } catch (_: Throwable) { logFile = null }
+        }
+    }
+
+    fun getCurrentLogFileName(): String? = synchronized(fileLock) { logFile?.name }
+
+    fun exportCurrentLog(out: OutputStream): Boolean {
+        return try {
+            val f = synchronized(fileLock) { logFile }
+            if (f != null && f.exists()) f.inputStream().use { input -> input.copyTo(out) }
+            else out.write(getLog().toByteArray(Charsets.UTF_8))
+            out.flush()
+            true
+        } catch (_: Throwable) { false }
     }
 
     private val cb = object: BluetoothGattCallback() {
@@ -212,14 +240,24 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
         if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.TIRAMISU) g.writeDescriptor(d,data)==BluetoothGatt.GATT_SUCCESS
         else { @Suppress("DEPRECATION") d.value=data; @Suppress("DEPRECATION") g.writeDescriptor(d) }
 
-    fun manualGattCheck(){ log("STATUS connected=$connected fifo=$fifoSubscribed credits=$creditsSubscribed rhmi=$rhmiOpen cycle=$cycle waiting=${waitingDid?.let{did(it)} ?: "none"}") }
-    fun clearLog(){ lines.clear(); log("Log cleared") }
+    fun manualGattCheck(){ log("STATUS connected=$connected fifo=$fifoSubscribed credits=$creditsSubscribed rhmi=$rhmiOpen cycle=$cycle waiting=${waitingDid?.let{did(it)} ?: "none"} autosave=${getCurrentLogFileName() ?: "OFF"}") }
+    fun clearLog(){ lines.clear(); log("Visible log cleared; autosaved file preserved") }
     fun getLog():String=lines.joinToString("\n")
     fun disconnect(){ connected=false; rhmiOpen=false; timeoutToken++; waitingDid=null; closeGatt(); listener?.onConnectionStateChanged(false,device?.let{safeName(it)}) }
     @SuppressLint("MissingPermission") private fun closeGatt(){ val x=gatt; gatt=null; if(x!=null){ try{x.disconnect()}catch(_:Throwable){}; try{x.close()}catch(_:Throwable){} } }
 
     private fun byteDiff(a:ByteArray,b:ByteArray):String{ val out=ArrayList<String>(); for(i in 0 until maxOf(a.size,b.size)){ val x=a.getOrNull(i)?.let{u(it)}; val y=b.getOrNull(i)?.let{u(it)}; if(x!=y) out.add("[$i] ${x?.let{hb(it)}?:"--"}->${y?.let{hb(it)}?:"--"}") }; return if(out.isEmpty())"none" else out.joinToString(", ") }
-    private fun log(s:String){ val ts=SimpleDateFormat("HH:mm:ss.SSS",Locale.getDefault()).format(Date()); lines.add("[$ts] $s"); while(lines.size>MAX_LOG_LINES) lines.removeAt(0); val all=getLog(); handler.post{listener?.onLogChanged(all)} }
+    private fun log(s:String){
+        val ts=SimpleDateFormat("HH:mm:ss.SSS",Locale.getDefault()).format(Date())
+        val line="[$ts] $s"
+        lines.add(line)
+        while(lines.size>MAX_LOG_LINES) lines.removeAt(0)
+        synchronized(fileLock) {
+            try { logFile?.appendText(line + "\n", Charsets.UTF_8) } catch (_: Throwable) { }
+        }
+        val all=getLog()
+        handler.post{listener?.onLogChanged(all)}
+    }
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:d.address}catch(_:Throwable){"DTCO"}
     private fun u(b:Byte)=b.toInt() and 0xFF
     private fun hb(i:Int)="%02X".format(Locale.US,i and 0xFF)
