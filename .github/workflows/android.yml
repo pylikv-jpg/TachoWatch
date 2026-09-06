@@ -66,6 +66,9 @@ jobs:
       - name: Apply ordered scanner handshake
         run: python3 tools/fix_scanner_handshake_sequence.py
 
+      - name: Apply F9 discovery sampling v4
+        run: python3 tools/apply_f9_discovery_v4.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
