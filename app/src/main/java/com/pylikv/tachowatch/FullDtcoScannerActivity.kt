@@ -30,19 +30,10 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
-/**
- * Read-only DTCO scanner.
- *
- * It deliberately avoids activity changes, card writes and meaningful Download-FIFO
- * commands. The only writes are BLE CCCD subscription writes, flow-control credits,
- * the Remote-HMI open/status routine and UDS ReadDataByIdentifier (0x22).
- */
 class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
-
     private lateinit var statusView: TextView
     private lateinit var progressView: TextView
     private lateinit var logView: TextView
-    private lateinit var pickButton: Button
     private lateinit var fastButton: Button
     private lateinit var fullButton: Button
     private lateinit var stopButton: Button
@@ -52,18 +43,18 @@ class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
     private var scanner: FullDtcoScanner? = null
     private var latestLog = ""
 
-    private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            refreshButtons()
-        }
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { refreshButtons() }
 
-    private val saveLauncher =
-        registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-            if (uri != null) {
-                contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(latestLog) }
-                statusView.text = "Отчёт сохранён"
-            }
+    private val saveLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(latestLog) }
+            statusView.text = "Отчёт сохранён"
         }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,11 +75,10 @@ class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(14), dp(14), dp(14))
         }
-
-        val title = TextView(this).apply {
-            text = "DTCO FULL READ-ONLY SCANNER"
+        root.addView(TextView(this).apply {
+            text = "DTCO FULL READ-ONLY SCANNER v2"
             textSize = 20f
-        }
+        })
         statusView = TextView(this).apply {
             text = "Не подключено"
             textSize = 16f
@@ -98,8 +88,7 @@ class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
             text = "Выбери сопряжённый DTCO"
             setPadding(0, 0, 0, dp(8))
         }
-
-        pickButton = Button(this).apply {
+        val pickButton = Button(this).apply {
             text = "Выбрать DTCO"
             setOnClickListener { chooseBondedDevice() }
         }
@@ -122,12 +111,10 @@ class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
                 saveLauncher.launch("DTCO_full_scan_$stamp.txt")
             }
         }
-
         val info = TextView(this).apply {
-            text = "Тестер сначала перечисляет ВСЕ GATT-сервисы и характеристики, читает все разрешённые READ, подписывается на NOTIFY/INDICATE, затем открывает Remote HMI и перебирает DID. Данные карты и режимы водителя не изменяет."
+            text = "v2: сначала подписка только на DIAG FIFO и DIAG CREDITS в проверенной последовательности. Остальные GATT-каналы только перечисляются. При GATT 133 выполняется автоматическое переподключение. После открытия Remote HMI идёт только UDS 0x22 ReadDataByIdentifier."
             setPadding(0, dp(8), 0, dp(8))
         }
-
         logView = TextView(this).apply {
             textSize = 11f
             setTextIsSelectable(true)
@@ -141,8 +128,6 @@ class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
                 1f
             )
         }
-
-        root.addView(title)
         root.addView(statusView)
         root.addView(progressView)
         root.addView(pickButton)
@@ -204,8 +189,7 @@ class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
         try { device.name ?: "Без имени" } catch (_: Throwable) { "Нет доступа" }
 
     private fun startScan(startDid: Int, endDid: Int) {
-        val device = selectedDevice
-        if (device == null) {
+        val device = selectedDevice ?: run {
             chooseBondedDevice()
             return
         }
@@ -228,13 +212,8 @@ class FullDtcoScannerActivity : AppCompatActivity(), FullDtcoScanner.Listener {
         saveButton.isEnabled = fullLog.isNotBlank()
     }
 
-    override fun onScannerStatus(status: String) {
-        statusView.text = status
-    }
-
-    override fun onScannerProgress(text: String) {
-        progressView.text = text
-    }
+    override fun onScannerStatus(status: String) { statusView.text = status }
+    override fun onScannerProgress(text: String) { progressView.text = text }
 }
 
 class FullDtcoScanner(
@@ -252,28 +231,26 @@ class FullDtcoScanner(
         private val DIAG_SERVICE = UUID.fromString("fa213def-aef4-475c-bcea-0a8d69073efc")
         private val DIAG_FIFO = UUID.fromString("e413960c-75ba-4ca9-8a67-99bc052a1b13")
         private val DIAG_CREDITS = UUID.fromString("e168d1a6-304f-42b4-ab96-4cd1d4efebd9")
-        private val DOWNLOAD_SERVICE = UUID.fromString("eef90782-55dd-4388-b80b-695aba7a69b5")
-        private val DOWNLOAD_FIFO = UUID.fromString("29d3a479-1592-47df-80a4-afa742d369bb")
-        private val DOWNLOAD_CREDITS = UUID.fromString("db9c4128-bff3-41fe-a306-fb6f9a8aeb2d")
-        private const val DID_TIMEOUT_MS = 900L
-        private const val STEP_DELAY_MS = 70L
-        private const val MAX_LOG_LINES = 12000
+        private const val DID_TIMEOUT_MS = 1100L
+        private const val STEP_DELAY_MS = 90L
+        private const val SUBSCRIBE_DELAY_MS = 180L
+        private const val RECONNECT_DELAY_MS = 1300L
+        private const val MAX_RECONNECTS = 3
+        private const val MAX_LOG_LINES = 16000
     }
 
-    private enum class Phase { IDLE, SUBSCRIBE, GATT_READ, HANDSHAKE, DID_SCAN, DONE }
-    private data class Sub(val characteristic: BluetoothGattCharacteristic, val value: ByteArray)
+    private enum class Phase { IDLE, SUB_FIFO, SUB_CREDITS, HANDSHAKE, DID_SCAN, DONE }
 
     private val handler = Handler(Looper.getMainLooper())
     private val lines = CopyOnWriteArrayList<String>()
-    private val subscribeQueue = ArrayDeque<Sub>()
-    private val readQueue = ArrayDeque<BluetoothGattCharacteristic>()
-    private val lastDidData = linkedMapOf<Int, ByteArray>()
     private val positiveDids = linkedMapOf<Int, ByteArray>()
     private val nrcCounts = linkedMapOf<Int, Int>()
 
     private var gatt: BluetoothGatt? = null
+    private var targetDevice: BluetoothDevice? = null
     private var phase = Phase.IDLE
     private var running = false
+    private var reconnects = 0
     private var txCredits = 0
     private var openSent = false
     private var statusSent = false
@@ -326,29 +303,33 @@ class FullDtcoScanner(
 
     @SuppressLint("MissingPermission")
     fun start(device: BluetoothDevice, start: Int, end: Int) {
-        stop()
+        stopInternal(logStop = false)
         lines.clear()
-        lastDidData.clear()
         positiveDids.clear()
         nrcCounts.clear()
+        targetDevice = device
         startDid = start.coerceIn(0, 0xFFFF)
         endDid = end.coerceIn(startDid, 0xFFFF)
         currentDid = startDid
         positiveCount = 0
         negativeCount = 0
         timeoutCount = 0
-        txCredits = 0
-        openSent = false
-        statusSent = false
-        rhmiOpen = false
-        waitingDid = false
+        reconnects = 0
         running = true
-        phase = Phase.IDLE
         log("============================================================")
-        log("DTCO FULL READ-ONLY SCANNER")
+        log("DTCO FULL READ-ONLY SCANNER v2")
         log("DID RANGE: ${h4(startDid)}-${h4(endDid)} (${endDid - startDid + 1} identifiers)")
-        log("SAFE MODE: UDS 0x22 only; no activity/card/download commands")
+        log("SAFE MODE: DIAG service only; UDS 0x22 only")
+        log("BLE FIX: serialized FIFO->CREDITS subscription; no blanket CCCD writes")
+        log("BLE FIX: automatic reconnect on GATT/CCCD failure, max=$MAX_RECONNECTS")
         log("============================================================")
+        connect(device)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connect(device: BluetoothDevice) {
+        if (!running) return
+        resetSessionState()
         listener.onScannerStatus("Подключение к ${safeName(device)}")
         gatt = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
@@ -358,28 +339,69 @@ class FullDtcoScanner(
             log("connectGatt ERROR: ${t.javaClass.simpleName}: ${t.message}")
             null
         }
+        if (gatt == null) scheduleReconnect("connectGatt returned null")
+    }
+
+    private fun resetSessionState() {
+        phase = Phase.IDLE
+        txCredits = 0
+        openSent = false
+        statusSent = false
+        rhmiOpen = false
+        waitingDid = false
+        didToken++
     }
 
     @SuppressLint("MissingPermission")
     fun stop() {
         running = false
+        targetDevice = null
+        handler.removeCallbacksAndMessages(null)
+        stopInternal(logStop = true)
+        listener.onScannerStatus("Остановлено")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopInternal(logStop: Boolean) {
         waitingDid = false
         didToken++
-        handler.removeCallbacksAndMessages(null)
         val old = gatt
         gatt = null
         try { old?.disconnect() } catch (_: Throwable) {}
         try { old?.close() } catch (_: Throwable) {}
-        if (phase != Phase.IDLE && phase != Phase.DONE) log("SCAN STOPPED")
+        if (logStop && phase != Phase.IDLE && phase != Phase.DONE) log("SCAN STOPPED")
         phase = Phase.IDLE
-        listener.onScannerStatus("Остановлено")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun scheduleReconnect(reason: String) {
+        if (!running) return
+        if (reconnects >= MAX_RECONNECTS) {
+            log("BLE RECOVERY EXHAUSTED: $reason")
+            finish("BLE setup failed")
+            return
+        }
+        reconnects++
+        log("BLE RECOVERY #$reconnects/$MAX_RECONNECTS reason=$reason")
+        listener.onScannerStatus("BLE восстановление #$reconnects")
+        val old = gatt
+        gatt = null
+        try { old?.disconnect() } catch (_: Throwable) {}
+        try { old?.close() } catch (_: Throwable) {}
+        resetSessionState()
+        val device = targetDevice ?: return
+        handler.postDelayed({ if (running) connect(device) }, RECONNECT_DELAY_MS)
     }
 
     private val callback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             log("GATT STATE status=$status newState=$newState")
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
+            if (!running) {
+                try { g.close() } catch (_: Throwable) {}
+                return
+            }
+            if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 gatt = g
                 listener.onScannerStatus("GATT подключён")
                 try {
@@ -388,43 +410,68 @@ class FullDtcoScanner(
                     g.discoverServices()
                 }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                listener.onScannerStatus("Связь разорвана")
-                running = false
+                if (gatt == g) gatt = null
+                try { g.close() } catch (_: Throwable) {}
+                if (phase != Phase.DONE && running) scheduleReconnect("disconnect status=$status")
+            } else if (status != BluetoothGatt.GATT_SUCCESS) {
+                scheduleReconnect("connection status=$status state=$newState")
             }
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
             log("MTU=$mtu status=$status")
-            g.discoverServices()
+            if (running) g.discoverServices()
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             log("SERVICE DISCOVERY status=$status services=${g.services.size}")
-            if (status != BluetoothGatt.GATT_SUCCESS) return
-            prepareGattInventory(g)
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                scheduleReconnect("service discovery status=$status")
+                return
+            }
+            inventory(g)
+            val service = g.getService(DIAG_SERVICE)
+            val fifo = service?.getCharacteristic(DIAG_FIFO)
+            val credits = service?.getCharacteristic(DIAG_CREDITS)
+            if (service == null || fifo == null || credits == null) {
+                log("DIAGNOSTICS SERVICE/FIFO/CREDITS NOT FOUND")
+                finish("DIAG transport not found")
+                return
+            }
+            phase = Phase.SUB_FIFO
+            handler.postDelayed({ subscribe(g, fifo) }, SUBSCRIBE_DELAY_MS)
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            log("CCCD ${descriptor.characteristic.uuid} status=$status")
-            if (phase == Phase.SUBSCRIBE) handler.postDelayed({ subscribeNext(g) }, STEP_DELAY_MS)
-        }
-
-        @Deprecated("legacy")
-        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
-            if (Build.VERSION.SDK_INT < 33) {
-                @Suppress("DEPRECATION") val v = c.value ?: byteArrayOf()
-                handleGattRead(g, c, v, status)
+            val uuid = descriptor.characteristic.uuid
+            log("CCCD $uuid status=$status phase=$phase")
+            if (!running) return
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                scheduleReconnect("CCCD $uuid status=$status")
+                return
             }
-        }
-
-        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
-            handleGattRead(g, c, value, status)
+            when {
+                phase == Phase.SUB_FIFO && uuid == DIAG_FIFO -> {
+                    val c = g.getService(DIAG_SERVICE)?.getCharacteristic(DIAG_CREDITS)
+                    if (c == null) finish("DIAG CREDITS missing")
+                    else {
+                        phase = Phase.SUB_CREDITS
+                        handler.postDelayed({ subscribe(g, c) }, SUBSCRIBE_DELAY_MS)
+                    }
+                }
+                phase == Phase.SUB_CREDITS && uuid == DIAG_CREDITS -> {
+                    phase = Phase.HANDSHAKE
+                    log("DIAG subscriptions OK")
+                    handler.postDelayed({ grant(g) }, 250L)
+                }
+            }
         }
 
         @Deprecated("legacy")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
             if (Build.VERSION.SDK_INT < 33) {
-                @Suppress("DEPRECATION") incoming(g, c, c.value ?: byteArrayOf())
+                @Suppress("DEPRECATION")
+                incoming(g, c, c.value ?: byteArrayOf())
             }
         }
 
@@ -433,10 +480,9 @@ class FullDtcoScanner(
         }
     }
 
-    private fun prepareGattInventory(g: BluetoothGatt) {
-        subscribeQueue.clear()
-        readQueue.clear()
+    private fun inventory(g: BluetoothGatt) {
         log("---------------- GATT INVENTORY ----------------")
+        var subscribable = 0
         g.services.forEach { service ->
             log("SERVICE ${service.uuid}")
             service.characteristics.forEach { c ->
@@ -448,98 +494,59 @@ class FullDtcoScanner(
                     if (p and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) add("NOTIFY")
                     if (p and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) add("INDICATE")
                 }.joinToString("|")
-                log("  CHAR ${c.uuid} props=$flags descriptors=${c.descriptors.size}")
-                if (p and BluetoothGattCharacteristic.PROPERTY_READ != 0) readQueue.addLast(c)
-                val cccd = c.getDescriptor(CCCD)
-                if (cccd != null) {
-                    when {
-                        p and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0 ->
-                            subscribeQueue.addLast(Sub(c, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE))
-                        p and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0 ->
-                            subscribeQueue.addLast(Sub(c, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE))
-                    }
+                if (c.getDescriptor(CCCD) != null && (p and (BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE)) != 0) {
+                    subscribable++
                 }
+                log("  CHAR ${c.uuid} props=$flags descriptors=${c.descriptors.size}")
             }
         }
-        log("GATT readable=${readQueue.size}, subscribable=${subscribeQueue.size}")
-        phase = Phase.SUBSCRIBE
-        subscribeNext(g)
+        log("GATT subscribable=$subscribable; v2 will activate DIAG FIFO+CREDITS only")
     }
 
     @SuppressLint("MissingPermission")
-    private fun subscribeNext(g: BluetoothGatt) {
-        if (!running || phase != Phase.SUBSCRIBE) return
-        val item = if (subscribeQueue.isEmpty()) null else subscribeQueue.removeFirst()
-        if (item == null) {
-            phase = Phase.GATT_READ
-            readNextGatt(g)
-            return
-        }
-        val c = item.characteristic
+    private fun subscribe(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+        if (!running || gatt != g) return
         val d = c.getDescriptor(CCCD)
-        if (d == null || !g.setCharacteristicNotification(c, true)) {
-            handler.postDelayed({ subscribeNext(g) }, STEP_DELAY_MS)
+        if (d == null) {
+            scheduleReconnect("CCCD missing ${c.uuid}")
             return
         }
-        val ok = if (Build.VERSION.SDK_INT >= 33) {
-            g.writeDescriptor(d, item.value) == BluetoothGatt.GATT_SUCCESS
-        } else {
-            @Suppress("DEPRECATION") d.value = item.value
-            @Suppress("DEPRECATION") g.writeDescriptor(d)
-        }
-        if (!ok) handler.postDelayed({ subscribeNext(g) }, STEP_DELAY_MS)
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun readNextGatt(g: BluetoothGatt) {
-        if (!running || phase != Phase.GATT_READ) return
-        val c = if (readQueue.isEmpty()) null else readQueue.removeFirst()
-        if (c == null) {
-            log("---------------- GATT READ COMPLETE ----------------")
-            beginHandshake(g)
+        val local = try { g.setCharacteristicNotification(c, true) } catch (_: Throwable) { false }
+        log("SUBSCRIBE ${c.uuid} localNotify=$local")
+        if (!local) {
+            scheduleReconnect("setCharacteristicNotification failed ${c.uuid}")
             return
         }
-        val ok = try { g.readCharacteristic(c) } catch (_: Throwable) { false }
-        if (!ok) {
-            log("GATT READ START FAILED ${c.uuid}")
-            handler.postDelayed({ readNextGatt(g) }, STEP_DELAY_MS)
-        }
-    }
-
-    private fun handleGattRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, v: ByteArray, status: Int) {
-        log("GATT READ ${c.uuid} status=$status len=${v.size} hex=${hex(v)} ascii=${ascii(v)}")
-        if (phase == Phase.GATT_READ) handler.postDelayed({ readNextGatt(g) }, STEP_DELAY_MS)
-    }
-
-    private fun beginHandshake(g: BluetoothGatt) {
-        phase = Phase.HANDSHAKE
-        val diag = g.getService(DIAG_SERVICE)
-        if (diag == null) {
-            log("DIAGNOSTICS SERVICE NOT FOUND")
-            finish()
-            return
-        }
-        log("---------------- REMOTE HMI HANDSHAKE ----------------")
-        sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
-        if (g.getService(DOWNLOAD_SERVICE) != null) {
-            sendCredit(g, DOWNLOAD_SERVICE, DOWNLOAD_CREDITS)
-            log("Download service detected; only flow-control/notifications, no download command")
-        }
+        val value = if (c.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0)
+            BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+        else BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        val ok = try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                g.writeDescriptor(d, value) == BluetoothGatt.GATT_SUCCESS
+            } else {
+                @Suppress("DEPRECATION") d.value = value
+                @Suppress("DEPRECATION") g.writeDescriptor(d)
+            }
+        } catch (_: Throwable) { false }
+        log("SUBSCRIBE ${c.uuid} writeStarted=$ok")
+        if (!ok) scheduleReconnect("writeDescriptor start failed ${c.uuid}")
     }
 
     private fun incoming(g: BluetoothGatt, c: BluetoothGattCharacteristic, v: ByteArray) {
         val label = when (c.uuid) {
             DIAG_FIFO -> "DIAG_FIFO"
             DIAG_CREDITS -> "DIAG_CREDITS"
-            DOWNLOAD_FIFO -> "DOWNLOAD_FIFO"
-            DOWNLOAD_CREDITS -> "DOWNLOAD_CREDITS"
-            else -> "NOTIFY"
+            else -> "OTHER"
         }
         log("RX $label uuid=${c.uuid} len=${v.size} hex=${hex(v)}")
-
         if (c.uuid == DIAG_CREDITS) {
             if (v.isNotEmpty()) {
-                txCredits += u(v[0])
+                val n = u(v[0])
+                if (n == 0xFF) {
+                    finish("flow control rejected")
+                    return
+                }
+                txCredits += n
                 if (!openSent && txCredits > 0) sendOpen(g)
                 else if (phase == Phase.DID_SCAN && !waitingDid && txCredits > 0) sendCurrentDid(g)
             }
@@ -550,8 +557,8 @@ class FullDtcoScanner(
 
         if (a.size >= 4 && u(a[0]) == 0x71 && u(a[1]) == 0x01 && u(a[2]) == 0xF2 && u(a[3]) == 0x11) {
             log("OPEN RHMI POSITIVE")
-            sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
-            handler.postDelayed({ sendStatus(g) }, 120L)
+            grant(g)
+            handler.postDelayed({ sendStatus(g) }, 180L)
             return
         }
         if (a.size >= 5 && u(a[0]) == 0x71 && u(a[1]) == 0x03 && u(a[2]) == 0xF2 && u(a[3]) == 0x11) {
@@ -560,34 +567,51 @@ class FullDtcoScanner(
             if (s == 0x10) {
                 rhmiOpen = true
                 phase = Phase.DID_SCAN
-                listener.onScannerStatus("Remote HMI открыт — идёт DID scan")
-                sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
-            } else {
-                log("RHMI NOT OPEN; scan cannot continue")
-                finish()
-            }
+                reconnects = 0
+                listener.onScannerStatus("Remote HMI открыт — DID scan")
+                grant(g)
+            } else finish("RHMI status 0x${h2(s)}")
             return
         }
         if (a.size >= 3 && u(a[0]) == 0x62) {
             val did = (u(a[1]) shl 8) or u(a[2])
             val data = if (a.size > 3) a.copyOfRange(3, a.size) else byteArrayOf()
-            handlePositiveDid(g, did, data)
+            positiveCount++
+            positiveDids[did] = data.copyOf()
+            log("DID ${h4(did)} POS ${knownNames[did]?.let { "[$it] " } ?: ""}len=${data.size} hex=${hex(data)} | ${decodeGeneric(data)}")
+            if (waitingDid && did == currentDid) advance(g)
             return
         }
         if (a.size >= 3 && u(a[0]) == 0x7F && u(a[1]) == 0x22) {
-            handleNegativeDid(g, u(a[2]))
+            val nrc = u(a[2])
+            negativeCount++
+            nrcCounts[nrc] = (nrcCounts[nrc] ?: 0) + 1
+            if (waitingDid) {
+                log("DID ${h4(currentDid)} NRC=0x${h2(nrc)} ${nrcName(nrc)}")
+                advance(g)
+            }
         }
     }
 
+    private fun advance(g: BluetoothGatt) {
+        waitingDid = false
+        didToken++
+        currentDid++
+        handler.postDelayed({
+            grant(g)
+            handler.postDelayed({ sendCurrentDid(g) }, STEP_DELAY_MS)
+        }, STEP_DELAY_MS)
+    }
+
     @SuppressLint("MissingPermission")
-    private fun sendCredit(g: BluetoothGatt, serviceUuid: UUID, charUuid: UUID) {
-        val c = g.getService(serviceUuid)?.getCharacteristic(charUuid) ?: return
+    private fun grant(g: BluetoothGatt) {
+        val c = g.getService(DIAG_SERVICE)?.getCharacteristic(DIAG_CREDITS) ?: return
         writeNoResponse(g, c, byteArrayOf(1))
     }
 
     @SuppressLint("MissingPermission")
     private fun sendOpen(g: BluetoothGatt) {
-        if (openSent || txCredits <= 0) return
+        if (openSent || txCredits <= 0 || phase != Phase.HANDSHAKE) return
         val fifo = g.getService(DIAG_SERVICE)?.getCharacteristic(DIAG_FIFO) ?: return
         val packet = byteArrayOf(1, 1, 0x31, 0x01, 0xF2.toByte(), 0x11)
         if (writeNoResponse(g, fifo, packet)) {
@@ -599,11 +623,10 @@ class FullDtcoScanner(
 
     @SuppressLint("MissingPermission")
     private fun sendStatus(g: BluetoothGatt) {
-        if (statusSent || txCredits <= 0) {
-            if (!statusSent) {
-                sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
-                handler.postDelayed({ sendStatus(g) }, 180L)
-            }
+        if (statusSent) return
+        if (txCredits <= 0) {
+            grant(g)
+            handler.postDelayed({ sendStatus(g) }, 180L)
             return
         }
         val fifo = g.getService(DIAG_SERVICE)?.getCharacteristic(DIAG_FIFO) ?: return
@@ -617,13 +640,13 @@ class FullDtcoScanner(
 
     @SuppressLint("MissingPermission")
     private fun sendCurrentDid(g: BluetoothGatt) {
-        if (!running || !rhmiOpen || phase != Phase.DID_SCAN || waitingDid) return
+        if (!running || !rhmiOpen || phase != Phase.DID_SCAN || waitingDid || gatt != g) return
         if (currentDid > endDid) {
-            finish()
+            finish("complete")
             return
         }
         if (txCredits <= 0) {
-            sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
+            grant(g)
             return
         }
         val fifo = g.getService(DIAG_SERVICE)?.getCharacteristic(DIAG_FIFO) ?: return
@@ -644,74 +667,44 @@ class FullDtcoScanner(
                     log("DID ${h4(did)} TIMEOUT")
                     waitingDid = false
                     currentDid++
-                    sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
+                    grant(g)
+                    handler.postDelayed({ sendCurrentDid(g) }, STEP_DELAY_MS)
                 }
             }, DID_TIMEOUT_MS)
         } else {
-            handler.postDelayed({ sendCurrentDid(g) }, 120L)
+            handler.postDelayed({ sendCurrentDid(g) }, 150L)
         }
     }
 
-    private fun handlePositiveDid(g: BluetoothGatt, did: Int, data: ByteArray) {
-        positiveCount++
-        positiveDids[did] = data.copyOf()
-        val old = lastDidData.put(did, data.copyOf())
-        val changed = if (old == null) "NEW" else if (old.contentEquals(data)) "SAME" else "CHANGED:${diffBytes(old, data)}"
-        log("DID ${h4(did)} POS ${knownNames[did]?.let { \"[$it] \" } ?: \"\"}len=${data.size} hex=${hex(data)} | ${decodeGeneric(data)} | $changed")
-        if (waitingDid && did == currentDid) {
-            waitingDid = false
-            didToken++
-            currentDid++
-            handler.postDelayed({
-                sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
-                handler.postDelayed({ sendCurrentDid(g) }, STEP_DELAY_MS)
-            }, STEP_DELAY_MS)
-        }
-    }
-
-    private fun handleNegativeDid(g: BluetoothGatt, nrc: Int) {
-        negativeCount++
-        nrcCounts[nrc] = (nrcCounts[nrc] ?: 0) + 1
-        if (waitingDid) {
-            val did = currentDid
-            log("DID ${h4(did)} NRC=0x${h2(nrc)} ${nrcName(nrc)}")
-            waitingDid = false
-            didToken++
-            currentDid++
-            handler.postDelayed({
-                sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
-                handler.postDelayed({ sendCurrentDid(g) }, STEP_DELAY_MS)
-            }, STEP_DELAY_MS)
-        }
-    }
-
-    private fun finish() {
+    private fun finish(reason: String) {
         phase = Phase.DONE
         running = false
-        listener.onScannerStatus("Сканирование завершено")
+        listener.onScannerStatus("Сканирование завершено: $reason")
         listener.onScannerProgress("Готово: +$positiveCount / NRC $negativeCount / timeout $timeoutCount")
         log("============================================================")
-        log("SCAN COMPLETE")
+        log("SCAN COMPLETE reason=$reason")
         log("Positive DIDs: $positiveCount")
         log("Negative responses: $negativeCount")
         log("Timeouts: $timeoutCount")
-        log("NRC summary: ${nrcCounts.entries.joinToString { \"0x${h2(it.key)}=${it.value}\" }}")
+        log("NRC summary: ${nrcCounts.entries.joinToString { "0x${h2(it.key)}=${it.value}" }}")
         log("---------------- POSITIVE DID SUMMARY ----------------")
         positiveDids.forEach { (did, data) ->
-            log("${h4(did)} ${knownNames[did] ?: \"UNKNOWN\"} len=${data.size} hex=${hex(data)} | ${decodeGeneric(data)}")
+            log("${h4(did)} ${knownNames[did] ?: "UNKNOWN"} len=${data.size} hex=${hex(data)} | ${decodeGeneric(data)}")
         }
         log("============================================================")
     }
 
     @SuppressLint("MissingPermission")
     private fun writeNoResponse(g: BluetoothGatt, c: BluetoothGattCharacteristic, data: ByteArray): Boolean {
-        return if (Build.VERSION.SDK_INT >= 33) {
-            g.writeCharacteristic(c, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) == BluetoothGatt.GATT_SUCCESS
-        } else {
-            @Suppress("DEPRECATION") c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            @Suppress("DEPRECATION") c.value = data
-            @Suppress("DEPRECATION") g.writeCharacteristic(c)
-        }
+        return try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                g.writeCharacteristic(c, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) == BluetoothGatt.GATT_SUCCESS
+            } else {
+                @Suppress("DEPRECATION") c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                @Suppress("DEPRECATION") c.value = data
+                @Suppress("DEPRECATION") g.writeCharacteristic(c)
+            }
+        } catch (_: Throwable) { false }
     }
 
     private fun decodeGeneric(data: ByteArray): String {
@@ -723,21 +716,17 @@ class FullDtcoScanner(
             val le = u(data[0]) or (u(data[1]) shl 8)
             parts += "u16BE=$be"
             parts += "u16LE=$le"
-            if (be < 0xFB00) parts += "BEtime=${be / 60}:${String.format(Locale.US, \"%02d\", be % 60)}"
+            if (be < 0xFB00) parts += "BEtime=${be / 60}:${String.format(Locale.US, "%02d", be % 60)}"
         }
         if (data.size >= 4) {
-            val be32 = (u(data[0]).toLong() shl 24) or (u(data[1]).toLong() shl 16) or (u(data[2]).toLong() shl 8) or u(data[3]).toLong()
+            val be32 = (u(data[0]).toLong() shl 24) or
+                (u(data[1]).toLong() shl 16) or
+                (u(data[2]).toLong() shl 8) or u(data[3]).toLong()
             parts += "u32BE=$be32"
         }
         val text = ascii(data)
         if (text.any { it.isLetterOrDigit() }) parts += "ascii=$text"
         return parts.joinToString(" ")
-    }
-
-    private fun diffBytes(a: ByteArray, b: ByteArray): String {
-        val max = maxOf(a.size, b.size)
-        return (0 until max).filter { i -> i >= a.size || i >= b.size || a[i] != b[i] }
-            .take(16).joinToString(",") { i -> "#$i:${if (i < a.size) h2(u(a[i])) else "--"}->${if (i < b.size) h2(u(b[i])) else "--"}" }
     }
 
     private fun nrcName(nrc: Int): String = when (nrc) {
@@ -767,5 +756,8 @@ class FullDtcoScanner(
     private fun h2(v: Int): String = "%02X".format(Locale.US, v and 0xFF)
     private fun h4(v: Int): String = "%04X".format(Locale.US, v and 0xFFFF)
     private fun hex(v: ByteArray): String = if (v.isEmpty()) "(empty)" else v.joinToString(" ") { h2(u(it)) }
-    private fun ascii(v: ByteArray): String = v.map { b -> val x = u(b); if (x in 32..126) x.toChar() else '.' }.joinToString("")
+    private fun ascii(v: ByteArray): String = v.map { b ->
+        val x = u(b)
+        if (x in 32..126) x.toChar() else '.'
+    }.joinToString("")
 }
