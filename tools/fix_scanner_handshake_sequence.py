@@ -2,6 +2,14 @@ from pathlib import Path
 
 p = Path('app/src/main/java/com/pylikv/tachowatch/FullDtcoScannerActivity.kt')
 text = p.read_text(encoding='utf-8')
+
+# The v2 scanner already implements the ordered Diagnostics FIFO -> Credits
+# subscription, avoids blanket CCCD writes, and contains GATT recovery.
+# In that case CI must not try to re-patch the legacy implementation.
+if 'DTCO FULL READ-ONLY SCANNER v2' in text and 'Phase.SUB_FIFO' in text and 'Phase.SUB_CREDITS' in text:
+    print('Scanner v2 already contains ordered DIAG handshake and recovery; no patch needed')
+    raise SystemExit(0)
+
 old = '''        log("GATT readable=${readQueue.size}, subscribable=${subscribeQueue.size}")
         phase = Phase.SUBSCRIBE
         subscribeNext(g)
@@ -32,9 +40,6 @@ old = '''        log("GATT readable=${readQueue.size}, subscribable=${subscribeQ
     }
 '''
 new = '''        log("GATT readable=${readQueue.size}, subscribable=${subscribeQueue.size}")
-        // DTCO Remote HMI is order-sensitive.  Do NOT subscribe every CCCD here:
-        // first Diagnostics FIFO, then Diagnostics Credits, exactly like the stable
-        // LiveDidDiagnostic transport. Download/other notifications stay untouched.
         subscribeQueue.clear()
         val diag = g.getService(DIAG_SERVICE)
         val fifo = diag?.getCharacteristic(DIAG_FIFO)
@@ -74,6 +79,7 @@ new = '''        log("GATT readable=${readQueue.size}, subscribable=${subscribeQ
 if old not in text:
     raise SystemExit('subscription block not found')
 text = text.replace(old, new)
+
 old2 = '''        override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             log("CCCD ${descriptor.characteristic.uuid} status=$status")
             if (phase == Phase.SUBSCRIBE) handler.postDelayed({ subscribeNext(g) }, STEP_DELAY_MS)
@@ -95,8 +101,6 @@ new2 = '''        override fun onDescriptorWrite(g: BluetoothGatt, descriptor: B
                     finish()
                 } else handler.postDelayed({ subscribeDiagnostic(g, credits) }, 120L)
             } else if (uuid == DIAG_CREDITS) {
-                // No generic GATT reads exist on the tested DTCO, and touching other
-                // subscriptions before RHMI caused remote disconnect status=19.
                 handler.postDelayed({ beginHandshake(g) }, 180L)
             }
         }
@@ -104,6 +108,7 @@ new2 = '''        override fun onDescriptorWrite(g: BluetoothGatt, descriptor: B
 if old2 not in text:
     raise SystemExit('descriptor block not found')
 text = text.replace(old2, new2)
+
 old3 = '''        sendCredit(g, DIAG_SERVICE, DIAG_CREDITS)
         if (g.getService(DOWNLOAD_SERVICE) != null) {
             sendCredit(g, DOWNLOAD_SERVICE, DOWNLOAD_CREDITS)
@@ -116,5 +121,6 @@ new3 = '''        log("Diagnostics-only handshake; Download FIFO intentionally u
 if old3 not in text:
     raise SystemExit('handshake block not found')
 text = text.replace(old3, new3)
+
 p.write_text(text, encoding='utf-8')
 print('Applied ordered Diagnostics FIFO -> Credits -> RHMI handshake')
