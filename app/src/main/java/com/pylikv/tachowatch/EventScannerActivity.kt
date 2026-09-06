@@ -100,7 +100,7 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
             setPadding(dp(12),dp(10),dp(12),dp(18))
             setBackgroundColor(BG)
         }
-        outer.addView(root, ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT))
+        outer.addView(root, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
 
         root.addView(TextView(this).apply{
             text="DTCO Live DID Monitor v9.2"
