@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - full-dtco-scanner
   pull_request:
     branches:
       - main
@@ -58,6 +59,24 @@ jobs:
 
       - name: Apply confirmed DTCO counter sources
         run: python3 tools/apply_counter_source_fix_v231.py
+
+      - name: Normalize full scanner source
+        run: python3 tools/fix_full_scanner_source.py
+
+      - name: Apply ordered scanner handshake
+        run: python3 tools/fix_scanner_handshake_sequence.py
+
+      - name: Apply F9 discovery sampling v4
+        run: python3 tools/apply_f9_discovery_v4.py
+
+      - name: Apply 12-minute REST dynamic monitor v5
+        run: python3 tools/apply_rest_dynamic_monitor_v5.py
+
+      - name: Apply REST monitor save/orientation fix v6
+        run: python3 tools/apply_rest_monitor_save_fix_v6.py
+
+      - name: Apply REST monitor autosave/recovery v7
+        run: python3 tools/apply_rest_monitor_autosave_v7.py
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
