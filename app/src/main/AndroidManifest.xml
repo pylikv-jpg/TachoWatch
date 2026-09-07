@@ -15,7 +15,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="DTCO Live DID Monitor v9.4"
+        android:label="DTCO Live DID Monitor v9.5"
         android:icon="@drawable/ic_launcher_tachowatch"
         android:roundIcon="@drawable/ic_launcher_tachowatch"
         android:supportsRtl="true"
