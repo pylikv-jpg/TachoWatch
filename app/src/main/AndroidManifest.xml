@@ -6,9 +6,28 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
-    <application android:allowBackup="true" android:label="DTCO Live DID Monitor v9.2" android:icon="@drawable/ic_launcher_tachowatch" android:roundIcon="@drawable/ic_launcher_tachowatch" android:supportsRtl="true" android:theme="@style/Theme.TachoWatch">
+
+    <application
+        android:allowBackup="true"
+        android:label="DTCO Live DID Monitor v9.4"
+        android:icon="@drawable/ic_launcher_tachowatch"
+        android:roundIcon="@drawable/ic_launcher_tachowatch"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TachoWatch">
+
+        <service
+            android:name=".TargetMonitorService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
+
         <activity android:name=".DriverActivity" android:exported="false" />
         <activity android:name=".Test14Activity" android:exported="false" />
         <activity android:name=".Test15Activity" android:exported="false" />
