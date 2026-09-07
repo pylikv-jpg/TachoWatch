@@ -27,7 +27,7 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
 
     companion object {
         private const val CHANNEL_ID = "dtco_target_monitor"
-        private const val NOTIFICATION_ID = 904
+        private const val NOTIFICATION_ID = 905
         private const val ACTION_START = "com.pylikv.tachowatch.MONITOR_START"
         private const val ACTION_STOP = "com.pylikv.tachowatch.MONITOR_STOP"
         private const val EXTRA_ADDRESS = "device_address"
@@ -39,7 +39,7 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
         private val lastDids = linkedMapOf<Int, DidSnapshot>()
 
         @Volatile private var monitorRef: DtcoTargetEventMonitor? = null
-        @Volatile private var fullLog: String = ""
+        @Volatile private var visibleLog: String = ""
         @Volatile private var isConnected: Boolean = false
         @Volatile private var deviceName: String? = null
         @Volatile private var running: Boolean = false
@@ -58,7 +58,7 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
         fun registerListener(listener: DtcoTargetEventMonitor.Listener) {
             if (!listeners.contains(listener)) listeners.add(listener)
             listener.onConnectionStateChanged(isConnected, deviceName)
-            if (fullLog.isNotBlank()) listener.onLogChanged(fullLog)
+            if (visibleLog.isNotBlank()) listener.onLogChanged(visibleLog)
             synchronized(lastDids) {
                 lastDids.values.forEach { s ->
                     listener.onDidUpdate(s.did, s.rawHex, s.decoded, s.changed, s.byteDiff, s.timestamp)
@@ -83,12 +83,14 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
     private var reconnectRunnable: Runnable? = null
     private var reconnectAttempts = 0
     private var stopping = false
+    private var sessionStarted = false
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, notification("Мониторинг запускается…"))
         running = true
+        stopping = false
         monitorRef = DtcoTargetEventMonitor(applicationContext, this)
     }
 
@@ -101,14 +103,22 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
             ACTION_START -> {
                 val address = intent.getStringExtra(EXTRA_ADDRESS)
                 if (!address.isNullOrBlank()) {
+                    stopping = false
+                    reconnectAttempts = 0
+                    sessionStarted = false
+                    visibleLog = ""
+                    synchronized(lastDids) { lastDids.clear() }
                     prefs().edit().putBoolean(PREF_ACTIVE, true).putString(PREF_ADDRESS, address).apply()
-                    connectAddress(address)
+                    connectAddress(address, newSession = true)
                 }
             }
             else -> {
                 val p = prefs()
                 if (p.getBoolean(PREF_ACTIVE, false)) {
-                    p.getString(PREF_ADDRESS, null)?.let { connectAddress(it) }
+                    p.getString(PREF_ADDRESS, null)?.let {
+                        sessionStarted = false
+                        connectAddress(it, newSession = true)
+                    }
                 }
             }
         }
@@ -119,14 +129,16 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
 
     override fun onDestroy() {
         reconnectRunnable?.let { mainHandler.removeCallbacks(it) }
-        monitorRef?.disconnect()
+        reconnectRunnable = null
+        monitorRef?.shutdown()
         monitorRef = null
         running = false
+        isConnected = false
         super.onDestroy()
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectAddress(address: String) {
+    private fun connectAddress(address: String, newSession: Boolean) {
         if (stopping) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
@@ -144,8 +156,9 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
         }
         reconnectRunnable?.let { mainHandler.removeCallbacks(it) }
         reconnectRunnable = null
-        updateNotification("Подключение к DTCO…")
-        monitorRef?.connect(device)
+        updateNotification(if (newSession) "Подключение к DTCO…" else "Переподключение к DTCO…")
+        monitorRef?.connect(device, newSession = newSession || !sessionStarted)
+        sessionStarted = true
     }
 
     private fun scheduleReconnect(address: String) {
@@ -159,11 +172,13 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
         }
         val r = Runnable {
             reconnectRunnable = null
-            if (!stopping && prefs().getBoolean(PREF_ACTIVE, false)) connectAddress(address)
+            if (!stopping && prefs().getBoolean(PREF_ACTIVE, false)) {
+                connectAddress(address, newSession = false)
+            }
         }
         reconnectRunnable = r
         mainHandler.postDelayed(r, delay)
-        updateNotification("Связь потеряна • переподключение…")
+        updateNotification("Связь потеряна • переподключение через ${delay / 1000}с")
     }
 
     private fun stopMonitoring() {
@@ -179,7 +194,7 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
     }
 
     override fun onLogChanged(fullLogValue: String) {
-        fullLog = fullLogValue
+        visibleLog = fullLogValue
         listeners.forEach { it.onLogChanged(fullLogValue) }
     }
 
@@ -221,12 +236,14 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
     private fun notification(text: String): Notification {
         val launch = Intent(this, EventScannerActivity::class.java)
         val pending = PendingIntent.getActivity(
-            this, 0, launch,
+            this,
+            0,
+            launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle("DTCO Live DID Monitor")
+            .setContentTitle("DTCO Live DID Monitor v9.5")
             .setContentText(text)
             .setContentIntent(pending)
             .setOngoing(true)
@@ -238,6 +255,6 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
     private fun updateNotification(text: String) {
         try {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
-        } catch (_: Throwable) { }
+        } catch (_: Throwable) {}
     }
 }
