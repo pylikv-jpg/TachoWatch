@@ -44,6 +44,7 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
     private var selected: BluetoothDevice? = null
     private var userTouching = false
     private var followLog = false
+    private var lastRenderedLog = ""
     private val didViews = linkedMapOf<Int, DidViews>()
 
     private val displayDids = listOf(
@@ -113,13 +114,13 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         outerScroll.addView(root, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
 
         root.addView(TextView(this).apply {
-            text = "DTCO Live DID Monitor v9.4"
+            text = "DTCO Live DID Monitor v9.5"
             textSize = 22f
             setTextColor(TEXT)
             setTypeface(typeface, Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "ФОНОВЫЙ РЕЖИМ • постоянная запись • автопереподключение"
+            text = "ФОНОВЫЙ РЕЖИМ • постоянная запись • автопереподключение • защищённый журнал"
             textSize = 12f
             setTextColor(GREEN)
         })
@@ -166,7 +167,7 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         root.addView(actions, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(6) })
 
         root.addView(button("Сохранить отчёт", ORANGE).apply {
-            setOnClickListener { saveReport.launch(TargetMonitorService.getCurrentLogFileName() ?: "DTCO_LIVE_DID_v9_4.txt") }
+            setOnClickListener { saveReport.launch(TargetMonitorService.getCurrentLogFileName() ?: "DTCO_LIVE_DID_v9_5.txt") }
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(6) })
 
         root.addView(TextView(this).apply {
@@ -181,7 +182,7 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         displayDids.forEach { (id, title) -> addDidCard(id, title) }
 
         root.addView(TextView(this).apply {
-            text = "ЖУРНАЛ"
+            text = "ЖУРНАЛ • на экране последние 500 строк, полный журнал сохраняется в файл"
             textSize = 13f
             setTextColor(MUTED)
             setTypeface(typeface, Typeface.BOLD)
@@ -309,9 +310,12 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
     }
 
     override fun onLogChanged(fullLog: String) {
+        if (fullLog == lastRenderedLog) return
         runOnUiThread {
+            if (fullLog == lastRenderedLog) return@runOnUiThread
             val outerY = outerScroll.scrollY
             val innerY = logScroll.scrollY
+            lastRenderedLog = fullLog
             logText.text = fullLog
             if (!userTouching) outerScroll.post { outerScroll.scrollTo(0, outerY) }
             if (followLog) logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
