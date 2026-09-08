@@ -47,15 +47,25 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
     private val didViews = linkedMapOf<Int, DidViews>()
 
     private val displayDids = listOf(
-        0xF90B to "Динамический структурированный канал",
-        0xF925 to "Отдых / пауза",
-        0xF927 to "Длительность выбранной деятельности",
-        0xF923 to "Непрерывное вождение",
-        0xF938 to "Вождение за 2 недели",
-        0xF930 to "Неизвестный кандидат A",
-        0xF979 to "Неизвестный кандидат B",
-        0xF9D5 to "Неизвестный кандидат C",
-        0xF907 to "Карта в слоте 1"
+        0xF923 to "Контроль: непрерывное вождение",
+        0xF925 to "Контроль: накопленная зачётная пауза",
+        0xF927 to "Контроль: текущая деятельность",
+        0xF938 to "Контроль: предыдущая + текущая неделя",
+        0xF997 to "Окончание последнего суточного отдыха",
+        0xF998 to "Окончание последнего недельного отдыха",
+        0xF999 to "Окончание предпоследнего недельного отдыха",
+        0xF99A to "Текущее суточное вождение",
+        0xF99B to "Текущее недельное вождение",
+        0xF99C to "До нового суточного отдыха",
+        0xF99D to "Срок действия карты",
+        0xF99E to "Следующая выгрузка карты",
+        0xF99F to "Следующая выгрузка тахографа",
+        0xF9A0 to "Сколько раз превышено 9 ч суточного вождения",
+        0xF9A1 to "До нового недельного отдыха",
+        0xF9A2 to "Накопленный непрерывный отдых",
+        0xF9A3 to "Минимальный суточный отдых",
+        0xF9A4 to "Минимальный недельный отдых",
+        0xF9A5 to "Максимальный суточный период"
     )
 
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -113,13 +123,13 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         outerScroll.addView(root, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
 
         root.addView(TextView(this).apply {
-            text = "DTCO Live DID Monitor v9.4"
+            text = "DTCO Live DID Monitor v9.6"
             textSize = 22f
             setTextColor(TEXT)
             setTypeface(typeface, Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "ФОНОВЫЙ РЕЖИМ • постоянная запись • автопереподключение"
+            text = "ПОЛНАЯ СМЕНА • F997–F9A5 • постоянная запись • автопереподключение"
             textSize = 12f
             setTextColor(GREEN)
         })
@@ -166,7 +176,7 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         root.addView(actions, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(6) })
 
         root.addView(button("Сохранить отчёт", ORANGE).apply {
-            setOnClickListener { saveReport.launch(TargetMonitorService.getCurrentLogFileName() ?: "DTCO_LIVE_DID_v9_4.txt") }
+            setOnClickListener { saveReport.launch(TargetMonitorService.getCurrentLogFileName() ?: "DTCO_LIVE_DID_v9_6.txt") }
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(6) })
 
         root.addView(TextView(this).apply {
