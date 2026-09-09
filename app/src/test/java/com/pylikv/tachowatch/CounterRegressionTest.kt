@@ -11,6 +11,11 @@ class CounterRegressionTest {
         c.update(3041,"2026-37",0);assertEquals(361,c.minutes)
         c.update(3041,"2026-37",0);assertEquals(361,c.minutes)
     }
+    @Test fun missedResponseDoesNotDiscardTheLastGoodBaseline(){
+        val c=ShiftDrivingCounter();c.seed(100);c.update(3000,"2026-37",0)
+        c.update(null,"2026-37",0);c.update(3005,"2026-37",0)
+        assertEquals(105,c.minutes)
+    }
     @Test fun dailyRestClearsOldShiftAndNextDrivingStartsAtZero(){
         val c=ShiftDrivingCounter();c.seed(388)
         c.update(3000,"2026-37",540);assertEquals(0,c.minutes)
