@@ -218,7 +218,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     private val cb = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
-            if (gatt != g && newState != BluetoothProfile.STATE_CONNECTED) {
+            if (gatt != g || !reconnectEnabled) {
                 try { g.close() } catch (_: Throwable) {}
                 return
             }

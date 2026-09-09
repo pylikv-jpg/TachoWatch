@@ -86,7 +86,20 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private var shiftCounterInitialized=false; private var shiftCompletedMinutes=0; private var previousContinuousMinutes=0; private var lastProcessedCycle=0
     private var workWindowMinutes=0; private var previousActivity="—"; private var previousActivityDuration=0; private var otherWorkWindowMinutes=0; private var availabilityWindowMinutes=0
 
-    private val permissionLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){findAndAutoConnect()}
+    private var openPickerAfterPermission=false
+    private var scanCallback:android.bluetooth.le.ScanCallback?=null
+    private var pickerDialog:AlertDialog?=null
+    private val stopScanTask=Runnable{stopNearbyScan()}
+    private val cardTimeout=Runnable{if(cardReading)finishCardRead(false)}
+    private val enableBluetooth=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){
+        if(adapter?.isEnabled==true){if(openPickerAfterPermission)showDtcoPicker() else findAndAutoConnect()}
+        else status.text="Bluetooth выключен"
+    }
+    private val permissionLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
+        if(requiredBluetoothPermissions().all{p->ContextCompat.checkSelfPermission(this,p)==PackageManager.PERMISSION_GRANTED}){
+            if(openPickerAfterPermission)showDtcoPicker() else findAndAutoConnect()
+        }else status.text="Разрешите доступ к Bluetooth в настройках приложения"
+    }
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
@@ -94,7 +107,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         live=LiveDidDiagnostic(applicationContext,this); cardReader=DtcoBluetoothDiagnostic(applicationContext,this)
         restoreCounters(); buildUi(); loadHistory(); requestPermission(); handler.post(freshnessTick)
     }
-    override fun onDestroy(){handler.removeCallbacksAndMessages(null);live.disconnect();cardReader.disconnect();super.onDestroy()}
+    override fun onDestroy(){stopNearbyScan();pickerDialog?.dismiss();handler.removeCallbacksAndMessages(null);live.disconnect();cardReader.disconnect();super.onDestroy()}
 
     private fun buildUi(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG)}
@@ -217,25 +230,91 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         nowTab.setTextColor(if(nowSelected)GREEN else MUTED);historyTab.setTextColor(if(nowSelected)MUTED else GREEN)
     }
 
-    private fun requestPermission(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN))else findAndAutoConnect()}
-    @SuppressLint("MissingPermission") private fun findAndAutoConnect(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)return;val saved=prefs.getString(SELECTED_DTCO,null);dtco=try{adapter?.bondedDevices?.firstOrNull{it.address==saved}}catch(_:Throwable){null};val d=dtco;if(d==null){status.text="Выберите DTCO";return};connectSelected(d)}
-    private fun connectSelected(d:BluetoothDevice){dtco=d;status.text="Подключение к DTCO…";live.connect(d)}
-
-    @SuppressLint("MissingPermission") private fun showDtcoPicker(){
-        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&(ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED||ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_SCAN)!=PackageManager.PERMISSION_GRANTED)){permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN));return}
-        val devices=linkedMapOf<String,BluetoothDevice>();try{adapter?.bondedDevices?.filter{(it.name?:"").contains("DTCO",true)}?.forEach{devices[it.address]=it}}catch(_:Throwable){}
-        val labels=mutableListOf<String>();val listAdapter=ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,labels);fun refresh(){labels.clear();devices.values.forEach{labels.add("${safeName(it)}\n${it.address}")};listAdapter.notifyDataSetChanged()};refresh()
-        val dialog=AlertDialog.Builder(this).setTitle("Выберите DTCO").setAdapter(listAdapter){_,which->val d=devices.values.toList().getOrNull(which)?:return@setAdapter;prefs.edit().putString(SELECTED_DTCO,d.address).putBoolean(FIRST_READ,false).apply();initialReadAttemptedThisSession=false;dtco=d;status.text="Выбран ${safeName(d)}";connectSelected(d)}.setNegativeButton("Закрыть",null).create();dialog.setOnShowListener{startNearbyScan(devices,::refresh)};dialog.show()
+    private fun requiredBluetoothPermissions():Array<String> = if(Build.VERSION.SDK_INT>=31)
+        arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN)
+        else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    @SuppressLint("MissingPermission") private fun ensureBluetooth(picker:Boolean):Boolean{
+        openPickerAfterPermission=picker
+        val missing=requiredBluetoothPermissions().filter{ContextCompat.checkSelfPermission(this,it)!=PackageManager.PERMISSION_GRANTED}
+        if(missing.isNotEmpty()){permissionLauncher.launch(missing.toTypedArray());return false}
+        val a=adapter
+        if(a==null){status.text="Bluetooth недоступен на устройстве";return false}
+        if(!a.isEnabled){status.text="Включите Bluetooth";enableBluetooth.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE));return false}
+        return true
     }
-    @SuppressLint("MissingPermission") private fun startNearbyScan(devices:MutableMap<String,BluetoothDevice>,refresh:()->Unit){val a=adapter?:return;val cb=BluetoothAdapter.LeScanCallback{device,_,_->val n=try{device.name}catch(_:Throwable){null};if((n?:"").contains("DTCO",true)){devices[device.address]=device;runOnUiThread{refresh()}}};try{a.startLeScan(cb);handler.postDelayed({try{a.stopLeScan(cb)}catch(_:Throwable){}},4000)}catch(_:Throwable){}}
-    @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:"DTCO"}catch(_:Throwable){"DTCO"}
+    private fun requestPermission(){if(ensureBluetooth(false))findAndAutoConnect()}
+    @SuppressLint("MissingPermission") private fun findAndAutoConnect(){
+        if(!ensureBluetooth(false))return
+        val saved=prefs.getString(SELECTED_DTCO,null)
+        val selected=try{saved?.let{adapter?.getRemoteDevice(it)}}catch(_:IllegalArgumentException){null}
+        if(selected!=null){connectSelected(selected);return}
+        status.text="Выберите тахограф в списке Bluetooth";showDtcoPicker()
+    }
+    private fun connectSelected(d:BluetoothDevice){
+        stopNearbyScan()
+        handler.removeCallbacks(cardTimeout);cardReading=false;resumeLive=false;cardReader.disconnect()
+        dtco=d;lastProcessedCycle=0;lastCycleAt=0
+        status.text="Подключение к DTCO…";freshness.text="Установка Bluetooth-соединения"
+        // Scanner and dashboard must not compete for the same diagnostic session.
+        if(TargetMonitorService.isRunning()){
+            TargetMonitorService.stop(this)
+            handler.postDelayed({if(!isDestroyed&&dtco==d)live.connect(d)},700)
+        }else live.connect(d)
+    }
+    @SuppressLint("MissingPermission") private fun showDtcoPicker(){
+        if(!ensureBluetooth(true))return
+        if(pickerDialog?.isShowing==true)return
+        val devices=linkedMapOf<String,BluetoothDevice>()
+        adapter?.bondedDevices?.forEach{devices[it.address]=it}
+        val labels=mutableListOf<String>()
+        val listAdapter=ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,labels)
+        fun refresh(){labels.clear();devices.values.forEach{labels.add("${safeName(it)}\n${it.address}")};listAdapter.notifyDataSetChanged()}
+        refresh()
+        val dialog=AlertDialog.Builder(this).setTitle("Выберите тахограф • поиск…").setAdapter(listAdapter){_,which->
+            val d=devices.values.toList().getOrNull(which)?:return@setAdapter
+            if(prefs.getString(SELECTED_DTCO,null)!=d.address){prefs.edit().putBoolean(FIRST_READ,false).apply();initialReadAttemptedThisSession=false}
+            prefs.edit().putString(SELECTED_DTCO,d.address).apply();connectSelected(d)
+        }.setNegativeButton("Закрыть",null).create()
+        pickerDialog=dialog
+        dialog.setOnDismissListener{stopNearbyScan();pickerDialog=null}
+        dialog.setOnShowListener{startNearbyScan(devices,::refresh)};dialog.show()
+    }
+    @SuppressLint("MissingPermission") private fun stopNearbyScan(){
+        handler.removeCallbacks(stopScanTask)
+        val callback=scanCallback;scanCallback=null
+        if(callback!=null)try{adapter?.bluetoothLeScanner?.stopScan(callback)}catch(_:Exception){}
+    }
+    @SuppressLint("MissingPermission") private fun startNearbyScan(devices:MutableMap<String,BluetoothDevice>,refresh:()->Unit){
+        stopNearbyScan()
+        val scanner=adapter?.bluetoothLeScanner
+        if(scanner==null){status.text="Поиск Bluetooth недоступен";return}
+        val callback=object:android.bluetooth.le.ScanCallback(){
+            override fun onScanResult(type:Int,result:android.bluetooth.le.ScanResult){
+                handler.post{
+                    if(scanCallback!==this||pickerDialog?.isShowing!=true)return@post
+                    devices[result.device.address]=result.device;refresh()
+                }
+            }
+            override fun onScanFailed(errorCode:Int){handler.post{status.text="Ошибка поиска Bluetooth: $errorCode";pickerDialog?.setTitle("Ошибка поиска: $errorCode")}}
+        }
+        scanCallback=callback
+        try{
+            scanner.startScan(null,android.bluetooth.le.ScanSettings.Builder().setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY).build(),callback)
+            handler.postDelayed(stopScanTask,15000)
+        }catch(e:Exception){stopNearbyScan();status.text="Поиск не запущен: ${e.javaClass.simpleName}"}
+    }
+    @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:"Устройство Bluetooth"}catch(_:Throwable){"Устройство Bluetooth"}
 
-    private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";live.disconnect();handler.postDelayed({cardReader.connect(d)},500)}
-    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;liveConnected=connected;if(connected){lastProcessedCycle=0;lastCycleAt=0;status.text="● ${deviceName?:"DTCO"} подключён";status.setTextColor(GREEN);if(!prefs.getBoolean(FIRST_READ,false)&&!initialReadAttemptedThisSession){initialReadAttemptedThisSession=true;handler.postDelayed({if(!cardReading)startCardRead("Первое успешное подключение",true)},800)}}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
-    override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(log.lineSequence().lastOrNull()?.startsWith("LIVE CYCLE #")==true&&cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;lastCycleAt=android.os.SystemClock.elapsedRealtime();processCycle();status.text="● DTCO подключён"};updateNow()}}
+    private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";live.disconnect();handler.removeCallbacks(cardTimeout);handler.postDelayed(cardTimeout,120000);handler.postDelayed({if(cardReading)cardReader.connect(d)},700)}
+    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;liveConnected=connected;if(connected){lastProcessedCycle=0;lastCycleAt=0;status.text="● ${deviceName?:"DTCO"} подключён";status.setTextColor(GREEN)}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
+    override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(log.lineSequence().lastOrNull()?.startsWith("LIVE CYCLE #")==true&&cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;lastCycleAt=android.os.SystemClock.elapsedRealtime();processCycle();status.text="● DTCO подключён"
+            if(!prefs.getBoolean(FIRST_READ,false)&&!initialReadAttemptedThisSession&&!cardReading){
+                initialReadAttemptedThisSession=true;handler.postDelayed({if(liveConnected&&!cardReading)startCardRead("Первое успешное чтение",true)},1500)
+            }
+        };updateNow()}}
     override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
-    private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({live.connect(d)},800)}}
+    private fun finishCardRead(ok:Boolean){handler.removeCallbacks(cardTimeout);val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({live.connect(d)},800)}}
 
     private fun updateNow(){
         continuous.text=HistoryData.fmt((270-continuousMinutes).coerceAtLeast(0));continuous.setTextColor(driveColor(continuousMinutes));continuousSub.text="Проехал ${HistoryData.fmt(continuousMinutes)} из 4:30";setProgress(continuousFrame,continuousProgress,continuousMinutes/270f,driveColor(continuousMinutes));updateShiftDriving()
