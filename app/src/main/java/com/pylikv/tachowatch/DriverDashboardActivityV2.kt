@@ -140,11 +140,23 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         for(tab in listOf(nowTab,historyTab,scanner))tabs.addView(tab,LinearLayout.LayoutParams(0,dp(60),1f))
         root.addView(tabs);setContentView(root);buildNow();buildHistoryView();updateTabState(true);root.requestApplyInsets()
     }
+    override fun onResume(){super.onResume();ScreenPreference.apply(this)}
     private fun showSettings(){
-        AlertDialog.Builder(this).setTitle("Настройки").setItems(arrayOf("Выбрать тахограф","Обновить карту водителя")){_,i->
-            if(i==0)showDtcoPicker() else if(dtco!=null)startCardRead("По запросу",true)
-            else showDtcoPicker()
-        }.setNegativeButton("Закрыть",null).show()
+        val content=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(20),dp(8),dp(20),dp(8))}
+        val screenSwitch=androidx.appcompat.widget.SwitchCompat(this).apply{
+            text="Не выключать экран";textSize=16f;setPadding(0,dp(12),0,dp(12))
+            isChecked=ScreenPreference.enabled(this@DriverDashboardActivityV2)
+            setOnCheckedChangeListener{_,checked->ScreenPreference.setEnabled(this@DriverDashboardActivityV2,checked)}
+        }
+        content.addView(screenSwitch)
+        content.addView(sub("Пока TachoWatch открыт на экране"))
+        val choose=Button(this).apply{text="Выбрать тахограф";isAllCaps=false}
+        val refresh=Button(this).apply{text="Обновить карту водителя";isAllCaps=false}
+        content.addView(choose);content.addView(refresh)
+        val dialog=AlertDialog.Builder(this).setTitle("Настройки").setView(content).setNegativeButton("Закрыть",null).create()
+        choose.setOnClickListener{dialog.dismiss();showDtcoPicker()}
+        refresh.setOnClickListener{dialog.dismiss();if(dtco!=null)startCardRead("По запросу",true) else showDtcoPicker()}
+        dialog.show()
     }
     override fun onRestart(){super.onRestart();if(!cardReading)dtco?.let{connectSelected(it)}}
 
