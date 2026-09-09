@@ -141,8 +141,8 @@ object HistoryData {
             val p = places.filter { it.date == date }
             val begin = p.firstOrNull { it.type.startsWith("BEGIN_") }
             val end = p.lastOrNull { it.type.startsWith("END_") }
-            val startTime = begin?.time ?: a.activeStart
-            val endTime = end?.time ?: a.restStartAfterWork
+            val startTime = a.activeStart ?: begin?.time
+            val endTime = a.restStartAfterWork ?: end?.time
             val hasActivity = a.driving > 0 || a.work > 0 || a.availability > 0
             if (!hasActivity && startTime == null && endTime == null) null else Day(
                 date, a.driving, a.work, a.availability,
@@ -166,7 +166,7 @@ object HistoryData {
         return Model(days, previousWeekMinutes, currentWeekMinutes, rests)
     }
 
-    private fun buildRestInfo(days: List<Day>): List<RestInfo> {
+    internal fun buildRestInfo(days: List<Day>): List<RestInfo> {
         if (days.size < 2) return emptyList()
         val debts = mutableListOf<Debt>()
         val result = mutableListOf<RestInfo>()
@@ -183,7 +183,8 @@ object HistoryData {
             var surplus = compensationSurplusMinutes(actual, weekly, previous.hasSplitDailyRest3h)
             debts.filter { it.remaining > 0 && !(it.previousDate == previous.date && it.nextDate == next.date) }.forEach { debt ->
                 if (surplus <= 0) return@forEach
-                val paid = minOf(debt.remaining, surplus)
+                if (surplus < debt.remaining) return@forEach
+                val paid = debt.remaining
                 debt.remaining -= paid
                 surplus -= paid
                 if (debt.remaining == 0 && debt.paidDate == null) debt.paidDate = next.date
