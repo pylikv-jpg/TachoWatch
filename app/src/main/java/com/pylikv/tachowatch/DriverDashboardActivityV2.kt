@@ -370,8 +370,26 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
 
     private fun updateNow(){
         continuous.text=HistoryData.fmt((270-continuousMinutes).coerceAtLeast(0));continuous.setTextColor(driveColor(continuousMinutes));continuousSub.text="Проехал ${HistoryData.fmt(continuousMinutes)} из 4:30";setProgress(continuousFrame,continuousProgress,continuousMinutes/270f,driveColor(continuousMinutes));updateShiftDriving()
-        val resting=currentActivity.contains("ОТДЫХ");val actual=if(resting)activityMinutes else 0;val credited=HistoryData.creditedRestMinutes(actual);val next=HistoryData.nextRestMilestone(actual)
-        restTime.text=HistoryData.fmt(actual);restTime.setTextColor(if(actual<45)RED else GREEN);restSub.text=if(resting){if(next!=null)"Засчитано: ${HistoryData.fmt(credited)}\nДо ${HistoryData.fmt(next)} — ${HistoryData.fmt((next-actual).coerceAtLeast(0))}" else "Засчитано: ${HistoryData.fmt(credited)}"}else "сейчас не отдых • накоплено ${HistoryData.fmt(actual)}";val target=next?:45*60;setProgress(restFrame,restProgress,if(target>0)actual.toFloat()/target else 0f,restMilestoneColor(credited))
+        val resting=currentActivity.contains("ОТДЫХ")
+        val actual=if(resting)activityMinutes else 0
+        val pause=BreakProgress.calculate(actual,breakMinutes.takeIf{it in 0..20160})
+        val credited=if(pause.complete)maxOf(45,HistoryData.creditedRestMinutes(actual)) else if(actual>=15||pause.priorPart>=15)15 else 0
+        restTime.text=HistoryData.fmt(actual)
+        restTime.setTextColor(if(resting&&pause.complete)GREEN else RED)
+        if(!resting){
+            restSub.text="Сейчас не отдых • накоплено пауз ${HistoryData.fmt(breakMinutes)}"
+            setProgress(restFrame,restProgress,0f,RED)
+        }else if(!pause.complete){
+            restSub.text=if(pause.priorPart>=15)
+                "Первая часть: ${HistoryData.fmt(pause.priorPart)} • сейчас ${HistoryData.fmt(actual)}\nНакоплено: ${HistoryData.fmt(pause.total)} • засчитана первая часть\nДо конца второй части — ${HistoryData.fmt(pause.remaining)}"
+            else "Засчитано: ${HistoryData.fmt(credited)}\nДо полной паузы — ${HistoryData.fmt(pause.remaining)}"
+            setProgress(restFrame,restProgress,(45-pause.remaining)/45f,RED)
+        }else{
+            val next=HistoryData.nextRestMilestone(maxOf(45,actual))
+            restSub.text="Пауза засчитана: ${if(pause.priorPart>=15&&actual<45)"15 + 30 мин" else HistoryData.fmt(credited)}"+
+                (if(next!=null)"\nДо ${HistoryData.fmt(next)} непрерывного отдыха — ${HistoryData.fmt((next-actual).coerceAtLeast(0))}" else "")
+            setProgress(restFrame,restProgress,1f,GREEN)
+        }
         val wt=activeWorkTotal();work6.text=HistoryData.fmt(wt);work6Sub.text=if(wt>=330)"⚠ До 6 часов осталось ${HistoryData.fmt((360-wt).coerceAtLeast(0))}" else "До 6 часов — ${HistoryData.fmt((360-wt).coerceAtLeast(0))}";setProgress(work6Frame,work6Progress,wt/360f,workColor(wt))
         val ow=activeOtherWorkTotal();otherWork.text=HistoryData.fmt(ow);val av=activeAvailabilityTotal();availability.text=HistoryData.fmt(av)
         twoWeek.text=HistoryData.fmt(twoWeekMinutes);twoWeekSub.text="Вождение • предел 90:00\nОсталось ${HistoryData.fmt((5400-twoWeekMinutes).coerceAtLeast(0))}";setProgress(twoWeekFrame,twoWeekProgress,twoWeekMinutes/(90f*60f),limitColor(twoWeekMinutes,90*60));updateWeekCards();updateWorkWeekClock()
