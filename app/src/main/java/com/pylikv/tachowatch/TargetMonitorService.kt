@@ -219,14 +219,14 @@ class TargetMonitorService : Service(), DtcoTargetEventMonitor.Listener {
     }
 
     private fun notification(text: String): Notification {
-        val launch = Intent(this, EventScannerActivity::class.java)
+        val launch = Intent(this, DriverDashboardActivityV2::class.java)
         val pending = PendingIntent.getActivity(
             this, 0, launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle("DTCO Live DID Monitor")
+            .setContentTitle("TachoWatch")
             .setContentText(text)
             .setContentIntent(pending)
             .setOngoing(true)

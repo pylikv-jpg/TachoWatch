@@ -7,6 +7,12 @@ import java.util.Locale
 import java.util.TimeZone
 
 object HistoryData {
+    data class ActivityPeriod(
+        val startTime: String,
+        val type: String,
+        val minutes: Int
+    )
+
     data class Day(
         val date: String,
         val drivingMinutes: Int,
@@ -16,7 +22,8 @@ object HistoryData {
         val startCountry: String?,
         val endTime: String?,
         val endCountry: String?,
-        val hasSplitDailyRest3h: Boolean = false
+        val hasSplitDailyRest3h: Boolean = false,
+        val periods: List<ActivityPeriod> = emptyList()
     ) {
         val shiftMinutes: Int? get() {
             val s = startTime?.let(::clockMinutes) ?: return null
@@ -64,7 +71,8 @@ object HistoryData {
         var availability: Int = 0,
         var activeStart: String? = null,
         var restStartAfterWork: String? = null,
-        var hasSplitDailyRest3h: Boolean = false
+        var hasSplitDailyRest3h: Boolean = false,
+        val periods: MutableList<ActivityPeriod> = mutableListOf()
     )
     private data class Debt(
         val previousDate: String,
@@ -99,6 +107,7 @@ object HistoryData {
                     val minutes = duration?.let {
                         (it.groupValues[1].toIntOrNull() ?: 0) * 60 + (it.groupValues[2].toIntOrNull() ?: 0)
                     } ?: 0
+                    if (minutes > 0) day.periods += ActivityPeriod(time, kind, minutes)
 
                     when (kind) {
                         "DRIVING", "WORK", "AVAILABILITY" -> {
@@ -137,7 +146,7 @@ object HistoryData {
             val hasActivity = a.driving > 0 || a.work > 0 || a.availability > 0
             if (!hasActivity && startTime == null && endTime == null) null else Day(
                 date, a.driving, a.work, a.availability,
-                startTime, begin?.country, endTime, end?.country, a.hasSplitDailyRest3h
+                startTime, begin?.country, endTime, end?.country, a.hasSplitDailyRest3h, a.periods.toList()
             )
         }.sortedBy { it.date }
 

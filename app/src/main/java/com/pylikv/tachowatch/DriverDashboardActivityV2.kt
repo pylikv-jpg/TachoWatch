@@ -86,11 +86,10 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         root.setOnApplyWindowInsetsListener{v,insets->v.setPadding(dp(12),dp(10)+insets.systemWindowInsetTop,dp(12),dp(10));insets}
         val top=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
         val titles=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
-        titles.addView(TextView(this).apply{text="TachoWatch";textSize=25f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)})
+        titles.addView(TextView(this).apply{text="TachoWatch";textSize=25f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setOnLongClickListener{startActivity(Intent(this@DriverDashboardActivityV2,EventScannerActivity::class.java));true}})
         status=TextView(this).apply{text="DTCO не подключён";textSize=11.5f;setTextColor(CYAN)};titles.addView(status)
         top.addView(titles,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f))
-        top.addView(smallButton("Подключить DTCO").apply{setOnClickListener{showDtcoPicker()}});top.addView(hspace(5))
-        top.addView(smallButton("Диагностика").apply{setOnClickListener{startActivity(Intent(this@DriverDashboardActivityV2,MainActivity::class.java))}})
+        top.addView(smallButton("Подключить DTCO").apply{setOnClickListener{showDtcoPicker()}})
         root.addView(top);root.addView(space(7))
         val tabs=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
         nowTab=tabButton("Сейчас").apply{setOnClickListener{showNow()}};historyTab=tabButton("История").apply{setOnClickListener{showHistory()}}
@@ -116,15 +115,33 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     }
 
     private fun buildHistoryView(){
-        historyRoot.removeAllViews();val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};val days=history?.days?.takeLast(56)?.asReversed().orEmpty();c.addView(sub("История карты: ${days.size} из 56 дней"))
+        historyRoot.removeAllViews();val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};val model=history;val days=recentThreeWeeks(model?.days.orEmpty()).asReversed()
+        c.addView(value("История · 3 недели",22f))
+        val previous=model?.previousWeekDrivingMinutes?:0;val current=model?.currentWeekCardMinutes?:0;val total=previous+current;val remaining=(90*60-total).coerceAtLeast(0)
+        val summary=card();summary.addView(label("ДВЕ ПОСЛЕДОВАТЕЛЬНЫЕ НЕДЕЛИ"));summary.addView(value("${HistoryData.fmt(total)} из 90:00",24f));summary.addView(sub("Предыдущая ${HistoryData.fmt(previous)} • текущая ${HistoryData.fmt(current)} • осталось ${HistoryData.fmt(remaining)}"))
+        val reduced=usedReducedDailyRests();summary.addView(sub("Сокращённые суточные отдыхи: $reduced/3 использовано • ${(3-reduced).coerceAtLeast(0)} осталось"));summary.addView(sub("10-часовые вождения на этой неделе: ${currentWeekTenHourUses()}/2"));c.addView(summary);c.addView(space(7))
+        c.addView(sub("Все смены и отдыхи: ${days.size} смен"))
         if(days.isEmpty())c.addView(value("История появится после полного считывания карты",17f))
         days.forEachIndexed{i,day->
-            val box=card();box.addView(TextView(this).apply{text=prettyDate(day.date);textSize=18f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)})
-            box.addView(sub("${flag(day.startCountry)} ${day.startCountry?:"—"}  Начало смены  ${day.startTime?:"—"}"));box.addView(value("🚗 Вождение  ${HistoryData.fmt(day.drivingMinutes)}",18f));box.addView(sub("⚒ Другая работа  ${HistoryData.fmt(day.workMinutes)}"));box.addView(sub("✉ Готовность  ${HistoryData.fmt(day.availabilityMinutes)}"));box.addView(sub("Продолжительность смены  ${day.shiftMinutes?.let(HistoryData::fmt)?:"—"}"));box.addView(sub("${flag(day.endCountry)} ${day.endCountry?:"—"}  Конец смены  ${day.endTime?:"—"}"));c.addView(box)
-            if(i<days.lastIndex)HistoryData.gapMinutes(days[i+1],day)?.let{gap->c.addView(TextView(this).apply{text=if(gap>=24*60)"🛏 Недельный отдых  ${HistoryData.fmt(gap)}" else "🛏 Межсуточный отдых  ${HistoryData.fmt(gap)}";textSize=14f;gravity=Gravity.CENTER;setTextColor(if(gap>=24*60)CYAN else MUTED);setPadding(0,dp(7),0,dp(7))})}
+            val box=card();val details=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE}
+            val head=TextView(this).apply{text="${prettyDate(day.date)}  •  ${day.startTime?:"—"}–${day.endTime?:"—"}   ▾";textSize=18f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setPadding(0,dp(4),0,dp(4));setOnClickListener{details.visibility=if(details.visibility==View.VISIBLE)View.GONE else View.VISIBLE}}
+            box.addView(head);box.addView(sub("${flag(day.startCountry)} ${day.startCountry?:"—"} → ${flag(day.endCountry)} ${day.endCountry?:"—"} • смена ${day.shiftMinutes?.let(HistoryData::fmt)?:"—"}"));box.addView(value("🚗 ${HistoryData.fmt(day.drivingMinutes)}  ⚒ ${HistoryData.fmt(day.workMinutes)}  ✉ ${HistoryData.fmt(day.availabilityMinutes)}",18f))
+            details.addView(label("ПОДРОБНЫЙ ОТЧЁТ ПО ВИДАМ РАБОТ"))
+            val shiftPeriods=periodsInsideShift(day);if(shiftPeriods.isEmpty())details.addView(sub("Подробные периоды отсутствуют в считанных данных карты"))
+            shiftPeriods.forEach{p->details.addView(sub("${activityIcon(p.type)} ${p.startTime}  ${activityName(p.type)}  •  ${HistoryData.fmt(p.minutes)}"))}
+            details.addView(sub("Открытие: ${day.startTime?:"—"} ${flag(day.startCountry)} ${day.startCountry?:"—"}"));details.addView(sub("Закрытие: ${day.endTime?:"—"} ${flag(day.endCountry)} ${day.endCountry?:"—"}"));box.addView(details);c.addView(box);c.addView(space(7))
+            if(i<days.lastIndex){val older=days[i+1];model?.restBetween(older,day)?.let{rest->c.addView(TextView(this).apply{text=restTitle(rest);textSize=14f;gravity=Gravity.CENTER;setTextColor(if(rest.weekly)CYAN else if(rest.creditedDailyMinutes==540)YELLOW else MUTED);setPadding(dp(6),dp(7),dp(6),dp(7))})}}
         }
         scroll.addView(c);historyRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
     }
+
+    private fun recentThreeWeeks(days:List<HistoryData.Day>):List<HistoryData.Day>{val latest=days.lastOrNull()?.date?.let(::parseDateOnly)?:return emptyList();val cutoff=Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply{time=latest;add(Calendar.DAY_OF_MONTH,-20)}.time;return days.filter{(parseDateOnly(it.date)?:Date(0)).time>=cutoff.time}}
+    private fun usedReducedDailyRests():Int{val rests=history?.rests.orEmpty();val after=rests.indexOfLast{it.weekly};return rests.drop(after+1).count{!it.weekly&&!it.splitDaily&&it.creditedDailyMinutes==540}}
+    private fun restTitle(r:HistoryData.RestInfo):String=when{r.weekly&&r.compensationCreatedMinutes>0->"🛏 СОКРАЩЁННЫЙ НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}\nКомпенсация ${HistoryData.fmt(r.compensationRemainingMinutes)} • до ${r.compensationDueDate?.let(HistoryData::prettyDate)?:"—"}";r.weekly->"🛏 НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";r.splitDaily->"🛏 РЕГУЛЯРНЫЙ РАЗДЕЛЁННЫЙ ОТДЫХ  3:00 + ${HistoryData.fmt(r.actualMinutes)}";r.creditedDailyMinutes==540->"🛏 СОКРАЩЁННЫЙ СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";else->"🛏 СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}"}
+    private fun activityName(type:String)=when(type){"DRIVING"->"Вождение";"WORK"->"Другая работа";"AVAILABILITY"->"Ожидание / готовность";"REST"->"Отдых / пауза";else->type}
+    private fun activityIcon(type:String)=when(type){"DRIVING"->"🚗";"WORK"->"⚒";"AVAILABILITY"->"✉";"REST"->"🛏";else->"•"}
+    private fun periodsInsideShift(day:HistoryData.Day):List<HistoryData.ActivityPeriod>{val start=day.startTime?.let(::clockValue)?:return day.periods;val length=day.shiftMinutes?:return day.periods;return day.periods.filter{((clockValue(it.startTime)-start+1440)%1440)<length}}
+    private fun clockValue(v:String):Int=v.substringBefore(':').toIntOrNull()?.times(60)?.plus(v.substringAfter(':').toIntOrNull()?:0)?:0
 
     private fun loadHistory(){val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))?:return;val r=TlvInventory.parse(f);if(r.error==null){history=HistoryData.load(r);if(::historyRoot.isInitialized)buildHistoryView();updateWeekCards();updateWorkWeekClock();updateShiftDriving()}}
     private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
@@ -165,7 +182,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:"DTCO"}catch(_:Throwable){"DTCO"}
 
     private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";live.disconnect();handler.postDelayed({cardReader.connect(d)},500)}
-    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;if(connected){status.text="Онлайн • ${deviceName?:"DTCO"}";if(!prefs.getBoolean(FIRST_READ,false)&&!initialReadAttemptedThisSession){initialReadAttemptedThisSession=true;handler.postDelayed({if(!cardReading)startCardRead("Первое успешное подключение",true)},800)}}else status.text="Нет связи с выбранным DTCO"}}
+    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;if(connected){status.text="Онлайн • ${deviceName?:"DTCO"}";status.setTextColor(GREEN);if(!prefs.getBoolean(FIRST_READ,false)&&!initialReadAttemptedThisSession){initialReadAttemptedThisSession=true;handler.postDelayed({if(!cardReading)startCardRead("Первое успешное подключение",true)},800)}}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
     override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;processCycle();status.text="Онлайн • данные актуальны"};updateNow()}}
     override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
