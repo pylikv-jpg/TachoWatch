@@ -80,6 +80,8 @@ class EventScannerActivity : AppCompatActivity(), DtcoTargetEventMonitor.Listene
         Toast.makeText(this, if (ok) "Отчёт сохранён" else "Не удалось сохранить отчёт", Toast.LENGTH_LONG).show()
     }
 
+    override fun onResume() { super.onResume(); ScreenPreference.apply(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = BG
