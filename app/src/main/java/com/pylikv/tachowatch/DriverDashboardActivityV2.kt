@@ -104,6 +104,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private val alertQueue=java.util.ArrayDeque<String>()
     private val pulses=mutableMapOf<View,android.animation.ValueAnimator>()
     private val pulseLevels=mutableMapOf<View,TimerLimit.Level>()
+    private val workCounter=WorkActivityCounter()
     private val shiftCounter=ShiftDrivingCounter()
     private var cardTimeline:CardActivityTimeline.Snapshot?=null
     private var historyFileTime=0L
@@ -274,6 +275,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
                 workWindowMinutes=completed.filter{it.kind=="DRIVING"||it.kind=="WORK"}.sumOf{it.minutes}
                 otherWorkWindowMinutes=completed.filter{it.kind=="WORK"}.sumOf{it.minutes}
                 availabilityWindowMinutes=completed.filter{it.kind=="AVAILABILITY"}.sumOf{it.minutes}
+                workCounter.seed(workWindowMinutes,otherWorkWindowMinutes,availabilityWindowMinutes,last?.kind?:"—",if(last?.end==timeline.capturedAt)last.minutes else 0)
                 previousActivity="—";previousActivityDuration=0
             }
         }
@@ -288,8 +290,12 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         historyReadAttemptAt=now;lastReadSession=true
         handler.postDelayed({if(liveConnected&&!cardReading)startCardRead("Обновление истории",true)},1500)
     }
-    private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
-    private fun persistCounters(){prefs.edit().putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).apply()}
+    private fun restoreCounters(){
+        if(prefs.getInt("work_counter_version",0)==2){
+            workCounter.seed(prefs.getInt(WORK_WINDOW,0),prefs.getInt(WORK_ACC,0),prefs.getInt(AVAIL_ACC,0),prefs.getString("stable_work_kind","—")?:"—",prefs.getInt("stable_work_duration",0))
+        }
+    }
+    private fun persistCounters(){prefs.edit().putInt("work_counter_version",2).putString("stable_work_kind",workCounter.kind).putInt("stable_work_duration",workCounter.duration).putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).apply()}
     private fun processCycle(){
         val now=isoCalendar(Date());val key="${now.getWeekYear()}-${now.get(Calendar.WEEK_OF_YEAR)}"
         shiftCounter.update(currentCycleTwoWeeks,key,if(currentActivity.contains("ОТДЫХ"))activityMinutes else 0)
@@ -300,10 +306,18 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         }
         processWorkWindow();persistCounters();updateShiftDriving()
     }
-    private fun processWorkWindow(){val restReached45=drivingBreakReset||(currentActivity.contains("ОТДЫХ")&&BreakProgress.calculate(activityMinutes,breakMinutes).complete);drivingBreakReset=false;if(restReached45){if(activeWorkTotal()>0)prefs.edit().putInt("alert_epoch_work",prefs.getInt("alert_epoch_work",0)+1).apply();workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};previousActivityDuration=activityMinutes}
-    private fun activeWorkTotal()=workWindowMinutes+if(currentActivity.contains("ВОЖДЕНИЕ")||currentActivity.contains("РАБОТА"))activityMinutes else 0
-    private fun activeOtherWorkTotal()=otherWorkWindowMinutes+if(currentActivity.contains("РАБОТА"))activityMinutes else 0
-    private fun activeAvailabilityTotal()=availabilityWindowMinutes+if(currentActivity.contains("ГОТОВНОСТЬ"))activityMinutes else 0
+    private fun workKind(activity:String)=when{activity.contains("ВОЖДЕНИЕ")->"DRIVING";activity.contains("РАБОТА")->"WORK";activity.contains("ГОТОВНОСТЬ")->"AVAILABILITY";activity.contains("ОТДЫХ")->"REST";else->"—"}
+    private fun processWorkWindow(){
+        val reset=drivingBreakReset||(currentActivity.contains("ОТДЫХ")&&activityMinutes>=30&&BreakProgress.calculate(activityMinutes,breakMinutes).complete)
+        drivingBreakReset=false
+        if(reset&&workCounter.work>0)prefs.edit().putInt("alert_epoch_work",prefs.getInt("alert_epoch_work",0)+1).apply()
+        workCounter.update(workKind(currentActivity),activityMinutes,android.os.SystemClock.elapsedRealtime(),reset)
+        workWindowMinutes=workCounter.completedWork;otherWorkWindowMinutes=workCounter.completedOther;availabilityWindowMinutes=workCounter.completedAvailability
+        previousActivity=currentActivity;previousActivityDuration=activityMinutes
+    }
+    private fun activeWorkTotal()=workCounter.work
+    private fun activeOtherWorkTotal()=workCounter.other
+    private fun activeAvailabilityTotal()=workCounter.availability
 
     private fun updateShiftDriving(){
         if(!::shiftDriving.isInitialized)return
