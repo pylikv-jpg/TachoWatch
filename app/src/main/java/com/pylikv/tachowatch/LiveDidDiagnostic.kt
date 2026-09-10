@@ -27,7 +27,7 @@ import java.util.UUID
  * - direct tachograph timer DIDs are authoritative when supported;
  * - legacy F9xx values remain available for old units/fallback logic.
  */
-class LiveDidDiagnostic(private val context: Context, private val listener: Listener) {
+class LiveDidDiagnostic(private val context: Context, private val listener: Listener, private val establishedOnly:Boolean = false) {
     interface Listener {
         fun onLiveLog(log: String)
         fun onLiveConnection(connected: Boolean, deviceName: String?)
@@ -344,7 +344,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
 
     private fun requestNext(g: BluetoothGatt) {
         if (!connected || !rhmi || waiting || gatt != g) return
-        if (index >= dids.size) {
+        if (index >= (if(establishedOnly)8 else dids.size)) {
             cycle++
             markFresh()
             log("LIVE CYCLE #$cycle COMPLETE")

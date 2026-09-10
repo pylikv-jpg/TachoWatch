@@ -67,6 +67,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private lateinit var week:TextView; private lateinit var weekSub:TextView; private lateinit var weekFrame:FrameLayout; private lateinit var weekProgress:View
     private lateinit var twoWeek:TextView; private lateinit var twoWeekFrame:FrameLayout; private lateinit var twoWeekProgress:View
 
+    private lateinit var continuousCaption:TextView
     private lateinit var continuousSub:TextView
     private lateinit var freshness:TextView
     private lateinit var twoWeekSub:TextView
@@ -79,9 +80,20 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
                 freshness.text=when{!liveConnected->"Ожидание подключения";age==null->"Ожидание данных";age>30->"Данные устарели • ${age} сек назад";else->"Обновлено ${age} сек назад"}
                 freshness.setTextColor(if(liveConnected&&age!=null&&age>30)YELLOW else MUTED)
             }
+            if(::shiftTime.isInitialized)updateLimitCards()
             handler.postDelayed(this,1000)
         }
     }
+    private lateinit var shiftTime:TextView
+    private lateinit var shiftTimeSub:TextView
+    private lateinit var shiftTimeFrame:FrameLayout
+    private lateinit var shiftTimeProgress:View
+    private var shiftStartAt:Long?=null
+    private var pendingDailyRest=false
+    private var alertDialog:AlertDialog?=null
+    private val alertQueue=java.util.ArrayDeque<String>()
+    private val pulses=mutableMapOf<View,android.animation.ValueAnimator>()
+    private val pulseLevels=mutableMapOf<View,TimerLimit.Level>()
     private val shiftCounter=ShiftDrivingCounter()
     private var cardTimeline:CardActivityTimeline.Snapshot?=null
     private var historyFileTime=0L
@@ -113,10 +125,10 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
         window.statusBarColor=BG; window.navigationBarColor=BG
-        live=LiveDidDiagnostic(applicationContext,this); cardReader=DtcoBluetoothDiagnostic(applicationContext,this)
+        live=LiveDidDiagnostic(applicationContext,this,establishedOnly=true); cardReader=DtcoBluetoothDiagnostic(applicationContext,this)
         restoreCounters(); buildUi(); loadHistory(); requestPermission(); handler.post(freshnessTick)
     }
-    override fun onDestroy(){stopNearbyScan();pickerDialog?.dismiss();handler.removeCallbacksAndMessages(null);live.disconnect();cardReader.disconnect();super.onDestroy()}
+    override fun onDestroy(){pulses.values.forEach{it.cancel()};alertDialog?.dismiss();stopNearbyScan();pickerDialog?.dismiss();handler.removeCallbacksAndMessages(null);live.disconnect();cardReader.disconnect();super.onDestroy()}
 
     private fun buildUi(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG)}
@@ -168,7 +180,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
             val card=progressCard();card.third.addView(iconLabel(title,kind));c.addView(card.first);c.addView(space(10));return card
         }
         val d=addCard("Непрерывное вождение","drive");continuousFrame=d.first;continuousProgress=d.second
-        continuous=value("—",44f);d.third.addView(continuous);d.third.addView(sub("осталось до перерыва"));continuousSub=sub("Ожидание данных");d.third.addView(continuousSub)
+        continuous=value("—",44f);d.third.addView(continuous);continuousCaption=sub("осталось до перерыва");d.third.addView(continuousCaption);continuousSub=sub("Ожидание данных");d.third.addView(continuousSub)
         val s=addCard("Вождение за смену","drive");shiftDrivingFrame=s.first;shiftDrivingProgress=s.second
         shiftDriving=value("—",40f);s.third.addView(shiftDriving);shiftDrivingSub=sub("Ожидание данных");s.third.addView(shiftDrivingSub)
         val six=addCard("Непрерывная работа","work");work6Frame=six.first;work6Progress=six.second
@@ -182,6 +194,8 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         otherWork=row("Другая работа","work")
         row("Ожидание","wait").apply{contentDescription="Отдельные данные ожидания недоступны";setOnClickListener{AlertDialog.Builder(this@DriverDashboardActivityV2).setMessage("Тахограф передаёт общий режим готовности. Отдельный счётчик ожидания пока недоступен.").setPositiveButton("Понятно",null).show()}}
         availability=row("Готовность","available")
+        val st=addCard("Время смены","work");shiftTimeFrame=st.first;shiftTimeProgress=st.second
+        shiftTime=value("—",40f);st.third.addView(shiftTime);shiftTimeSub=sub("Начало смены по карте");st.third.addView(shiftTimeSub)
         val ww=addCard("Рабочая неделя","wait");workWeekFrame=ww.first;workWeekProgress=ww.second
         workWeek=value("—",40f);ww.third.addView(workWeek);workWeekSub=sub("до начала недельного отдыха");ww.third.addView(workWeekSub)
         val w=addCard("Текущая неделя","drive");weekFrame=w.first;weekProgress=w.second
@@ -238,7 +252,21 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         // Old snapshots remain viewable, but cannot seed today's shift.
         val today=java.time.LocalDate.now(java.time.Clock.systemUTC()).toString()
         val recent=System.currentTimeMillis()-historyFileTime in 0..300000L
-        if(recent&&timeline.latestDate==today)shiftCounter.seed(timeline.shiftDriving)
+        if(recent&&timeline.latestDate==today){
+            shiftCounter.seed(timeline.shiftDriving)
+            shiftStartAt=timeline.shiftStart
+            pendingDailyRest=timeline.periods.lastOrNull()?.let{it.kind=="REST"&&it.minutes>=540}==true
+            val boundary=timeline.periods.indexOfLast{it.kind=="REST"&&it.minutes>=45}
+            if(boundary>=0){
+                val tail=timeline.periods.drop(boundary+1)
+                val last=tail.lastOrNull()
+                val completed=if(last?.end==timeline.capturedAt)tail.dropLast(1) else tail
+                workWindowMinutes=completed.filter{it.kind=="DRIVING"||it.kind=="WORK"}.sumOf{it.minutes}
+                otherWorkWindowMinutes=completed.filter{it.kind=="WORK"}.sumOf{it.minutes}
+                availabilityWindowMinutes=completed.filter{it.kind=="AVAILABILITY"}.sumOf{it.minutes}
+                previousActivity="—";previousActivityDuration=0
+            }
+        }
         if(::historyRoot.isInitialized)buildHistoryView()
         updateWeekCards();updateWorkWeekClock();updateShiftDriving();return true
     }
@@ -256,9 +284,13 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         val now=isoCalendar(Date());val key="${now.getWeekYear()}-${now.get(Calendar.WEEK_OF_YEAR)}"
         shiftCounter.update(currentCycleTwoWeeks,key,if(currentActivity.contains("ОТДЫХ"))activityMinutes else 0)
         if(shiftCounter.minutes==null)cardRefreshNeeded=true
+        if(currentActivity.contains("ОТДЫХ")&&activityMinutes>=540){pendingDailyRest=true;shiftStartAt=null}
+        else if(pendingDailyRest&&!currentActivity.contains("ОТДЫХ")){
+            shiftStartAt=System.currentTimeMillis()-activityMinutes*60000L;pendingDailyRest=false;cardRefreshNeeded=true
+        }
         processWorkWindow();persistCounters();updateShiftDriving()
     }
-    private fun processWorkWindow(){val restReached45=currentActivity.contains("ОТДЫХ")&&maxOf(breakMinutes,activityMinutes)>=45;if(restReached45){workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};previousActivityDuration=activityMinutes}
+    private fun processWorkWindow(){val restReached45=currentActivity.contains("ОТДЫХ")&&activityMinutes>=45;if(restReached45){if(activeWorkTotal()>0)prefs.edit().putInt("alert_epoch_work",prefs.getInt("alert_epoch_work",0)+1).apply();workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};previousActivityDuration=activityMinutes}
     private fun activeWorkTotal()=workWindowMinutes+if(currentActivity.contains("ВОЖДЕНИЕ")||currentActivity.contains("РАБОТА"))activityMinutes else 0
     private fun activeOtherWorkTotal()=otherWorkWindowMinutes+if(currentActivity.contains("РАБОТА"))activityMinutes else 0
     private fun activeAvailabilityTotal()=availabilityWindowMinutes+if(currentActivity.contains("ГОТОВНОСТЬ"))activityMinutes else 0
@@ -266,11 +298,96 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private fun updateShiftDriving(){
         if(!::shiftDriving.isInitialized)return
         val total=shiftCounter.minutes
-        if(total==null){shiftDriving.text="—";shiftDrivingSub.text="Нужно обновить карту для расчёта смены";setProgress(shiftDrivingFrame,shiftDrivingProgress,0f,GREEN);return}
-        val limit=if(total<=540||currentWeekTenHourUses()>=2)540 else 600
+        if(total==null){shiftDriving.text="—";shiftDrivingSub.text="Нужно обновить карту для расчёта смены";return}
         shiftDriving.text=HistoryData.fmt(total)
-        shiftDrivingSub.text="До ${if(limit==540)9 else 10} часов — ${HistoryData.fmt((limit-total).coerceAtLeast(0))}\nПо карте и обновлениям DTCO"
-        setProgress(shiftDrivingFrame,shiftDrivingProgress,total.toFloat()/limit,driveColor((total*270/limit)))
+    }
+    private fun drivingLimit():Int {
+        val start=shiftStartAt?:return 540
+        val timeline=cardTimeline?:return 540
+        val weekStart=java.time.Instant.ofEpochMilli(start).atOffset(java.time.ZoneOffset.UTC).toLocalDate()
+            .with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+            .atStartOfDay().toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+        if((timeline.periods.firstOrNull()?.start?:Long.MAX_VALUE)>weekStart)return 540
+        var driving=0;var used=0;var began:Long?=null
+        timeline.periods.filter{it.start<start}.forEach { p ->
+            if(p.kind=="REST"&&p.minutes>=540){
+                if(driving>540&&(began?:0)>=weekStart)used++
+                driving=0;began=null
+            } else {if(began==null)began=p.start;if(p.kind=="DRIVING")driving+=p.minutes}
+        }
+        return if(used<2)600 else 540
+    }
+    private fun shiftLimit():Int {
+        val start=shiftStartAt?:return 780
+        val timeline=cardTimeline?:return 780
+        val weekly=timeline.periods.indexOfLast{it.kind=="REST"&&it.minutes>=1440&&it.end<=start}
+        if(weekly<0)return 780
+        var firstPart=false;var reductions=0
+        timeline.periods.drop(weekly+1).filter{it.end<=start}.forEach { p ->
+            if(p.kind=="REST"){
+                if(p.minutes>=540){if(p.minutes<660&&!firstPart)reductions++;firstPart=false}
+                else if(p.minutes>=180)firstPart=true
+            }
+        }
+        val split=timeline.periods.any{it.start>=start&&it.kind=="REST"&&it.minutes>=180}
+        return if(reductions<3||split)900 else 780
+    }
+    private fun decorate(frame:FrameLayout,actual:Int,normal:Int,maximum:Int){
+        val level=TimerLimit.level(actual,normal,maximum)
+        if(pulseLevels[frame]==level)return
+        pulseLevels[frame]=level;pulses.remove(frame)?.cancel()
+        val color=when(level){TimerLimit.Level.NORMAL->BORDER;TimerLimit.Level.NEAR->YELLOW;TimerLimit.Level.EXTENDED->0xFFFF8C32.toInt();else->RED}
+        frame.background=rounded(CARD,dp(14).toFloat(),color)
+        if(level==TimerLimit.Level.OVER){
+            val animator=android.animation.ValueAnimator.ofFloat(0f,1f).apply{
+                duration=1600;repeatCount=android.animation.ValueAnimator.INFINITE;repeatMode=android.animation.ValueAnimator.REVERSE
+                addUpdateListener{val f=it.animatedValue as Float;val tint=android.animation.ArgbEvaluator().evaluate(f,CARD,0xFF54202A.toInt()) as Int;frame.background=rounded(tint,dp(14).toFloat(),RED)}
+            };pulses[frame]=animator;animator.start()
+        }
+    }
+    private fun limitText(actual:Int,maximum:Int)=if(actual>maximum)"Превышение +${HistoryData.fmt(actual-maximum)}" else "До предела ${HistoryData.fmt(maximum)} — ${HistoryData.fmt(maximum-actual)}"
+    private fun warn(id:String,actual:Int,normal:Int,maximum:Int,title:String){
+        val stage=when{actual>maximum->"over";actual==maximum->"limit";maximum>normal&&actual>=maximum-15->"extended";actual>=normal-15->"near";else->return}
+        val epoch=if(id=="continuous"||id=="work")prefs.getInt("alert_epoch_$id",0) else 0
+        val key="alert_${shiftStartAt}_${id}_${epoch}_$stage"
+        if(prefs.getBoolean(key,false))return
+        prefs.edit().putBoolean(key,true).apply()
+        val target=if(stage=="near")normal else maximum
+        alertQueue.add("$title\n"+if(actual>maximum)"Превышение +${HistoryData.fmt(actual-maximum)}" else if(actual==maximum)"Достигнут предел ${HistoryData.fmt(maximum)}" else if(actual>=target)"Граница ${HistoryData.fmt(target)} пройдена • предел ${HistoryData.fmt(maximum)}" else "До ${HistoryData.fmt(target)} осталось ${HistoryData.fmt(target-actual)}")
+    }
+    private fun updateLimitCards(){
+        val start=shiftStartAt
+        val elapsed=start?.let{((System.currentTimeMillis()-it)/60000).toInt().coerceAtLeast(0)}
+        val maximum=shiftLimit();val remaining=elapsed?.let{maximum-it}
+        shiftTime.text=elapsed?.let(HistoryData::fmt)?:"—"
+        shiftTimeSub.text=elapsed?.let{limitText(it,maximum)}?:if(pendingDailyRest)"Суточный отдых • смена завершена" else "Нужно считать карту для определения начала смены"
+        if(elapsed!=null){decorate(shiftTimeFrame,elapsed,780,maximum);setProgress(shiftTimeFrame,shiftTimeProgress,elapsed.toFloat()/maximum,GREEN)}
+        else {decorate(shiftTimeFrame,0,780,maximum);setProgress(shiftTimeFrame,shiftTimeProgress,0f,GREEN)}
+        val dl=drivingLimit();val driven=shiftCounter.minutes
+        if(driven!=null){
+            val left=TimerLimit.remaining(driven,dl,remaining)
+            shiftDrivingSub.text=limitText(driven,dl)+"\n"+(left?.let{"В пределах смены — ${HistoryData.fmt(it)}"}?:"Остаток смены пока неизвестен")
+            decorate(shiftDrivingFrame,driven,540,dl);setProgress(shiftDrivingFrame,shiftDrivingProgress,driven.toFloat()/dl,if(driven>=dl)RED else GREEN)
+        }
+        decorate(continuousFrame,continuousMinutes,270,270)
+        continuousCaption.text=if(continuousMinutes>270)"фактическое вождение • превышение" else "осталось до перерыва / конца смены"
+        val cr=TimerLimit.remaining(continuousMinutes,270,remaining)
+        continuous.text=if(continuousMinutes>270)HistoryData.fmt(continuousMinutes) else HistoryData.fmt(cr?:((270-continuousMinutes).coerceAtLeast(0)))
+        continuousSub.text="Проехал ${HistoryData.fmt(continuousMinutes)} из 4:30\n"+if(continuousMinutes>270)limitText(continuousMinutes,270) else if(cr!=null)"Остаток с учётом смены" else "Остаток смены пока неизвестен"
+        val work=activeWorkTotal();val wr=TimerLimit.remaining(work,360,remaining)
+        decorate(work6Frame,work,360,360)
+        work6Sub.text=limitText(work,360)+"\n"+(wr?.let{"В пределах смены — ${HistoryData.fmt(it)}"}?:"Остаток смены пока неизвестен")
+        val fresh=liveConnected&&!cardReading&&lastCycleAt>0&&android.os.SystemClock.elapsedRealtime()-lastCycleAt<30000
+        if(fresh&&start!=null){
+            warn("shift",elapsed!!,780,maximum,"Время смены")
+            if(driven!=null)warn("daily",driven,540,dl,"Вождение за смену")
+            warn("continuous",continuousMinutes,270,270,"Непрерывное вождение")
+            warn("work",work,360,360,"Непрерывная работа")
+            if(alertDialog==null&&alertQueue.isNotEmpty()&&!isFinishing){
+                alertDialog=AlertDialog.Builder(this).setTitle("Предупреждение TachoWatch").setMessage(alertQueue.removeFirst())
+                    .setPositiveButton("Понятно",null).create().also{d->d.setOnDismissListener{alertDialog=null};d.show()}
+            }
+        }
     }
     private fun currentWeekTenHourUses():Int{val now=isoCalendar(Date());return history?.days.orEmpty().count{d->val date=parseDateOnly(d.date)?:return@count false;val c=isoCalendar(date);c.get(Calendar.WEEK_OF_YEAR)==now.get(Calendar.WEEK_OF_YEAR)&&c.getWeekYear()==now.getWeekYear()&&d.drivingMinutes>540}}
     private fun updateWorkWeekClock(){if(!::workWeek.isInitialized)return;val start=cardTimeline?.lastWeeklyRestEnd;if(start==null){workWeek.text="—";workWeekSub.text="не найден законченный недельный отдых на карте";setProgress(workWeekFrame,workWeekProgress,0f,GREEN);return};val total=144*60;val elapsed=((System.currentTimeMillis()-start)/60000L).toInt().coerceAtLeast(0);val remain=(total-elapsed).coerceAtLeast(0);workWeek.text=HistoryData.fmt(remain);val stamp=SimpleDateFormat("dd.MM HH:mm",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.format(Date(start));workWeekSub.text="до начала недельного отдыха\nКонец отдыха: $stamp UTC";setProgress(workWeekFrame,workWeekProgress,elapsed.coerceAtMost(total).toFloat()/total,when{remain<=12*60->RED;remain<=24*60->YELLOW;else->GREEN})}
@@ -358,10 +475,24 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
 
     private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;historyReadAttemptAt=System.currentTimeMillis();historyReadMessage="Считывание карты…";buildHistoryView();status.text="Считывание карты • $reason";live.disconnect();handler.removeCallbacks(cardTimeout);handler.postDelayed(cardTimeout,120000);handler.postDelayed({if(cardReading)cardReader.connect(d)},700)}
     override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;liveConnected=connected;if(connected){lastProcessedCycle=0;lastCycleAt=0;status.text="● ${deviceName?:"DTCO"} подключён";status.setTextColor(GREEN)}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
-    override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(log.lineSequence().lastOrNull()?.startsWith("LIVE CYCLE #")==true&&cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;lastCycleAt=android.os.SystemClock.elapsedRealtime();val cycleText=log.substringAfterLast("LIVE CYCLE #${cycle-1} COMPLETE",log.substringAfterLast("LIVE RECONNECT",log))
-            currentCycleTwoWeeks=mins(last(cycleText,"F938"))?.takeIf{it in 0..20160};processCycle();status.text="● DTCO подключён"
-            refreshHistoryIfNeeded()
-        };updateNow()}}
+    override fun onLiveLog(log:String){runOnUiThread{
+        val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()?:return@runOnUiThread
+        if(log.lineSequence().lastOrNull()?.startsWith("LIVE CYCLE #")!=true||cycle<=lastProcessedCycle)return@runOnUiThread
+        lastProcessedCycle=cycle
+        val sample=log.substringAfterLast("LIVE CYCLE #${cycle-1} COMPLETE",log.substringAfterLast("LIVE RECONNECT",log))
+        val activity=last(sample,"F903")?:return@runOnUiThread
+        val duration=mins(last(sample,"F927"))?:return@runOnUiThread
+        val driving=mins(last(sample,"F923"))?:return@runOnUiThread
+        val pause=mins(last(sample,"F925"))?:return@runOnUiThread
+        if(duration !in 0..20160||driving !in 0..20160||pause !in 0..20160)return@runOnUiThread
+        if(driving<continuousMinutes)prefs.edit().putInt("alert_epoch_continuous",prefs.getInt("alert_epoch_continuous",0)+1).apply()
+        currentActivity=activity;activityMinutes=duration;continuousMinutes=driving;breakMinutes=pause
+        last(sample,"F931")?.takeIf{it.isNotBlank()&&it!="—"}?.let{driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}
+        currentCycleTwoWeeks=mins(last(sample,"F938"))?.takeIf{it in 0..20160}
+        currentCycleTwoWeeks?.let{twoWeekMinutes=it}
+        lastCycleAt=android.os.SystemClock.elapsedRealtime()
+        processCycle();status.text="● DTCO подключён";updateNow();refreshHistoryIfNeeded()
+    }}
     override fun onLogChanged(fullLog:String){if(!cardReading)return;handler.removeCallbacks(cardTimeout);handler.postDelayed(cardTimeout,120000);when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{val loaded=loadHistory();finishCardRead(loaded)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
     private fun finishCardRead(ok:Boolean){handler.removeCallbacks(cardTimeout);val resume=resumeLive;cardReading=false;resumeLive=false;cardRefreshNeeded=!ok;lastReadSession=ok
@@ -392,13 +523,13 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         }
         val wt=activeWorkTotal();work6.text=HistoryData.fmt(wt);work6Sub.text=if(wt>=330)"⚠ До 6 часов осталось ${HistoryData.fmt((360-wt).coerceAtLeast(0))}" else "До 6 часов — ${HistoryData.fmt((360-wt).coerceAtLeast(0))}";setProgress(work6Frame,work6Progress,wt/360f,workColor(wt))
         val ow=activeOtherWorkTotal();otherWork.text=HistoryData.fmt(ow);val av=activeAvailabilityTotal();availability.text=HistoryData.fmt(av)
-        twoWeek.text=HistoryData.fmt(twoWeekMinutes);twoWeekSub.text="Вождение • предел 90:00\nОсталось ${HistoryData.fmt((5400-twoWeekMinutes).coerceAtLeast(0))}";setProgress(twoWeekFrame,twoWeekProgress,twoWeekMinutes/(90f*60f),limitColor(twoWeekMinutes,90*60));updateWeekCards();updateWorkWeekClock()
+        twoWeek.text=HistoryData.fmt(twoWeekMinutes);twoWeekSub.text="Вождение • предел 90:00\nОсталось ${HistoryData.fmt((5400-twoWeekMinutes).coerceAtLeast(0))}";setProgress(twoWeekFrame,twoWeekProgress,twoWeekMinutes/(90f*60f),limitColor(twoWeekMinutes,90*60));updateWeekCards();updateWorkWeekClock();updateLimitCards()
     }
     private fun updateWeekCards(){if(!::week.isInitialized)return;val current=history?.currentWeekCardMinutes?:0;val prev=history?.previousWeekDrivingMinutes?:0;val limit=minOf(56*60,(90*60-prev).coerceAtLeast(0));week.text=if(history==null)"—" else HistoryData.fmt(current);weekSub.text=if(history==null)"Ожидание карты водителя" else "Вождение • предел ${HistoryData.fmt(limit)}";setProgress(weekFrame,weekProgress,if(limit>0)current.toFloat()/limit else 1f,limitColor(current,limit))}
     private fun parseDateOnly(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull()
     private fun isoCalendar(d:Date)=Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US).apply{firstDayOfWeek=Calendar.MONDAY;minimalDaysInFirstWeek=4;time=d}
     private fun last(log:String,did:String)=log.lines().asReversed().firstOrNull{it.startsWith("$did=")}?.substringAfter(" | ")?.trim();private fun mins(v:String?):Int?=v?.let{Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull()}
-    private fun driveColor(m:Int)=when{m>=255->RED;m>=240->YELLOW;else->GREEN};private fun restMilestoneColor(m:Int)=when{m>=45*60->CYAN;m>=24*60->GREEN;m>=11*60->GREEN;m>=9*60->GREEN;m>=3*60->YELLOW;m>=45->GREEN;m>=15->YELLOW;else->RED};private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN};private fun limitColor(v:Int,limit:Int)=when{limit<=0||v>=limit-120->RED;v>=limit-360->YELLOW;else->GREEN}
+    private fun driveColor(m:Int)=when{m>=270->RED;m>=255->YELLOW;else->GREEN};private fun restMilestoneColor(m:Int)=when{m>=45*60->CYAN;m>=24*60->GREEN;m>=11*60->GREEN;m>=9*60->GREEN;m>=3*60->YELLOW;m>=45->GREEN;m>=15->YELLOW;else->RED};private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN};private fun limitColor(v:Int,limit:Int)=when{limit<=0||v>=limit-120->RED;v>=limit-360->YELLOW;else->GREEN}
     private fun iconLabel(title:String,kind:String)=LinearLayout(this).apply{
         orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL
         addView(DashboardIconView(this@DriverDashboardActivityV2,kind,MUTED),LinearLayout.LayoutParams(dp(32),dp(32)).apply{rightMargin=dp(10)})

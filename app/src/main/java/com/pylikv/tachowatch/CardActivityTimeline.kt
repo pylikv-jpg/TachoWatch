@@ -8,6 +8,10 @@ import java.time.ZoneOffset
 object CardActivityTimeline {
     data class Period(val start:Long,val end:Long,val kind:String){val minutes:Int get()=((end-start)/60000).toInt()}
     data class Snapshot(val periods:List<Period>,val latestDate:String?,val capturedAt:Long){
+        val shiftStart:Long? get(){
+            val boundary=periods.indexOfLast{it.kind=="REST"&&it.minutes>=540}
+            return if(boundary>=0)periods.getOrNull(boundary+1)?.start else null
+        }
         val lastWeeklyRestEnd:Long? get()=periods.lastOrNull{it.kind=="REST"&&it.minutes>=1440&&it.end<capturedAt}?.end
         val shiftDriving:Int? get(){
             val today=Instant.ofEpochMilli(capturedAt).atOffset(ZoneOffset.UTC).toLocalDate().toString()
