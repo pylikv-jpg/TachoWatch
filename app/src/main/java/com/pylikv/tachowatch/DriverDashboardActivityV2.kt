@@ -94,6 +94,9 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
             handler.postDelayed(this,1000)
         }
     }
+    private lateinit var shiftRestSummary:TextView
+    private val liveRestPeriods=mutableListOf<CardActivityTimeline.Period>()
+    private var restShiftStart:Long?=null
     private lateinit var shiftTime:TextView
     private lateinit var shiftTimeSub:TextView
     private lateinit var shiftTimeFrame:FrameLayout
@@ -197,7 +200,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         val six=addCard("Непрерывная работа","work");work6Frame=six.first;work6Progress=six.second
         work6=value("—",40f);six.third.addView(work6);six.third.addView(sub("Вождение + другая работа"));work6Sub=sub("До 6 часов — —");six.third.addView(work6Sub)
         val r=addCard("Отдых / Пауза","rest");restFrame=r.first;restProgress=r.second
-        restTime=value("—",44f);r.third.addView(restTime);r.third.addView(sub("фактическая длительность"));restSub=sub("Ожидание данных").apply{setTextColor(TEXT);setPadding(dp(10),dp(9),dp(10),dp(9));background=rounded(BG,dp(10).toFloat())};r.third.addView(space(6));r.third.addView(restSub)
+        restTime=value("—",44f);r.third.addView(restTime);r.third.addView(sub("фактическая длительность"));restSub=sub("Ожидание данных").apply{setTextColor(TEXT);setPadding(dp(10),dp(9),dp(10),dp(9));background=rounded(BG,dp(10).toFloat())};r.third.addView(space(6));r.third.addView(restSub);shiftRestSummary=sub("Отдых за смену: нужна карта");r.third.addView(shiftRestSummary)
         fun row(title:String,kind:String):TextView{
             val line=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(12),dp(10),dp(12),dp(10));background=rounded(CARD,dp(14).toFloat(),BORDER)}
             line.addView(iconLabel(title,kind),LinearLayout.LayoutParams(0,-2,1f));val v=value("—",20f);line.addView(v);c.addView(line);c.addView(space(7));return v
@@ -353,7 +356,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
                 else if(p.minutes>=180)firstPart=true
             }
         }
-        val split=timeline.periods.any{it.start>=start&&it.kind=="REST"&&it.minutes>=180}
+        val split=ShiftRestProgress.calculate(start,timeline.periods+liveRestPeriods).longest>=180
         return if(reductions<3||split)900 else 780
     }
     private fun decorate(frame:FrameLayout,actual:Int,normal:Int,maximum:Int){
@@ -381,6 +384,19 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     }
     private fun updateLimitCards(){
         val start=shiftStartAt
+        if(restShiftStart!=start){liveRestPeriods.clear();restShiftStart=start}
+        if(start!=null){
+            if(currentActivity.contains("ОТДЫХ")&&activityMinutes>0&&liveConnected&&!cardReading&&lastCycleAt>0&&android.os.SystemClock.elapsedRealtime()-lastCycleAt<30000){
+                val end=System.currentTimeMillis()-(android.os.SystemClock.elapsedRealtime()-lastCycleAt)
+                val begin=maxOf(start,end-activityMinutes*60000L)
+                val previous=liveRestPeriods.lastOrNull()
+                if(previous!=null&&begin<=previous.end)liveRestPeriods[liveRestPeriods.lastIndex]=previous.copy(start=minOf(begin,previous.start),end=end)
+                else liveRestPeriods.add(CardActivityTimeline.Period(begin,end,"REST"))
+            }
+            val progress=ShiftRestProgress.calculate(start,cardTimeline?.periods.orEmpty()+liveRestPeriods)
+            shiftRestSummary.text="Отдых за смену: ${HistoryData.fmt(progress.total)}"+
+                if(progress.longest>=180)"\nПервая часть суточного отдыха 3:00 засчитана" else ""
+        }else shiftRestSummary.text=if(pendingDailyRest)"Суточный отдых • новая смена ещё не началась" else "Отдых за смену: нужно считать карту"
         val elapsed=start?.let{((System.currentTimeMillis()-it)/60000).toInt().coerceAtLeast(0)}
         val maximum=shiftLimit();val remaining=elapsed?.let{maximum-it}
         shiftTime.text=elapsed?.let(HistoryData::fmt)?:"—"
