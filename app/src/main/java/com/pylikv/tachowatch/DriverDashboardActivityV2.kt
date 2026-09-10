@@ -73,12 +73,22 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private lateinit var twoWeekSub:TextView
     private var lastCycleAt=0L
     private var liveConnected=false
+    private var connectedAt=0L
+    private var drivingBreakReset=false
     private val freshnessTick=object:Runnable{
         override fun run(){
             if(!cardReading){
                 val age=if(lastCycleAt==0L)null else (android.os.SystemClock.elapsedRealtime()-lastCycleAt)/1000
                 freshness.text=when{!liveConnected->"Ожидание подключения";age==null->"Ожидание данных";age>30->"Данные устарели • ${age} сек назад";else->"Обновлено ${age} сек назад"}
                 freshness.setTextColor(if(liveConnected&&age!=null&&age>30)YELLOW else MUTED)
+            }
+            if(!cardReading&&liveConnected&&connectedAt>0){
+                val reference=if(lastCycleAt>0)lastCycleAt else connectedAt
+                if(android.os.SystemClock.elapsedRealtime()-reference>45000){
+                    connectedAt=android.os.SystemClock.elapsedRealtime();lastCycleAt=0
+                    status.text="Обновление данных зависло • переподключение…"
+                    dtco?.let{live.connect(it)}
+                }
             }
             if(::shiftTime.isInitialized)updateLimitCards()
             handler.postDelayed(this,1000)
@@ -290,7 +300,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         }
         processWorkWindow();persistCounters();updateShiftDriving()
     }
-    private fun processWorkWindow(){val restReached45=currentActivity.contains("ОТДЫХ")&&activityMinutes>=45;if(restReached45){if(activeWorkTotal()>0)prefs.edit().putInt("alert_epoch_work",prefs.getInt("alert_epoch_work",0)+1).apply();workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};previousActivityDuration=activityMinutes}
+    private fun processWorkWindow(){val restReached45=drivingBreakReset||(currentActivity.contains("ОТДЫХ")&&BreakProgress.calculate(activityMinutes,breakMinutes).complete);drivingBreakReset=false;if(restReached45){if(activeWorkTotal()>0)prefs.edit().putInt("alert_epoch_work",prefs.getInt("alert_epoch_work",0)+1).apply();workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};previousActivityDuration=activityMinutes}
     private fun activeWorkTotal()=workWindowMinutes+if(currentActivity.contains("ВОЖДЕНИЕ")||currentActivity.contains("РАБОТА"))activityMinutes else 0
     private fun activeOtherWorkTotal()=otherWorkWindowMinutes+if(currentActivity.contains("РАБОТА"))activityMinutes else 0
     private fun activeAvailabilityTotal()=availabilityWindowMinutes+if(currentActivity.contains("ГОТОВНОСТЬ"))activityMinutes else 0
@@ -474,7 +484,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:"Устройство Bluetooth"}catch(_:Throwable){"Устройство Bluetooth"}
 
     private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;historyReadAttemptAt=System.currentTimeMillis();historyReadMessage="Считывание карты…";buildHistoryView();status.text="Считывание карты • $reason";live.disconnect();handler.removeCallbacks(cardTimeout);handler.postDelayed(cardTimeout,120000);handler.postDelayed({if(cardReading)cardReader.connect(d)},700)}
-    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;liveConnected=connected;if(connected){lastProcessedCycle=0;lastCycleAt=0;status.text="● ${deviceName?:"DTCO"} подключён";status.setTextColor(GREEN)}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
+    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;liveConnected=connected;if(connected){connectedAt=android.os.SystemClock.elapsedRealtime();lastProcessedCycle=0;lastCycleAt=0;status.text="● ${deviceName?:"DTCO"} подключён";status.setTextColor(GREEN)}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
     override fun onLiveLog(log:String){runOnUiThread{
         val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()?:return@runOnUiThread
         if(log.lineSequence().lastOrNull()?.startsWith("LIVE CYCLE #")!=true||cycle<=lastProcessedCycle)return@runOnUiThread
@@ -485,6 +495,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         val driving=mins(last(sample,"F923"))?:return@runOnUiThread
         val pause=mins(last(sample,"F925"))?:return@runOnUiThread
         if(duration !in 0..20160||driving !in 0..20160||pause !in 0..20160)return@runOnUiThread
+        drivingBreakReset=previousActivity.contains("ОТДЫХ")&&driving<continuousMinutes
         if(driving<continuousMinutes)prefs.edit().putInt("alert_epoch_continuous",prefs.getInt("alert_epoch_continuous",0)+1).apply()
         currentActivity=activity;activityMinutes=duration;continuousMinutes=driving;breakMinutes=pause
         last(sample,"F931")?.takeIf{it.isNotBlank()&&it!="—"}?.let{driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}
