@@ -47,7 +47,6 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private val adapter by lazy{btManager.adapter}
     private val prefs by lazy{getSharedPreferences(PREFS,Context.MODE_PRIVATE)}
     private val handler=Handler(Looper.getMainLooper())
-    private lateinit var live:LiveDidDiagnostic
     private lateinit var cardReader:DtcoBluetoothDiagnostic
     private var dtco:BluetoothDevice?=null
     private var history:HistoryData.Model?=null
@@ -76,10 +75,10 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
         window.statusBarColor=BG; window.navigationBarColor=BG
-        live=LiveDidDiagnostic(applicationContext,this); cardReader=DtcoBluetoothDiagnostic(applicationContext,this)
-        restoreCounters(); buildUi(); loadHistory(); requestPermission()
+        cardReader=DtcoBluetoothDiagnostic(applicationContext,this)
+        restoreCounters();restoreSnapshot();buildUi();loadHistory();DriverLiveService.registerListener(this);requestPermission();updateNow()
     }
-    override fun onDestroy(){live.disconnect();cardReader.disconnect();super.onDestroy()}
+    override fun onDestroy(){DriverLiveService.unregisterListener(this);cardReader.disconnect();super.onDestroy()}
 
     private fun buildUi(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG);setPadding(dp(12),dp(10),dp(12),dp(10))}
@@ -145,17 +144,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
 
     private fun loadHistory(){val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))?:return;val r=TlvInventory.parse(f);if(r.error==null){history=HistoryData.load(r);if(::historyRoot.isInitialized)buildHistoryView();updateWeekCards();updateWorkWeekClock();updateShiftDriving()}}
     private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
-    private fun persistCounters(){prefs.edit().putBoolean(SHIFT_INITIALIZED,shiftCounterInitialized).putInt(SHIFT_COMPLETED,shiftCompletedMinutes).putInt(SHIFT_PREV_CONTINUOUS,previousContinuousMinutes).putInt(WORK_WINDOW,workWindowMinutes).putString(WORK_PREV_ACTIVITY,previousActivity).putInt(WORK_PREV_DURATION,previousActivityDuration).putInt(WORK_ACC,otherWorkWindowMinutes).putInt(AVAIL_ACC,availabilityWindowMinutes).apply()}
-    private fun initializeShiftCounterFromCard(){if(shiftCounterInitialized)return;shiftCompletedMinutes=0;previousContinuousMinutes=continuousMinutes;shiftCounterInitialized=true;persistCounters()}
-    private fun processCycle(){
-        initializeShiftCounterFromCard()
-        if(previousContinuousMinutes>0&&continuousMinutes<previousContinuousMinutes){
-            shiftCompletedMinutes+=previousContinuousMinutes
-        }
-        previousContinuousMinutes=continuousMinutes
-        processWorkWindow();persistCounters();updateShiftDriving()
-    }
-    private fun processWorkWindow(){val restReached45=currentActivity.contains("ОТДЫХ")&&maxOf(breakMinutes,activityMinutes)>=45;if(restReached45){workWindowMinutes=0;otherWorkWindowMinutes=0;availabilityWindowMinutes=0;previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};if(previousActivity!=currentActivity){val finished=previousActivityDuration.coerceAtLeast(0);when{previousActivity.contains("ВОЖДЕНИЕ")->workWindowMinutes+=finished;previousActivity.contains("РАБОТА")->{workWindowMinutes+=finished;otherWorkWindowMinutes+=finished};previousActivity.contains("ГОТОВНОСТЬ")->availabilityWindowMinutes+=finished};previousActivity=currentActivity;previousActivityDuration=activityMinutes;return};previousActivityDuration=activityMinutes}
+    private fun restoreSnapshot(){currentActivity=prefs.getString(DriverLiveService.SNAP_ACTIVITY,"—")?:"—";activityMinutes=prefs.getInt(DriverLiveService.SNAP_ACTIVITY_MIN,0);continuousMinutes=prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN,0);breakMinutes=prefs.getInt(DriverLiveService.SNAP_BREAK_MIN,0);twoWeekMinutes=prefs.getInt(DriverLiveService.SNAP_TWO_WEEK_MIN,0)}
     private fun activeWorkTotal()=workWindowMinutes+if(currentActivity.contains("ВОЖДЕНИЕ")||currentActivity.contains("РАБОТА"))activityMinutes else 0
     private fun activeOtherWorkTotal()=otherWorkWindowMinutes+if(currentActivity.contains("РАБОТА"))activityMinutes else 0
     private fun activeAvailabilityTotal()=availabilityWindowMinutes+if(currentActivity.contains("ГОТОВНОСТЬ"))activityMinutes else 0
@@ -168,9 +157,14 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private fun showHistory(){loadHistory();nowRoot.visibility=View.GONE;historyRoot.visibility=View.VISIBLE;updateTabState(false)}
     private fun updateTabState(nowSelected:Boolean){nowTab.background=rounded(if(nowSelected)GREEN else CARD,dp(11).toFloat(),if(nowSelected)GREEN else BORDER);historyTab.background=rounded(if(nowSelected)CARD else GREEN,dp(11).toFloat(),if(nowSelected)BORDER else GREEN)}
 
-    private fun requestPermission(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN))else findAndAutoConnect()}
+    private fun requestPermission(){
+        val req=mutableListOf<String>()
+        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S){if(ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)req+=Manifest.permission.BLUETOOTH_CONNECT;if(ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_SCAN)!=PackageManager.PERMISSION_GRANTED)req+=Manifest.permission.BLUETOOTH_SCAN}
+        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.TIRAMISU&&ContextCompat.checkSelfPermission(this,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)req+=Manifest.permission.POST_NOTIFICATIONS
+        if(req.isNotEmpty())permissionLauncher.launch(req.toTypedArray())else findAndAutoConnect()
+    }
     @SuppressLint("MissingPermission") private fun findAndAutoConnect(){if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED)return;val saved=prefs.getString(SELECTED_DTCO,null);dtco=try{adapter?.bondedDevices?.firstOrNull{it.address==saved}}catch(_:Throwable){null};val d=dtco;if(d==null){status.text="Выберите DTCO";return};connectSelected(d)}
-    private fun connectSelected(d:BluetoothDevice){dtco=d;status.text="Подключение к DTCO…";live.connect(d)}
+    private fun connectSelected(d:BluetoothDevice){dtco=d;status.text="Подключение к DTCO…";DriverLiveService.start(applicationContext,d.address)}
 
     @SuppressLint("MissingPermission") private fun showDtcoPicker(){
         if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S&&(ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED||ContextCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_SCAN)!=PackageManager.PERMISSION_GRANTED)){permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN));return}
@@ -181,14 +175,15 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     @SuppressLint("MissingPermission") private fun startNearbyScan(devices:MutableMap<String,BluetoothDevice>,refresh:()->Unit){val a=adapter?:return;val cb=BluetoothAdapter.LeScanCallback{device,_,_->val n=try{device.name}catch(_:Throwable){null};if((n?:"").contains("DTCO",true)){devices[device.address]=device;runOnUiThread{refresh()}}};try{a.startLeScan(cb);handler.postDelayed({try{a.stopLeScan(cb)}catch(_:Throwable){}},4000)}catch(_:Throwable){}}
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:"DTCO"}catch(_:Throwable){"DTCO"}
 
-    private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";live.disconnect();handler.postDelayed({cardReader.connect(d)},500)}
+    private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";DriverLiveService.pause(applicationContext);handler.postDelayed({cardReader.connect(d)},500)}
     override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;if(connected){status.text="Онлайн • ${deviceName?:"DTCO"}";status.setTextColor(GREEN);if(!prefs.getBoolean(FIRST_READ,false)&&!initialReadAttemptedThisSession){initialReadAttemptedThisSession=true;handler.postDelayed({if(!cardReading)startCardRead("Первое успешное подключение",true)},800)}}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
-    override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;processCycle();status.text="Онлайн • данные актуальны"};updateNow()}}
+    override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;restoreCounters();restoreSnapshot();status.text="Онлайн • данные актуальны"};updateNow()}}
     override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
-    private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({live.connect(d)},800)}}
+    private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({DriverLiveService.start(applicationContext,d.address)},800)}}
 
     private fun updateNow(){
+        if(!::continuous.isInitialized)return
         continuous.text="${HistoryData.fmt(continuousMinutes)} из 4:30";setProgress(continuousFrame,continuousProgress,continuousMinutes/270f,driveColor(continuousMinutes));updateShiftDriving()
         val resting=currentActivity.contains("ОТДЫХ");val actual=if(resting)maxOf(activityMinutes,breakMinutes) else breakMinutes;val credited=HistoryData.creditedRestMinutes(actual);val next=HistoryData.nextRestMilestone(actual)
         restTime.text=HistoryData.fmt(credited);restSub.text=if(resting){if(next!=null)"засчитано ${HistoryData.fmt(credited)} • фактически ${HistoryData.fmt(actual)} • следующая ступень ${HistoryData.fmt(next)}" else "засчитано ${HistoryData.fmt(credited)} • фактически ${HistoryData.fmt(actual)}"}else "сейчас не отдых • накоплено ${HistoryData.fmt(actual)}";val target=next?:45*60;setProgress(restFrame,restProgress,if(target>0)actual.toFloat()/target else 0f,restMilestoneColor(credited))
