@@ -182,14 +182,19 @@ object HistoryData {
             val due = if (created > 0) compensationDueDate(next.date) else null
             if (created > 0 && due != null) debts += Debt(previous.date, next.date, created, created, null, due)
 
+            // Regulation 561/2006 requires each weekly-rest reduction to be compensated
+            // by an equivalent period taken en bloc. Never chip away a debt across several
+            // later rests. A debt changes from its full original amount to zero only when
+            // one later uninterrupted rest contains enough surplus to cover it in full.
             var surplus = compensationSurplusMinutes(actual, weekly, previous.hasSplitDailyRest3h)
-            debts.filter { it.remaining > 0 && !(it.previousDate == previous.date && it.nextDate == next.date) }.forEach { debt ->
-                if (surplus <= 0) return@forEach
-                val paid = minOf(debt.remaining, surplus)
-                debt.remaining -= paid
-                surplus -= paid
-                if (debt.remaining == 0 && debt.paidDate == null) debt.paidDate = next.date
-            }
+            debts
+                .filter { it.remaining > 0 && !(it.previousDate == previous.date && it.nextDate == next.date) }
+                .forEach { debt ->
+                    if (surplus < debt.original) return@forEach
+                    surplus -= debt.original
+                    debt.remaining = 0
+                    if (debt.paidDate == null) debt.paidDate = next.date
+                }
 
             val dailyCredit = if (weekly) null else when {
                 previous.hasSplitDailyRest3h && actual >= 540 -> 660
@@ -282,12 +287,11 @@ object HistoryData {
         if (rest.weekly) {
             val first = fmtPlain(rest.actualMinutes)
             if (rest.compensationCreatedMinutes <= 0) return first
+            val original = fmtPlain(rest.compensationCreatedMinutes)
             return if (rest.compensationRemainingMinutes <= 0 && rest.compensationPaidDate != null) {
-                "$first\n✓ Компенсация ${fmtPlain(rest.compensationCreatedMinutes)} отдана ${prettyDate(rest.compensationPaidDate)}"
+                "$first\n✓ Компенсация $original выполнена одним блоком ${prettyDate(rest.compensationPaidDate)}"
             } else {
-                val paid = rest.compensationCreatedMinutes - rest.compensationRemainingMinutes
-                val paidPart = if (paid > 0) " • отдано ${fmtPlain(paid)}" else ""
-                "$first\n⚠ Компенсация нужна ${fmtPlain(rest.compensationRemainingMinutes)}$paidPart • до ${rest.compensationDueDate?.let(::prettyDate) ?: "—"}"
+                "$first\n⚠ Компенсация: $original одним блоком • осталось $original • до ${rest.compensationDueDate?.let(::prettyDate) ?: "—"}"
             }
         }
 
