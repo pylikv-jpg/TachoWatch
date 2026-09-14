@@ -141,7 +141,9 @@ object HistoryData {
             val p = places.filter { it.date == date }
             val begin = p.firstOrNull { it.type.startsWith("BEGIN_") }
             val end = p.lastOrNull { it.type.startsWith("END_") }
-            val startTime = begin?.time ?: a.activeStart
+            // Manual entry can legitimately start the work period before card insertion.
+            // Use the earliest active timestamp instead of always preferring BEGIN place time.
+            val startTime = earliestClock(begin?.time, a.activeStart)
             val endTime = end?.time ?: a.restStartAfterWork
             val hasActivity = a.driving > 0 || a.work > 0 || a.availability > 0
             if (!hasActivity && startTime == null && endTime == null) null else Day(
@@ -293,6 +295,13 @@ object HistoryData {
         val split = if (rest.splitDaily) "\nВ смене засчитано: 3:00" else ""
         val credited = rest.creditedDailyMinutes?.let { "\nЗасчитано суточного отдыха: ${fmtPlain(it)}" } ?: ""
         return actual + split + credited
+    }
+
+    private fun earliestClock(a: String?, b: String?): String? = when {
+        a == null -> b
+        b == null -> a
+        clockMinutes(a) <= clockMinutes(b) -> a
+        else -> b
     }
 
     private fun fmtPlain(min: Int): String = String.format(Locale.US, "%d:%02d", min / 60, min % 60)
