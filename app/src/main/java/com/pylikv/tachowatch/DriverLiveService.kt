@@ -20,9 +20,8 @@ import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Owns the live DTCO connection independently from the Activity.
- * The service persists all derived counters after every completed live cycle,
- * so Android can destroy/recreate the UI without losing driver state.
+ * Persistent live DTCO service.
+ * Keeps counters outside the Activity, survives UI recreation and evaluates alerts.
  */
 class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.OnInitListener {
     companion object {
@@ -91,6 +90,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private lateinit var live: LiveDidDiagnostic
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var pendingSpeech: String? = null
     private var pausedForCardRead = false
     private var stopping = false
 
@@ -143,8 +143,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                     connectAddress(address)
                 }
             }
-            else -> {
-                if (!pausedForCardRead) prefs().getString(SELECTED_DTCO, null)?.let(::connectAddress)
+            else -> if (!pausedForCardRead) {
+                prefs().getString(SELECTED_DTCO, null)?.let(::connectAddress)
             }
         }
         return START_STICKY
@@ -163,15 +163,22 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // START_STICKY handles recreation. State is already persisted every cycle.
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            val engine = tts ?: return
-            val ru = engine.setLanguage(Locale("ru", "RU"))
-            ttsReady = ru != TextToSpeech.LANG_MISSING_DATA && ru != TextToSpeech.LANG_NOT_SUPPORTED
+        if (status != TextToSpeech.SUCCESS) return
+        val engine = tts ?: return
+        var result = engine.setLanguage(Locale("ru", "RU"))
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+            result = engine.setLanguage(Locale.getDefault())
+        }
+        ttsReady = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
+        if (ttsReady) {
+            pendingSpeech?.let {
+                pendingSpeech = null
+                speakNow(it)
+            }
         }
     }
 
@@ -257,48 +264,66 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     private fun processCycle() {
+        val restNow = isRest(currentActivity)
+        val restMinutes = if (restNow) maxOf(activityMinutes, breakMinutes) else 0
+
         if (!shiftCounterInitialized) {
-            shiftCompletedMinutes = 0
             previousContinuousMinutes = continuousMinutes
             shiftCounterInitialized = true
-        } else if (previousContinuousMinutes > 0 && continuousMinutes < previousContinuousMinutes) {
+        } else if (previousContinuousMinutes > 0 && continuousMinutes < previousContinuousMinutes && restMinutes < 9 * 60) {
             shiftCompletedMinutes += previousContinuousMinutes
         }
         previousContinuousMinutes = continuousMinutes
-        processWorkWindow()
-    }
 
-    private fun processWorkWindow() {
-        val restReached45 = currentActivity.contains("ОТДЫХ") && maxOf(breakMinutes, activityMinutes) >= 45
-        if (restReached45) {
+        processWorkWindow(restMinutes)
+
+        // A completed daily rest starts a new daily shift. Reset shift-scoped counters once
+        // the 9-hour threshold is reached; repeated live cycles stay at zero until work resumes.
+        if (restMinutes >= 9 * 60) {
+            shiftCompletedMinutes = 0
+            previousContinuousMinutes = continuousMinutes
             workWindowMinutes = 0
             otherWorkWindowMinutes = 0
             availabilityWindowMinutes = 0
-            previousActivity = currentActivity
-            previousActivityDuration = activityMinutes
             clearAlertGroup("cont_")
             clearAlertGroup("work_")
-            return
+            clearAlertGroup("shift9_")
+            clearAlertGroup("shift10_")
         }
+    }
+
+    private fun processWorkWindow(restMinutes: Int) {
+        // First finalise the segment that just ended. Activity changes must never erase
+        // already accumulated DRIVING + OTHER WORK.
         if (previousActivity != currentActivity) {
             val finished = previousActivityDuration.coerceAtLeast(0)
             when {
-                previousActivity.contains("ВОЖДЕНИЕ") -> workWindowMinutes += finished
-                previousActivity.contains("РАБОТА") -> {
+                isDriving(previousActivity) -> workWindowMinutes += finished
+                isOtherWork(previousActivity) -> {
                     workWindowMinutes += finished
                     otherWorkWindowMinutes += finished
                 }
-                previousActivity.contains("ГОТОВНОСТЬ") -> availabilityWindowMinutes += finished
+                isAvailability(previousActivity) -> availabilityWindowMinutes += finished
             }
             previousActivity = currentActivity
             previousActivityDuration = activityMinutes
         } else {
             previousActivityDuration = activityMinutes
         }
+
+        // For the six-hour continuous-work clock a qualifying break part starts at 15 min.
+        // Do not reset shift totals (other work / availability) on a 15 or 45 minute break.
+        if (restMinutes >= 15) {
+            workWindowMinutes = 0
+            clearAlertGroup("work_")
+        }
+        if (restMinutes >= 45) {
+            clearAlertGroup("cont_")
+        }
     }
 
     private fun activeWorkTotal(): Int = workWindowMinutes +
-        if (currentActivity.contains("ВОЖДЕНИЕ") || currentActivity.contains("РАБОТА")) activityMinutes else 0
+        if (isDriving(currentActivity) || isOtherWork(currentActivity)) activityMinutes else 0
 
     private fun shiftDrivingTotal(): Int = shiftCompletedMinutes + continuousMinutes
 
@@ -307,9 +332,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         evaluateRemaining("work", 360 - activeWorkTotal(), "непрерывной работы", "Лимит непрерывной работы 6 часов достигнут")
 
         val shift = shiftDrivingTotal()
-        // 9 h is the normal daily driving limit. 10 h is handled as the extension ceiling.
         evaluateRemaining("shift9", 540 - shift, "суточного вождения 9 часов", "Лимит суточного вождения 9 часов достигнут. При допустимом продлении остаётся до 10 часов")
-        if (shift >= 540) evaluateRemaining("shift10", 600 - shift, "продлённого суточного вождения 10 часов", "Лимит продлённого суточного вождения 10 часов достигнут")
+        if (shift >= 540) {
+            evaluateRemaining("shift10", 600 - shift, "продлённого суточного вождения 10 часов", "Лимит продлённого суточного вождения 10 часов достигнут")
+        }
     }
 
     private fun evaluateRemaining(group: String, remaining: Int, label: String, reachedText: String) {
@@ -338,28 +364,39 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     private fun speak(text: String) {
-        if (!ttsReady) return
-        try { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tachowatch_${System.currentTimeMillis()}") } catch (_: Throwable) {}
+        if (!ttsReady) {
+            pendingSpeech = text
+            return
+        }
+        speakNow(text)
+    }
+
+    private fun speakNow(text: String) {
+        try {
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tachowatch_${System.currentTimeMillis()}")
+        } catch (_: Throwable) {}
     }
 
     private fun showAlert(text: String) {
         val manager = getSystemService(NotificationManager::class.java)
-        try {
-            manager.notify(ALERT_NOTIFICATION_ID, alertNotification(text))
-        } catch (_: Throwable) {}
+        try { manager.notify(ALERT_NOTIFICATION_ID, alertNotification(text)) } catch (_: Throwable) {}
     }
 
     private fun createChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(CHANNEL_SERVICE, "TachoWatch фоновый контроль", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Постоянное Bluetooth-подключение к DTCO"
-            setShowBadge(false)
-        })
-        manager.createNotificationChannel(NotificationChannel(CHANNEL_ALERTS, "Предупреждения лимитов", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Голосовые и всплывающие предупреждения о лимитах работы и вождения"
-            enableVibration(true)
-        })
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_SERVICE, "TachoWatch фоновый контроль", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Постоянное Bluetooth-подключение к DTCO"
+                setShowBadge(false)
+            }
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_ALERTS, "Предупреждения лимитов", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Голосовые и всплывающие предупреждения о лимитах работы и вождения"
+                enableVibration(true)
+            }
+        )
     }
 
     private fun launchPendingIntent(): PendingIntent {
@@ -392,6 +429,11 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private fun updateServiceNotification(text: String) {
         try { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, serviceNotification(text)) } catch (_: Throwable) {}
     }
+
+    private fun isRest(v: String) = v.contains("ОТДЫХ", true) || v.contains("ПЕРЕРЫВ", true)
+    private fun isDriving(v: String) = v.contains("ВОЖДЕНИЕ", true)
+    private fun isOtherWork(v: String) = v.contains("РАБОТА", true) && !isDriving(v)
+    private fun isAvailability(v: String) = v.contains("ГОТОВНОСТЬ", true)
 
     private fun prefs() = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun last(log: String, did: String) = log.lines().asReversed().firstOrNull { it.startsWith("$did=") }?.substringAfter(" | ")?.trim()
