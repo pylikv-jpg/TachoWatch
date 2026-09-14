@@ -40,6 +40,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val SHIFT_INITIALIZED = "shift_counter_initialized"
         const val SHIFT_COMPLETED = "shift_completed_driving"
         const val SHIFT_PREV_CONTINUOUS = "shift_prev_continuous"
+        const val SHIFT_SEGMENT_PEAK = "shift_segment_peak"
         const val WORK_WINDOW = "work_window_minutes"
         const val WORK_PREV_ACTIVITY = "work_prev_activity"
         const val WORK_PREV_DURATION = "work_prev_duration"
@@ -104,6 +105,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var shiftCounterInitialized = false
     private var shiftCompletedMinutes = 0
     private var previousContinuousMinutes = 0
+    private var shiftSegmentPeakMinutes = 0
     private var workWindowMinutes = 0
     private var previousActivity = "—"
     private var previousActivityDuration = 0
@@ -237,6 +239,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         shiftCounterInitialized = p.getBoolean(SHIFT_INITIALIZED, false)
         shiftCompletedMinutes = p.getInt(SHIFT_COMPLETED, 0)
         previousContinuousMinutes = p.getInt(SHIFT_PREV_CONTINUOUS, 0)
+        shiftSegmentPeakMinutes = p.getInt(SHIFT_SEGMENT_PEAK, previousContinuousMinutes)
         workWindowMinutes = p.getInt(WORK_WINDOW, 0)
         previousActivity = p.getString(WORK_PREV_ACTIVITY, "—") ?: "—"
         previousActivityDuration = p.getInt(WORK_PREV_DURATION, 0)
@@ -255,6 +258,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             .putBoolean(SHIFT_INITIALIZED, shiftCounterInitialized)
             .putInt(SHIFT_COMPLETED, shiftCompletedMinutes)
             .putInt(SHIFT_PREV_CONTINUOUS, previousContinuousMinutes)
+            .putInt(SHIFT_SEGMENT_PEAK, shiftSegmentPeakMinutes)
             .putInt(WORK_WINDOW, workWindowMinutes)
             .putString(WORK_PREV_ACTIVITY, previousActivity)
             .putInt(WORK_PREV_DURATION, previousActivityDuration)
@@ -269,19 +273,30 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
         if (!shiftCounterInitialized) {
             previousContinuousMinutes = continuousMinutes
+            shiftSegmentPeakMinutes = continuousMinutes
             shiftCounterInitialized = true
-        } else if (previousContinuousMinutes > 0 && continuousMinutes < previousContinuousMinutes && restMinutes < 9 * 60) {
-            shiftCompletedMinutes += previousContinuousMinutes
+        } else {
+            if (continuousMinutes > shiftSegmentPeakMinutes) {
+                shiftSegmentPeakMinutes = continuousMinutes
+            }
+
+            val segmentDropped = previousContinuousMinutes > continuousMinutes
+            val qualifyingBreakReached = restNow && restMinutes >= 45 && continuousMinutes < shiftSegmentPeakMinutes
+            if (restMinutes < 9 * 60 && shiftSegmentPeakMinutes > 0 && (segmentDropped || qualifyingBreakReached)) {
+                shiftCompletedMinutes += shiftSegmentPeakMinutes
+                shiftSegmentPeakMinutes = continuousMinutes
+            }
         }
         previousContinuousMinutes = continuousMinutes
 
         processWorkWindow(restMinutes)
 
-        // A completed daily rest starts a new daily shift. Reset shift-scoped counters once
-        // the 9-hour threshold is reached; repeated live cycles stay at zero until work resumes.
+        // Only a completed daily rest starts a new daily shift. A 45-minute break resets
+        // F923 (continuous driving) but must never reset total driving for the current shift.
         if (restMinutes >= 9 * 60) {
             shiftCompletedMinutes = 0
             previousContinuousMinutes = continuousMinutes
+            shiftSegmentPeakMinutes = 0
             workWindowMinutes = 0
             otherWorkWindowMinutes = 0
             availabilityWindowMinutes = 0
@@ -293,8 +308,6 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     private fun processWorkWindow(restMinutes: Int) {
-        // First finalise the segment that just ended. Activity changes must never erase
-        // already accumulated DRIVING + OTHER WORK.
         if (previousActivity != currentActivity) {
             val finished = previousActivityDuration.coerceAtLeast(0)
             when {
@@ -311,8 +324,6 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             previousActivityDuration = activityMinutes
         }
 
-        // For the six-hour continuous-work clock a qualifying break part starts at 15 min.
-        // Do not reset shift totals (other work / availability) on a 15 or 45 minute break.
         if (restMinutes >= 15) {
             workWindowMinutes = 0
             clearAlertGroup("work_")
@@ -325,7 +336,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private fun activeWorkTotal(): Int = workWindowMinutes +
         if (isDriving(currentActivity) || isOtherWork(currentActivity)) activityMinutes else 0
 
-    private fun shiftDrivingTotal(): Int = shiftCompletedMinutes + continuousMinutes
+    private fun shiftDrivingTotal(): Int = shiftCompletedMinutes + maxOf(continuousMinutes, shiftSegmentPeakMinutes)
 
     private fun evaluateAlerts() {
         evaluateRemaining("cont", 270 - continuousMinutes, "непрерывного вождения", "Лимит непрерывного вождения 4 часа 30 минут достигнут")
