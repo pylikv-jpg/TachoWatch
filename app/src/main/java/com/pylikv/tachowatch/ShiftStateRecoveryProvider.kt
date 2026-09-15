@@ -7,18 +7,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.FileObserver
 
-/**
- * Repairs persisted live counters from authoritative driver-card history.
- *
- * DriverLiveService persists its counters so UI/process recreation does not lose a shift.
- * If Android kills the process during a qualifying daily/weekly rest, however, live polling
- * can miss the rest boundary and later restore the previous shift. A completed DDD download
- * is authoritative for boundaries that happened while live monitoring was absent.
- *
- * The provider starts before the launcher Activity and also watches the DDD directory, so a
- * newly downloaded card reconciles the live state exactly once without coupling the card
- * reader UI to the live service.
- */
+/** Reconciles persisted derived counters from authoritative driver-card history. */
 class ShiftStateRecoveryProvider : ContentProvider() {
     private var observer: FileObserver? = null
 
@@ -48,8 +37,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             val history = HistoryData.load(parsed)
             val seed = currentShiftSeed(history) ?: return
 
-            // F923 is the current continuous-driving segment. Keep only earlier driving in
-            // SHIFT_COMPLETED; otherwise the dashboard adds the same segment twice.
             val liveContinuous = prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, 0).coerceAtLeast(0)
             val completedDriving = (seed.drivingMinutes - liveContinuous).coerceAtLeast(0)
 
@@ -57,16 +44,25 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 .putBoolean(DriverLiveService.SHIFT_INITIALIZED, true)
                 .putInt(DriverLiveService.SHIFT_COMPLETED, completedDriving)
                 .putInt(DriverLiveService.SHIFT_PREV_CONTINUOUS, liveContinuous)
-                .putInt(DriverLiveService.WORK_WINDOW, seed.drivingMinutes + seed.workMinutes)
-                .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
+                // Work window is NOT the whole shift. Rebuild it only from activity after
+                // the last >=30 min qualifying work break. This prevents stale values such
+                // as 6:04 being resurrected after Android kills the process.
+                .putInt(DriverLiveService.WORK_WINDOW, seed.workWindowMinutes)
+                .putInt(DriverLiveService.WORK_ACC, seed.workWindowOtherMinutes)
                 .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
-                // Do not carry an F927 delta baseline across a process death/card download.
                 .putString(DriverLiveService.WORK_PREV_ACTIVITY, "—")
                 .putInt(DriverLiveService.WORK_PREV_DURATION, 0)
                 .putString(KEY_CARD_FINGERPRINT, fingerprint)
                 .putString(KEY_SHIFT_ID, seed.id)
                 .putLong(KEY_RECONCILED_AT, System.currentTimeMillis())
                 .apply()
+
+            CounterRecoveryEngine(context).recordCardVerified(
+                activity = prefs.getString(DriverLiveService.SNAP_ACTIVITY, "—") ?: "—",
+                continuousMin = liveContinuous,
+                shiftDrivingMin = seed.drivingMinutes,
+                workWindowMin = seed.workWindowMinutes
+            )
         }
     }
 
@@ -74,17 +70,18 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val id: String,
         val drivingMinutes: Int,
         val workMinutes: Int,
-        val availabilityMinutes: Int
+        val availabilityMinutes: Int,
+        val workWindowMinutes: Int,
+        val workWindowOtherMinutes: Int
     )
 
-    /** Build the current shift from card periods, not from calendar-day totals. */
+    /** Build current shift and current work window from card periods, not calendar totals. */
     private fun currentShiftSeed(model: HistoryData.Model): Seed? {
         val days = model.days
         val latest = days.lastOrNull() ?: return null
         val periods = latest.periods
 
         if (periods.isEmpty()) {
-            // Legacy fallback: only trust day totals if a cross-day qualifying rest is proven.
             val previous = days.getOrNull(days.lastIndex - 1)
             val gap = previous?.let { HistoryData.actualGapMinutes(it, latest) }
             if (previous != null && (gap == null || gap < DAILY_REST_MINUTES)) return null
@@ -92,12 +89,12 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 id = "${latest.date}|${latest.startTime ?: "?"}",
                 drivingMinutes = latest.drivingMinutes,
                 workMinutes = latest.workMinutes,
-                availabilityMinutes = latest.availabilityMinutes
+                availabilityMinutes = latest.availabilityMinutes,
+                workWindowMinutes = latest.drivingMinutes + latest.workMinutes,
+                workWindowOtherMinutes = latest.workMinutes
             )
         }
 
-        // A >=9h REST inside the latest card day is a real shift boundary. Everything after
-        // it belongs to the new shift. This also handles two shifts that start on one date.
         val lastDailyRestIndex = periods.indexOfLast { it.type == "REST" && it.minutes >= DAILY_REST_MINUTES }
         val active = if (lastDailyRestIndex >= 0) periods.drop(lastDailyRestIndex + 1) else periods
         val firstActive = active.firstOrNull { it.type != "REST" }
@@ -108,11 +105,16 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             if (gap != null && gap < DAILY_REST_MINUTES && latest.startTime == null) return null
         }
 
+        val lastWorkBreak = active.indexOfLast { it.type == "REST" && it.minutes >= WORK_BREAK_MINUTES }
+        val workWindow = if (lastWorkBreak >= 0) active.drop(lastWorkBreak + 1) else active
+
         return Seed(
             id = "${latest.date}|${firstActive?.startTime ?: latest.startTime ?: "?"}",
             drivingMinutes = active.filter { it.type == "DRIVING" }.sumOf { it.minutes },
             workMinutes = active.filter { it.type == "WORK" }.sumOf { it.minutes },
-            availabilityMinutes = active.filter { it.type == "AVAILABILITY" }.sumOf { it.minutes }
+            availabilityMinutes = active.filter { it.type == "AVAILABILITY" }.sumOf { it.minutes },
+            workWindowMinutes = workWindow.filter { it.type == "DRIVING" || it.type == "WORK" }.sumOf { it.minutes },
+            workWindowOtherMinutes = workWindow.filter { it.type == "WORK" }.sumOf { it.minutes }
         )
     }
 
@@ -124,6 +126,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
 
     companion object {
         private const val DAILY_REST_MINUTES = 9 * 60
+        private const val WORK_BREAK_MINUTES = 30
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"
         private const val KEY_SHIFT_ID = "recovery_shift_id"
         private const val KEY_RECONCILED_AT = "recovery_reconciled_at"
