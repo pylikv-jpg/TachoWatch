@@ -6,6 +6,8 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import android.os.FileObserver
+import android.os.Handler
+import android.os.Looper
 
 /**
  * Repairs persisted live counters from authoritative driver-card history.
@@ -67,6 +69,19 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 .putString(KEY_SHIFT_ID, seed.id)
                 .putLong(KEY_RECONCILED_AT, System.currentTimeMillis())
                 .apply()
+
+            // SharedPreferences are now authoritative, but a running service keeps its own
+            // in-memory accumulator. Restart it after the completed DDD write so onCreate()
+            // reloads the reconciled values instead of overwriting them on the next live cycle.
+            // This does NOT trigger another card read; it only resumes the existing live DTCO
+            // connection from the saved address.
+            val address = prefs.getString(DriverLiveService.SELECTED_DTCO, null)
+            if (DriverLiveService.isRunning() && !address.isNullOrBlank()) {
+                DriverLiveService.stop(context)
+                Handler(Looper.getMainLooper()).postDelayed({
+                    DriverLiveService.start(context.applicationContext, address)
+                }, LIVE_RESTART_DELAY_MS)
+            }
         }
     }
 
@@ -124,6 +139,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
 
     companion object {
         private const val DAILY_REST_MINUTES = 9 * 60
+        private const val LIVE_RESTART_DELAY_MS = 1500L
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"
         private const val KEY_SHIFT_ID = "recovery_shift_id"
         private const val KEY_RECONCILED_AT = "recovery_reconciled_at"
