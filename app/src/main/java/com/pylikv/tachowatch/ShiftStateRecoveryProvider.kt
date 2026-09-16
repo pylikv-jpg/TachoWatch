@@ -7,17 +7,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.FileObserver
 
-/**
- * Reconciles live counters only after a NEW completed driver-card download.
- *
- * Source hierarchy:
- *  1. Fresh card history is authoritative for completed periods of the current shift.
- *  2. Live DTCO is authoritative for the currently running period.
- *  3. SharedPreferences are continuity storage only.
- *
- * Never reconcile an old DDD at process startup: combining an old card total with a newer
- * cached F923 can manufacture a value which never existed in the tachograph.
- */
+/** Reconcile persisted shift state only from a newly completed driver-card download. */
 class ShiftStateRecoveryProvider : ContentProvider() {
     private var observer: FileObserver? = null
 
@@ -40,25 +30,17 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             val fingerprint = "${file.absolutePath}|${file.length()}|${file.lastModified()}"
             val prefs = context.getSharedPreferences(DriverLiveService.PREFS, Context.MODE_PRIVATE)
             if (prefs.getString(KEY_CARD_FINGERPRINT, null) == fingerprint) return
-
             val parsed = TlvInventory.parse(file)
             if (parsed.error != null) return
-            val history = HistoryData.load(parsed)
-            val seed = currentShiftSeed(history) ?: return
+            val seed = currentShiftSeed(HistoryData.load(parsed)) ?: return
 
-            /*
-             * Do NOT subtract cached F923 from the card total. The cached snapshot can be from
-             * before/after the card read and therefore is not time-aligned with the DDD. That
-             * was the mechanism capable of manufacturing values such as 4:11.
-             *
-             * After a fresh card read, store the card's current-shift driving as the baseline.
-             * Set PREV_CONTINUOUS to zero so the first resumed live cycle only establishes its
-             * baseline and cannot immediately transfer an old F923 segment a second time.
-             */
+            // SHIFT_COMPLETED contains only driving that is no longer represented by F923.
+            // The last driving block remains represented by F923 while a short (<45 min) break
+            // is running, so that block must not also be placed in SHIFT_COMPLETED.
             prefs.edit()
                 .putBoolean(DriverLiveService.SHIFT_INITIALIZED, true)
-                .putInt(DriverLiveService.SHIFT_COMPLETED, seed.drivingMinutes)
-                .putInt(DriverLiveService.SHIFT_PREV_CONTINUOUS, 0)
+                .putInt(DriverLiveService.SHIFT_COMPLETED, seed.completedDrivingMinutes)
+                .putInt(DriverLiveService.SHIFT_PREV_CONTINUOUS, seed.liveDrivingSegmentMinutes)
                 .putInt(DriverLiveService.WORK_WINDOW, seed.drivingMinutes + seed.workMinutes)
                 .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
                 .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
@@ -74,27 +56,17 @@ class ShiftStateRecoveryProvider : ContentProvider() {
     private data class Seed(
         val id: String,
         val drivingMinutes: Int,
+        val completedDrivingMinutes: Int,
+        val liveDrivingSegmentMinutes: Int,
         val workMinutes: Int,
         val availabilityMinutes: Int
     )
 
-    /** Build the current shift from card periods, not from calendar-day totals. */
     private fun currentShiftSeed(model: HistoryData.Model): Seed? {
         val days = model.days
         val latest = days.lastOrNull() ?: return null
         val periods = latest.periods
-
-        if (periods.isEmpty()) {
-            val previous = days.getOrNull(days.lastIndex - 1)
-            val gap = previous?.let { HistoryData.actualGapMinutes(it, latest) }
-            if (previous != null && (gap == null || gap < DAILY_REST_MINUTES)) return null
-            return Seed(
-                id = "${latest.date}|${latest.startTime ?: "?"}",
-                drivingMinutes = latest.drivingMinutes,
-                workMinutes = latest.workMinutes,
-                availabilityMinutes = latest.availabilityMinutes
-            )
-        }
+        if (periods.isEmpty()) return null // totals alone cannot safely de-duplicate live F923
 
         val lastDailyRestIndex = periods.indexOfLast { it.type == "REST" && it.minutes >= DAILY_REST_MINUTES }
         val active = if (lastDailyRestIndex >= 0) periods.drop(lastDailyRestIndex + 1) else periods
@@ -106,9 +78,25 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             if (gap != null && gap < DAILY_REST_MINUTES && latest.startTime == null) return null
         }
 
+        val driving = active.filter { it.type == "DRIVING" }.sumOf { it.minutes }
+        val lastDrivingIndex = active.indexOfLast { it.type == "DRIVING" }
+        val lastDrivingMinutes = active.getOrNull(lastDrivingIndex)?.minutes ?: 0
+        val tailAfterDriving = if (lastDrivingIndex >= 0) active.drop(lastDrivingIndex + 1) else emptyList()
+        val tailRestMinutes = tailAfterDriving.filter { it.type == "REST" }.sumOf { it.minutes }
+        val hasActiveNonRestAfterDriving = tailAfterDriving.any { it.type != "REST" }
+
+        // F923 still represents the last driving block while driving itself is current, and
+        // during a short break. After a qualifying 45-minute break (or a later non-rest block)
+        // that segment is treated as completed.
+        val lastSegmentStillLive = lastDrivingIndex >= 0 && !hasActiveNonRestAfterDriving && tailRestMinutes < CONTINUOUS_BREAK_MINUTES
+        val liveSegment = if (lastSegmentStillLive) lastDrivingMinutes else 0
+        val completed = (driving - liveSegment).coerceAtLeast(0)
+
         return Seed(
             id = "${latest.date}|${firstActive?.startTime ?: latest.startTime ?: "?"}",
-            drivingMinutes = active.filter { it.type == "DRIVING" }.sumOf { it.minutes },
+            drivingMinutes = driving,
+            completedDrivingMinutes = completed,
+            liveDrivingSegmentMinutes = liveSegment,
             workMinutes = active.filter { it.type == "WORK" }.sumOf { it.minutes },
             availabilityMinutes = active.filter { it.type == "AVAILABILITY" }.sumOf { it.minutes }
         )
@@ -122,8 +110,9 @@ class ShiftStateRecoveryProvider : ContentProvider() {
 
     companion object {
         private const val DAILY_REST_MINUTES = 9 * 60
+        private const val CONTINUOUS_BREAK_MINUTES = 45
+        const val KEY_RECONCILED_AT = "recovery_reconciled_at"
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"
         private const val KEY_SHIFT_ID = "recovery_shift_id"
-        private const val KEY_RECONCILED_AT = "recovery_reconciled_at"
     }
 }
