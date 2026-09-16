@@ -8,27 +8,28 @@ import android.net.Uri
 import android.os.FileObserver
 
 /**
- * Repairs persisted live counters from authoritative driver-card history.
+ * Repairs persisted live counters only after a NEW completed driver-card download.
  *
- * DriverLiveService persists its counters so UI/process recreation does not lose a shift.
- * If Android kills the process during a qualifying daily/weekly rest, however, live polling
- * can miss the rest boundary and later restore the previous shift. A completed DDD download
- * is authoritative for boundaries that happened while live monitoring was absent.
+ * Important: an older DDD file must never be applied during process/application startup.
+ * It describes the state at the time that card was read, not necessarily the current shift.
+ * Applying it to a newer live F923 snapshot can manufacture a false SHIFT_COMPLETED value
+ * (for example old shift driving 8:35 - cached F923 4:24 = false 4:11).
  *
- * The provider starts before the launcher Activity and also watches the DDD directory, so a
- * newly downloaded card reconciles the live state exactly once without coupling the card
- * reader UI to the live service.
+ * SharedPreferences are continuity storage, not an authoritative tachograph source.
+ * A freshly completed DDD is authoritative for completed activity periods; live F923 is
+ * authoritative for the current continuous-driving segment.
  */
 class ShiftStateRecoveryProvider : ContentProvider() {
     private var observer: FileObserver? = null
 
     override fun onCreate(): Boolean {
         val c = context ?: return false
-        reconcileLatest(c)
         val dir = c.getExternalFilesDir(null)
         if (dir != null) {
-            observer = object : FileObserver(dir, CLOSE_WRITE or MOVED_TO or CREATE) {
+            observer = object : FileObserver(dir, CLOSE_WRITE or MOVED_TO) {
                 override fun onEvent(event: Int, path: String?) {
+                    // Deliberately do NOT reconcile an existing DDD from onCreate().
+                    // Reconciliation is allowed only for a file that has just completed.
                     if (path?.endsWith(".ddd", ignoreCase = true) == true) reconcileLatest(c)
                 }
             }.also { it.startWatching() }
@@ -48,8 +49,9 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             val history = HistoryData.load(parsed)
             val seed = currentShiftSeed(history) ?: return
 
-            // F923 is the current continuous-driving segment. Keep only earlier driving in
-            // SHIFT_COMPLETED; otherwise the dashboard adds the same segment twice.
+            // F923 is the live current continuous-driving segment. The freshly read card can
+            // already contain some/all of that same segment, so keep only the earlier driving
+            // in SHIFT_COMPLETED. Never perform this subtraction with an old startup DDD.
             val liveContinuous = prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, 0).coerceAtLeast(0)
             val completedDriving = (seed.drivingMinutes - liveContinuous).coerceAtLeast(0)
 
@@ -60,7 +62,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 .putInt(DriverLiveService.WORK_WINDOW, seed.drivingMinutes + seed.workMinutes)
                 .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
                 .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
-                // Do not carry an F927 delta baseline across a process death/card download.
                 .putString(DriverLiveService.WORK_PREV_ACTIVITY, "—")
                 .putInt(DriverLiveService.WORK_PREV_DURATION, 0)
                 .putString(KEY_CARD_FINGERPRINT, fingerprint)
