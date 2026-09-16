@@ -8,16 +8,15 @@ import android.net.Uri
 import android.os.FileObserver
 
 /**
- * Repairs persisted live counters only after a NEW completed driver-card download.
+ * Reconciles live counters only after a NEW completed driver-card download.
  *
- * Important: an older DDD file must never be applied during process/application startup.
- * It describes the state at the time that card was read, not necessarily the current shift.
- * Applying it to a newer live F923 snapshot can manufacture a false SHIFT_COMPLETED value
- * (for example old shift driving 8:35 - cached F923 4:24 = false 4:11).
+ * Source hierarchy:
+ *  1. Fresh card history is authoritative for completed periods of the current shift.
+ *  2. Live DTCO is authoritative for the currently running period.
+ *  3. SharedPreferences are continuity storage only.
  *
- * SharedPreferences are continuity storage, not an authoritative tachograph source.
- * A freshly completed DDD is authoritative for completed activity periods; live F923 is
- * authoritative for the current continuous-driving segment.
+ * Never reconcile an old DDD at process startup: combining an old card total with a newer
+ * cached F923 can manufacture a value which never existed in the tachograph.
  */
 class ShiftStateRecoveryProvider : ContentProvider() {
     private var observer: FileObserver? = null
@@ -28,8 +27,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         if (dir != null) {
             observer = object : FileObserver(dir, CLOSE_WRITE or MOVED_TO) {
                 override fun onEvent(event: Int, path: String?) {
-                    // Deliberately do NOT reconcile an existing DDD from onCreate().
-                    // Reconciliation is allowed only for a file that has just completed.
                     if (path?.endsWith(".ddd", ignoreCase = true) == true) reconcileLatest(c)
                 }
             }.also { it.startWatching() }
@@ -49,16 +46,19 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             val history = HistoryData.load(parsed)
             val seed = currentShiftSeed(history) ?: return
 
-            // F923 is the live current continuous-driving segment. The freshly read card can
-            // already contain some/all of that same segment, so keep only the earlier driving
-            // in SHIFT_COMPLETED. Never perform this subtraction with an old startup DDD.
-            val liveContinuous = prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, 0).coerceAtLeast(0)
-            val completedDriving = (seed.drivingMinutes - liveContinuous).coerceAtLeast(0)
-
+            /*
+             * Do NOT subtract cached F923 from the card total. The cached snapshot can be from
+             * before/after the card read and therefore is not time-aligned with the DDD. That
+             * was the mechanism capable of manufacturing values such as 4:11.
+             *
+             * After a fresh card read, store the card's current-shift driving as the baseline.
+             * Set PREV_CONTINUOUS to zero so the first resumed live cycle only establishes its
+             * baseline and cannot immediately transfer an old F923 segment a second time.
+             */
             prefs.edit()
                 .putBoolean(DriverLiveService.SHIFT_INITIALIZED, true)
-                .putInt(DriverLiveService.SHIFT_COMPLETED, completedDriving)
-                .putInt(DriverLiveService.SHIFT_PREV_CONTINUOUS, liveContinuous)
+                .putInt(DriverLiveService.SHIFT_COMPLETED, seed.drivingMinutes)
+                .putInt(DriverLiveService.SHIFT_PREV_CONTINUOUS, 0)
                 .putInt(DriverLiveService.WORK_WINDOW, seed.drivingMinutes + seed.workMinutes)
                 .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
                 .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
@@ -85,7 +85,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val periods = latest.periods
 
         if (periods.isEmpty()) {
-            // Legacy fallback: only trust day totals if a cross-day qualifying rest is proven.
             val previous = days.getOrNull(days.lastIndex - 1)
             val gap = previous?.let { HistoryData.actualGapMinutes(it, latest) }
             if (previous != null && (gap == null || gap < DAILY_REST_MINUTES)) return null
@@ -97,8 +96,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             )
         }
 
-        // A >=9h REST inside the latest card day is a real shift boundary. Everything after
-        // it belongs to the new shift. This also handles two shifts that start on one date.
         val lastDailyRestIndex = periods.indexOfLast { it.type == "REST" && it.minutes >= DAILY_REST_MINUTES }
         val active = if (lastDailyRestIndex >= 0) periods.drop(lastDailyRestIndex + 1) else periods
         val firstActive = active.firstOrNull { it.type != "REST" }
