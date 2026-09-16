@@ -3,6 +3,7 @@ package com.pylikv.tachowatch
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.os.FileObserver
@@ -50,6 +51,12 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 .putString(KEY_SHIFT_ID, seed.id)
                 .putLong(KEY_RECONCILED_AT, System.currentTimeMillis())
                 .apply()
+
+            // The service may still hold the pre-read counters in RAM. If it survives the card
+            // read, its next live cycle would write those stale values back over the corrected
+            // preferences. Stop that paused instance; the normal post-read START recreates it
+            // and restoreState() then loads the authoritative card seed before live resumes.
+            context.stopService(Intent(context, DriverLiveService::class.java))
         }
     }
 
@@ -66,7 +73,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val days = model.days
         val latest = days.lastOrNull() ?: return null
         val periods = latest.periods
-        if (periods.isEmpty()) return null // totals alone cannot safely de-duplicate live F923
+        if (periods.isEmpty()) return null
 
         val lastDailyRestIndex = periods.indexOfLast { it.type == "REST" && it.minutes >= DAILY_REST_MINUTES }
         val active = if (lastDailyRestIndex >= 0) periods.drop(lastDailyRestIndex + 1) else periods
@@ -85,9 +92,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val tailRestMinutes = tailAfterDriving.filter { it.type == "REST" }.sumOf { it.minutes }
         val hasActiveNonRestAfterDriving = tailAfterDriving.any { it.type != "REST" }
 
-        // F923 still represents the last driving block while driving itself is current, and
-        // during a short break. After a qualifying 45-minute break (or a later non-rest block)
-        // that segment is treated as completed.
         val lastSegmentStillLive = lastDrivingIndex >= 0 && !hasActiveNonRestAfterDriving && tailRestMinutes < CONTINUOUS_BREAK_MINUTES
         val liveSegment = if (lastSegmentStillLive) lastDrivingMinutes else 0
         val completed = (driving - liveSegment).coerceAtLeast(0)
