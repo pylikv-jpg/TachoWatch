@@ -160,4 +160,25 @@ s = replace_once(s,
     "daily rest alert reset")
 p.write_text(s, encoding="utf-8")
 
-print("Applied Sep17 agreed fixes: card reconciliation, alert cycle, full history, compensation ledger UI")
+# 3) The production UI is DriverDashboardActivityV2. The previous Sep17 patch changed
+# the legacy dashboard only, which is why build 341 still displayed "3 weeks".
+p = Path("app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivityV2.kt")
+s = p.read_text(encoding="utf-8")
+s = replace_once(
+    s,
+    'val days=recentThreeWeeks(model?.days.orEmpty()).asReversed();c.addView(value("История · 3 недели",22f))',
+    'val days=model?.days.orEmpty().asReversed();c.addView(value("История · все считанные данные карты",22f))',
+    "V2 full card history"
+)
+s = replace_once(
+    s,
+    'c.addView(space(7));c.addView(sub("Все смены и отдыхи: ${days.size} смен"))',
+    'c.addView(space(7));c.addView(sub("Считано с карты: ${days.size} смен • без ограничения по неделям"))',
+    "V2 history count label"
+)
+old_rest_title = 'private fun restTitle(r:HistoryData.RestInfo):String=when{r.weekly&&r.compensationCreatedMinutes>0->"🛏 СОКРАЩЁННЫЙ НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}\\nКомпенсация ${HistoryData.fmt(r.compensationRemainingMinutes)} • до ${r.compensationDueDate?.let(HistoryData::prettyDate)?:"—"}";r.weekly->"🛏 НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";r.splitDaily->"🛏 РЕГУЛЯРНЫЙ РАЗДЕЛЁННЫЙ ОТДЫХ  3:00 + ${HistoryData.fmt(r.actualMinutes)}";r.creditedDailyMinutes==540->"🛏 СОКРАЩЁННЫЙ СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";else->"🛏 СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}"}'
+new_rest_title = 'private fun restTitle(r:HistoryData.RestInfo):String=when{r.weekly&&r.compensationCreatedMinutes>0&&r.compensationRemainingMinutes<=0->"🛏 СОКРАЩЁННЫЙ НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}\\n✓ Компенсация ${HistoryData.fmt(r.compensationCreatedMinutes)} • возмещена ${r.compensationPaidDate?.let(HistoryData::prettyDate)?:"—"}";r.weekly&&r.compensationCreatedMinutes>0->"🛏 СОКРАЩЁННЫЙ НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}\\n⚠ Компенсация ${HistoryData.fmt(r.compensationCreatedMinutes)} • не возмещена • до ${r.compensationDueDate?.let(HistoryData::prettyDate)?:"—"}";r.weekly->"🛏 НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";r.splitDaily->"🛏 РЕГУЛЯРНЫЙ РАЗДЕЛЁННЫЙ ОТДЫХ  3:00 + ${HistoryData.fmt(r.actualMinutes)}";r.creditedDailyMinutes==540->"🛏 СОКРАЩЁННЫЙ СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";else->"🛏 СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}"}'
+s = replace_once(s, old_rest_title, new_rest_title, "V2 permanent compensation status")
+p.write_text(s, encoding="utf-8")
+
+print("Applied Sep17 agreed fixes: card reconciliation, alert cycle, full history, compensation ledger UI, active V2 history")
