@@ -2,7 +2,6 @@ from pathlib import Path
 
 # Applied at build time after the legacy compatibility scripts. Keep the patch small and
 # fail loudly when an expected anchor changes so CI cannot silently ship a partial fix.
-
 def replace_once(s: str, old: str, new: str, label: str) -> str:
     if old not in s:
         raise SystemExit(f"Sep17 patch anchor not found: {label}")
@@ -35,8 +34,8 @@ new_gap = '''                HistoryData.gapMinutes(days[i + 1], day)?.let { gap
                         val base = if (gap >= 24 * 60) "🛏 Недельный отдых  ${HistoryData.fmt(gap)}" else "🛏 Межсуточный отдых  ${HistoryData.fmt(gap)}"
                         val compensation = when {
                             rest == null || rest.compensationCreatedMinutes <= 0 -> ""
-                            rest.compensationRemainingMinutes > 0 -> "\nКомпенсация ${HistoryData.fmt(rest.compensationCreatedMinutes)} • требуется до ${rest.compensationDueDate ?: "—"}"
-                            else -> "\nКомпенсация ${HistoryData.fmt(rest.compensationCreatedMinutes)} • возмещена ${rest.compensationPaidDate ?: "—"}"
+                            rest.compensationRemainingMinutes > 0 -> "\\nКомпенсация ${HistoryData.fmt(rest.compensationCreatedMinutes)} • требуется до ${rest.compensationDueDate ?: "—"}"
+                            else -> "\\nКомпенсация ${HistoryData.fmt(rest.compensationCreatedMinutes)} • возмещена ${rest.compensationPaidDate ?: "—"}"
                         }
                         text = base + compensation
                         textSize = 14f; gravity = Gravity.CENTER; setTextColor(if (gap >= 24 * 60) CYAN else MUTED); setPadding(0, dp(7), 0, dp(7))
