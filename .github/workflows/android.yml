@@ -65,6 +65,12 @@ jobs:
       - name: Apply Sep 17 counter repair
         run: python3 tools/apply_sep17_counter_repair.py
 
+      - name: Apply build 347 independent shift-driving counter
+        run: python3 tools/apply_shift_driving_v347.py
+
+      - name: Apply final F99A daily-driving source
+        run: python3 tools/apply_f99a_shift_fix.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
