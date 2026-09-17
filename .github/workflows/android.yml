@@ -62,6 +62,9 @@ jobs:
       - name: Apply Sep 17 agreed runtime fixes
         run: python3 tools/apply_sep17_agreed_fixes.py
 
+      - name: Apply Sep 17 counter repair
+        run: python3 tools/apply_sep17_counter_repair.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
