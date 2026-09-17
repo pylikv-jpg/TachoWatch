@@ -7,12 +7,11 @@ class IndependentCounterEngineTest {
     private fun e(k: IndependentCounterEngine.Kind, m: Int) = IndependentCounterEngine.Event(k, m)
 
     @Test fun sep17ShiftDrivingStays749AcrossBreaks() {
-        val K = IndependentCounterEngine.Kind
         val s = IndependentCounterEngine.fromHistory(listOf(
-            e(K.WORK,8), e(K.DRIVING,258), e(K.REST,51), e(K.DRIVING,178),
-            e(K.REST,123), e(K.DRIVING,1), e(K.REST,9), e(K.DRIVING,4),
-            e(K.AVAILABILITY,13), e(K.WORK,8), e(K.DRIVING,1), e(K.WORK,6),
-            e(K.REST,35), e(K.WORK,1), e(K.DRIVING,27)
+            e(IndependentCounterEngine.Kind.WORK,8), e(IndependentCounterEngine.Kind.DRIVING,258), e(IndependentCounterEngine.Kind.REST,51), e(IndependentCounterEngine.Kind.DRIVING,178),
+            e(IndependentCounterEngine.Kind.REST,123), e(IndependentCounterEngine.Kind.DRIVING,1), e(IndependentCounterEngine.Kind.REST,9), e(IndependentCounterEngine.Kind.DRIVING,4),
+            e(IndependentCounterEngine.Kind.AVAILABILITY,13), e(IndependentCounterEngine.Kind.WORK,8), e(IndependentCounterEngine.Kind.DRIVING,1), e(IndependentCounterEngine.Kind.WORK,6),
+            e(IndependentCounterEngine.Kind.REST,35), e(IndependentCounterEngine.Kind.WORK,1), e(IndependentCounterEngine.Kind.DRIVING,27)
         ))
         assertEquals(469, s.shiftDriving) // 7:49
         assertEquals(23, s.otherWork)
@@ -21,16 +20,23 @@ class IndependentCounterEngineTest {
     }
 
     @Test fun fortyFiveResetsContinuousCountersButNeverShiftDriving() {
-        val K = IndependentCounterEngine.Kind
-        val s = IndependentCounterEngine.fromHistory(listOf(e(K.DRIVING,240),e(K.REST,45),e(K.DRIVING,30)))
+        val s = IndependentCounterEngine.fromHistory(listOf(
+            e(IndependentCounterEngine.Kind.DRIVING,240),
+            e(IndependentCounterEngine.Kind.REST,45),
+            e(IndependentCounterEngine.Kind.DRIVING,30)
+        ))
         assertEquals(270, s.shiftDriving)
         assertEquals(30, s.continuousDriving)
         assertEquals(30, s.continuousWork)
     }
 
     @Test fun dailyRestStartsNewShiftAndResetsWorkTotals() {
-        val K = IndependentCounterEngine.Kind
-        val s = IndependentCounterEngine.fromHistory(listOf(e(K.DRIVING,480),e(K.WORK,12),e(K.REST,540),e(K.DRIVING,60)))
+        val s = IndependentCounterEngine.fromHistory(listOf(
+            e(IndependentCounterEngine.Kind.DRIVING,480),
+            e(IndependentCounterEngine.Kind.WORK,12),
+            e(IndependentCounterEngine.Kind.REST,540),
+            e(IndependentCounterEngine.Kind.DRIVING,60)
+        ))
         assertEquals(60, s.shiftDriving)
         assertEquals(60, s.continuousDriving)
         assertEquals(60, s.continuousWork)
