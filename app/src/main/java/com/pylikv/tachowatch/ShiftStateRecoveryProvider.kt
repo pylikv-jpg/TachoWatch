@@ -35,13 +35,16 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             if (parsed.error != null) return
             val seed = currentShiftSeed(HistoryData.load(parsed)) ?: return
 
-            // SHIFT_COMPLETED contains only driving that is no longer represented by F923.
-            // The last driving block remains represented by F923 while a short (<45 min) break
-            // is running, so that block must not also be placed in SHIFT_COMPLETED.
+            // Card read is the authoritative checkpoint for shift driving.
+            // SHIFT_COMPLETED now stores the complete shift-driving total at the checkpoint.
+            // SHIFT_PREV_CONTINUOUS is only the live F923 delta anchor from that moment.
             prefs.edit()
                 .putBoolean(DriverLiveService.SHIFT_INITIALIZED, true)
-                .putInt(DriverLiveService.SHIFT_COMPLETED, seed.completedDrivingMinutes)
-                .putInt(DriverLiveService.SHIFT_PREV_CONTINUOUS, seed.liveDrivingSegmentMinutes)
+                .putInt(DriverLiveService.SHIFT_COMPLETED, seed.drivingMinutes)
+                .putInt(
+                    DriverLiveService.SHIFT_PREV_CONTINUOUS,
+                    prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, seed.liveDrivingSegmentMinutes)
+                )
                 .putInt(DriverLiveService.WORK_WINDOW, seed.drivingMinutes + seed.workMinutes)
                 .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
                 .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
