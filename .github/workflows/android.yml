@@ -65,6 +65,9 @@ jobs:
       - name: Apply Sep 17 counter repair
         run: python3 tools/apply_sep17_counter_repair.py
 
+      - name: Apply Sep 18 shift and work repair
+        run: python3 tools/apply_sep18_shift_work_fix.py
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
