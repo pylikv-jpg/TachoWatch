@@ -370,7 +370,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
     private fun activeWorkTotal(): Int = workWindowMinutes
 
-    private fun shiftDrivingTotal(): Int = shiftCompletedMinutes + continuousMinutes
+    private fun shiftDrivingTotal(): Int = shiftCompletedMinutes
 
     private fun evaluateAlerts() {
         evaluateRemaining("cont", 270 - continuousMinutes, "непрерывного вождения", "Лимит непрерывного вождения 4 часа 30 минут достигнут")
