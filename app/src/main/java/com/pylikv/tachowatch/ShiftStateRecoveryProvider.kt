@@ -35,14 +35,11 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             if (parsed.error != null) return
             val seed = currentShiftSeed(HistoryData.load(parsed)) ?: return
 
-            // SHIFT_COMPLETED contains only driving that is no longer represented by F923.
-            // The last driving block remains represented by F923 while a short (<45 min) break
-            // is running, so that block must not also be placed in SHIFT_COMPLETED.
             prefs.edit()
                 .putBoolean(DriverLiveService.SHIFT_INITIALIZED, true)
                 .putInt(DriverLiveService.SHIFT_COMPLETED, seed.completedDrivingMinutes)
                 .putInt(DriverLiveService.SHIFT_PREV_CONTINUOUS, seed.liveDrivingSegmentMinutes)
-                .putInt(DriverLiveService.WORK_WINDOW, seed.drivingMinutes + seed.workMinutes)
+                .putInt(DriverLiveService.WORK_WINDOW, seed.activeWorkWindowMinutes)
                 .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
                 .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
                 .putString(DriverLiveService.WORK_PREV_ACTIVITY, "—")
@@ -52,10 +49,8 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 .putLong(KEY_RECONCILED_AT, System.currentTimeMillis())
                 .apply()
 
-            // The service may still hold the pre-read counters in RAM. If it survives the card
-            // read, its next live cycle would write those stale values back over the corrected
-            // preferences. Stop that paused instance; the normal post-read START recreates it
-            // and restoreState() then loads the authoritative card seed before live resumes.
+            // The service may still hold pre-read counters in RAM. Recreate it after the card
+            // read so the authoritative card seed is loaded before live polling resumes.
             context.stopService(Intent(context, DriverLiveService::class.java))
         }
     }
@@ -65,6 +60,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val drivingMinutes: Int,
         val completedDrivingMinutes: Int,
         val liveDrivingSegmentMinutes: Int,
+        val activeWorkWindowMinutes: Int,
         val workMinutes: Int,
         val availabilityMinutes: Int
     )
@@ -101,9 +97,39 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             drivingMinutes = driving,
             completedDrivingMinutes = completed,
             liveDrivingSegmentMinutes = liveSegment,
+            activeWorkWindowMinutes = activeWorkWindow(active),
             workMinutes = active.filter { it.type == "WORK" }.sumOf { it.minutes },
             availabilityMinutes = active.filter { it.type == "AVAILABILITY" }.sumOf { it.minutes }
         )
+    }
+
+    /**
+     * Rebuild the six-hour working-time window from card periods instead of seeding it with
+     * all work since the start of the shift. Driving and OTHER WORK count; availability does
+     * not. Working-time breaks are separate from the 4:30 driving-break state machine.
+     */
+    private fun activeWorkWindow(periods: List<HistoryData.ActivityPeriod>): Int {
+        var workWindow = 0
+        var qualifyingBreak = 0
+        for (period in periods) {
+            when (period.type) {
+                "DRIVING", "WORK" -> {
+                    workWindow += period.minutes
+                }
+                "REST" -> {
+                    if (period.minutes >= MIN_BREAK_PART_MINUTES) {
+                        qualifyingBreak += period.minutes
+                        if (qualifyingBreak >= WORK_BREAK_MINUTES) {
+                            workWindow = 0
+                            qualifyingBreak = 0
+                        }
+                    }
+                }
+                // Availability is excluded from working time and is not itself a break.
+                "AVAILABILITY" -> Unit
+            }
+        }
+        return workWindow
     }
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
@@ -115,6 +141,8 @@ class ShiftStateRecoveryProvider : ContentProvider() {
     companion object {
         private const val DAILY_REST_MINUTES = 9 * 60
         private const val CONTINUOUS_BREAK_MINUTES = 45
+        private const val MIN_BREAK_PART_MINUTES = 15
+        private const val WORK_BREAK_MINUTES = 30
         const val KEY_RECONCILED_AT = "recovery_reconciled_at"
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"
         private const val KEY_SHIFT_ID = "recovery_shift_id"

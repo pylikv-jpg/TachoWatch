@@ -99,6 +99,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var continuousMinutes = 0
     private var breakMinutes = 0
     private var twoWeekMinutes = 0
+    private var directDailyDrivingMinutes: Int? = null
     private var lastProcessedCycle = 0
 
     private var shiftCounterInitialized = false
@@ -204,6 +205,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     override fun onLiveConnection(isConnected: Boolean, name: String?) {
         connected = isConnected
         deviceName = name
+        // LiveDidDiagnostic restarts its cycle numbering after every BLE reconnect.
+        // Reset the service-side gate as well, otherwise cycles 1..N are silently ignored
+        // until they exceed the number seen before the disconnect.
+        if (isConnected) lastProcessedCycle = 0
         updateServiceNotification(if (isConnected) "DTCO подключён • контроль лимитов активен" else "Связь потеряна • переподключение…")
         listeners.forEach { it.onLiveConnection(isConnected, name) }
     }
@@ -215,6 +220,9 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         mins(last(log, "F923"))?.let { continuousMinutes = it }
         mins(last(log, "F925"))?.let { breakMinutes = it }
         mins(last(log, "F938"))?.let { twoWeekMinutes = it }
+        // F99A is the tachograph's own current daily-driving counter. When supported it is
+        // authoritative and already includes any number of driving segments in this shift.
+        mins(last(log, "F99A"))?.let { directDailyDrivingMinutes = it }
 
         val cycle = Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()
             ?.groupValues?.getOrNull(1)?.toIntOrNull()
@@ -267,9 +275,9 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         val restNow = isRest(currentActivity)
         val restMinutes = if (restNow) maxOf(activityMinutes, breakMinutes) else 0
 
-        // Keep the 318 shift-driving behaviour: a reset of F923 transfers the completed
-        // continuous-driving segment into the daily-shift accumulator. 45 min itself never
-        // resets the shift total; only a completed daily rest does.
+        // F923 is only a continuous-driving counter. This fallback keeps every completed
+        // F923 segment; there is no two-segment limit. F99A, when available, is used instead
+        // by shiftDrivingTotal() and therefore cannot lose earlier driving blocks.
         if (!shiftCounterInitialized) {
             previousContinuousMinutes = continuousMinutes
             shiftCounterInitialized = true
@@ -283,6 +291,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         if (restMinutes >= 9 * 60) {
             shiftCompletedMinutes = 0
             previousContinuousMinutes = continuousMinutes
+            directDailyDrivingMinutes = 0
             workWindowMinutes = 0
             otherWorkWindowMinutes = 0
             availabilityWindowMinutes = 0
@@ -301,8 +310,6 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         if (previousActivity == "—") {
             previousActivity = currentActivity
             previousActivityDuration = sourceNow
-            // If monitoring starts in the middle of an active segment, initialise from the
-            // tachograph's current segment duration instead of showing zero.
             when {
                 isDriving(currentActivity) -> workWindowMinutes = maxOf(workWindowMinutes, sourceNow)
                 isOtherWork(currentActivity) -> {
@@ -312,23 +319,29 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                 isAvailability(currentActivity) -> availabilityWindowMinutes = maxOf(availabilityWindowMinutes, sourceNow)
             }
         } else if (previousActivity == currentActivity) {
-            val delta = (sourceNow - previousActivityDuration).coerceAtLeast(0)
-            when {
-                isDriving(currentActivity) -> workWindowMinutes += delta
-                isOtherWork(currentActivity) -> {
-                    workWindowMinutes += delta
-                    otherWorkWindowMinutes += delta
+            // A counter may restart after a qualifying break or reconnect. Never keep an old
+            // baseline above the new source value, otherwise this window freezes for hours.
+            if (sourceNow < previousActivityDuration) {
+                previousActivityDuration = sourceNow
+            } else {
+                val delta = sourceNow - previousActivityDuration
+                when {
+                    isDriving(currentActivity) -> workWindowMinutes += delta
+                    isOtherWork(currentActivity) -> {
+                        workWindowMinutes += delta
+                        otherWorkWindowMinutes += delta
+                    }
+                    isAvailability(currentActivity) -> availabilityWindowMinutes += delta
                 }
-                isAvailability(currentActivity) -> availabilityWindowMinutes += delta
+                previousActivityDuration = sourceNow
             }
-            previousActivityDuration = sourceNow
         } else {
             previousActivity = currentActivity
             previousActivityDuration = sourceNow
         }
 
-        // A single 15-minute part is valid as part of a statutory break, but it does not by
-        // itself satisfy the 30-minute interruption required once working time reaches 6 h.
+        // Working-time break rule is intentionally separate from the 4:30 driving rule.
+        // A 30-minute working-time interruption is not treated as a 45-minute driving break.
         if (restMinutes >= 30) {
             workWindowMinutes = 0
             clearAlertGroup("work_")
@@ -345,7 +358,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
     private fun activeWorkTotal(): Int = workWindowMinutes
 
-    private fun shiftDrivingTotal(): Int = shiftCompletedMinutes + continuousMinutes
+    private fun shiftDrivingTotal(): Int = directDailyDrivingMinutes ?: (shiftCompletedMinutes + continuousMinutes)
 
     private fun evaluateAlerts() {
         evaluateRemaining("cont", 270 - continuousMinutes, "непрерывного вождения", "Лимит непрерывного вождения 4 часа 30 минут достигнут")
