@@ -109,21 +109,8 @@ new_cycle='''    private fun processCycle() {
 '''
 s=s[:start]+new_cycle+s[end:]
 
-# The legacy bookkeeping path must no longer decide when CONTINUOUS WORK resets.
-# Its 30-minute reset used to corrupt the independent 6h counter.
-s=replace_once(s,
-'''        if (restMinutes >= 30) {
-            workWindowMinutes = 0
-            clearAlertGroup("work_")
-        }
-        if (restMinutes >= 45) {
-            clearAlertGroup("cont_")
-        }''',
-'''        // Continuous-work reset is owned exclusively by ContinuousWorkCounter (45 min).
-        if (restMinutes >= 45) {
-            clearAlertGroup("cont_")
-        }''',
-"remove legacy 30m work reset")
+# The older Sep18 patch has already removed the legacy 30-minute work reset.
+# ContinuousWorkCounter is now the sole owner of the 45-minute reset.
 
 p.write_text(s,encoding="utf-8")
 print("Applied independent shift-driving and continuous-work engines")
