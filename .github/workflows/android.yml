@@ -71,9 +71,6 @@ jobs:
       - name: Apply shift-driving checkpoint model
         run: python3 tools/apply_sep18_shift_checkpoint_fix.py
 
-      - name: Separate shift-driving and continuous-work counters
-        run: python3 tools/apply_sep18_independent_counters.py
-
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
