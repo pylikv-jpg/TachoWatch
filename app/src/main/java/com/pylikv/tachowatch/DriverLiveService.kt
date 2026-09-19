@@ -33,7 +33,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         private const val CHANNEL_SERVICE = "driver_live_service"
         private const val CHANNEL_ALERTS = "driver_limit_alerts"
         private const val NOTIFICATION_ID = 1401
-        private const val ALERT_NOTIFICATION_ID = 1402
+        const val ALERT_NOTIFICATION_ID = 1402
 
         const val PREFS = "tachowatch_auto_card"
         const val SELECTED_DTCO = "selected_dtco_address"
@@ -424,16 +424,27 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
     private fun fireOnce(key: String, text: String) {
         val p = prefs()
-        val prefKey = "alert_fired_$key"
-        if (p.getBoolean(prefKey, false)) return
-        p.edit().putBoolean(prefKey, true).apply()
-        showAlert(text)
+        val ackKey = "alert_ack_$key"
+        val shownKey = "alert_shown_$key"
+        if (p.getBoolean(ackKey, false) || p.getBoolean(shownKey, false)) return
+
+        // Mark this threshold as shown before presenting it so every DTCO refresh
+        // cannot create another copy of the same warning.
+        p.edit().putBoolean(shownKey, true).apply()
+        showAlert(key, text)
         speak(text)
     }
 
     private fun clearAlertGroup(group: String) {
         val p = prefs()
-        val keys = listOf("30", "15", "5", "0", "60").map { "alert_fired_${group}$it" }
+        val suffixes = listOf("30", "15", "5", "0", "60")
+        val keys = buildList {
+            suffixes.forEach { suffix ->
+                add("alert_fired_${group}$suffix") // migration from older builds
+                add("alert_ack_${group}$suffix")
+                add("alert_shown_${group}$suffix")
+            }
+        }
         if (keys.none(p::contains)) return
         val editor = p.edit()
         keys.forEach(editor::remove)
@@ -454,9 +465,9 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         } catch (_: Throwable) {}
     }
 
-    private fun showAlert(text: String) {
+    private fun showAlert(key: String, text: String) {
         val manager = getSystemService(NotificationManager::class.java)
-        try { manager.notify(ALERT_NOTIFICATION_ID, alertNotification(text)) } catch (_: Throwable) {}
+        try { manager.notify(ALERT_NOTIFICATION_ID, alertNotification(key, text)) } catch (_: Throwable) {}
     }
 
     private fun createChannels() {
@@ -491,17 +502,34 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         .setCategory(NotificationCompat.CATEGORY_SERVICE)
         .build()
 
-    private fun alertNotification(text: String): Notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
-        .setSmallIcon(android.R.drawable.stat_notify_error)
-        .setContentTitle("TachoWatch • предупреждение")
-        .setContentText(text)
-        .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-        .setContentIntent(launchPendingIntent())
-        .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setCategory(NotificationCompat.CATEGORY_ALARM)
-        .setAutoCancel(true)
-        .setDefaults(NotificationCompat.DEFAULT_ALL)
-        .build()
+    private fun alertNotification(key: String, text: String): Notification {
+        val alertIntent = Intent(this, LimitAlertActivity::class.java)
+            .putExtra(LimitAlertActivity.EXTRA_ALERT_KEY, key)
+            .putExtra(LimitAlertActivity.EXTRA_ALERT_TEXT, text)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
+        val requestCode = key.hashCode() and 0x7fffffff
+        val fullScreen = PendingIntent.getActivity(
+            this,
+            requestCode,
+            alertIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ALERTS)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("TachoWatch • требуется подтверждение")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(fullScreen)
+            .setFullScreenIntent(fullScreen, true)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .build()
+    }
 
     private fun updateServiceNotification(text: String) {
         try { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, serviceNotification(text)) } catch (_: Throwable) {}
