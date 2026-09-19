@@ -27,8 +27,10 @@ class ContinuousWorkCounterTest {
 
     @Test
     fun cardSeedPlusCurrentOpenOtherWorkAreAdded() {
+        // Consistent checkpoint: 60 min DRIVING + 10 min completed OTHER WORK.
+        // The open 15 min OTHER WORK segment from F927 must be added on top.
         val state = ContinuousWorkCounter.State(
-            workMinutes = 60,
+            workMinutes = 70,
             otherWorkMinutes = 10,
             previousActivity = "—",
             previousSourceMinutes = 0
@@ -42,7 +44,7 @@ class ContinuousWorkCounterTest {
             qualifyingRestMinutes = 0
         )
 
-        assertEquals(75, result.workMinutes)
+        assertEquals(85, result.workMinutes)
         assertEquals(25, result.otherWorkMinutes)
     }
 
@@ -68,7 +70,7 @@ class ContinuousWorkCounterTest {
     }
 
     @Test
-    fun driveWorkDriveUsesCurrentF927SegmentNotCumulativeF923() {
+    fun driveWorkDriveUsesF923ForDrivingAndIgnoresStaleDrivingF927() {
         var state = ContinuousWorkCounter.State(
             workMinutes = 0,
             otherWorkMinutes = 0,
@@ -93,13 +95,45 @@ class ContinuousWorkCounterTest {
         state = ContinuousWorkCounter.update(
             state = state,
             currentActivity = "ВОЖДЕНИЕ",
-            activityMinutes = 5,
+            // Simulate the real failure mode: F927 still carries a large value when
+            // the activity has already switched back to DRIVING.
+            activityMinutes = 35,
             continuousDrivingMinutes = 65,
             qualifyingRestMinutes = 0
         )
 
         assertEquals(75, state.workMinutes)
         assertEquals(10, state.otherWorkMinutes)
+    }
+
+    @Test
+    fun otherWorkContinuesFromF927WithoutChangingDrivingContribution() {
+        var state = ContinuousWorkCounter.State(
+            workMinutes = 60,
+            otherWorkMinutes = 0,
+            previousActivity = "ВОЖДЕНИЕ",
+            previousSourceMinutes = 60
+        )
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 5,
+            continuousDrivingMinutes = 60,
+            qualifyingRestMinutes = 0
+        )
+        assertEquals(65, state.workMinutes)
+        assertEquals(5, state.otherWorkMinutes)
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 7,
+            continuousDrivingMinutes = 60,
+            qualifyingRestMinutes = 0
+        )
+        assertEquals(67, state.workMinutes)
+        assertEquals(7, state.otherWorkMinutes)
     }
 
     @Test
