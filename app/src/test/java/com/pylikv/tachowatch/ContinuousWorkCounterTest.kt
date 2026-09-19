@@ -27,8 +27,10 @@ class ContinuousWorkCounterTest {
 
     @Test
     fun cardSeedPlusCurrentOpenOtherWorkAreAdded() {
+        // Consistent checkpoint: 60 min DRIVING + 10 min completed OTHER WORK.
+        // The open 15 min OTHER WORK segment from F927 must be added on top.
         val state = ContinuousWorkCounter.State(
-            workMinutes = 60,
+            workMinutes = 70,
             otherWorkMinutes = 10,
             previousActivity = "—",
             previousSourceMinutes = 0
@@ -42,7 +44,7 @@ class ContinuousWorkCounterTest {
             qualifyingRestMinutes = 0
         )
 
-        assertEquals(75, result.workMinutes)
+        assertEquals(85, result.workMinutes)
         assertEquals(25, result.otherWorkMinutes)
     }
 
