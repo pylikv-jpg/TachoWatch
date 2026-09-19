@@ -68,6 +68,41 @@ class ContinuousWorkCounterTest {
     }
 
     @Test
+    fun driveWorkDriveUsesCurrentF927SegmentNotCumulativeF923() {
+        var state = ContinuousWorkCounter.State(
+            workMinutes = 0,
+            otherWorkMinutes = 0,
+            previousActivity = "—",
+            previousSourceMinutes = 0
+        )
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ВОЖДЕНИЕ",
+            activityMinutes = 60,
+            continuousDrivingMinutes = 60,
+            qualifyingRestMinutes = 0
+        )
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 10,
+            continuousDrivingMinutes = 60,
+            qualifyingRestMinutes = 0
+        )
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ВОЖДЕНИЕ",
+            activityMinutes = 5,
+            continuousDrivingMinutes = 65,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(75, state.workMinutes)
+        assertEquals(10, state.otherWorkMinutes)
+    }
+
+    @Test
     fun fortyFiveMinuteBreakResetsContinuousWork() {
         val state = ContinuousWorkCounter.State(
             workMinutes = 180,
