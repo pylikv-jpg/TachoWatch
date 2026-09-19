@@ -116,9 +116,9 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     }
 
     private fun buildHistoryView(){
-        historyRoot.removeAllViews();val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};val model=history;val days=recentThreeWeeks(model?.days.orEmpty()).asReversed();c.addView(value("История · 3 недели",22f))
+        historyRoot.removeAllViews();val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};val model=history;val days=model?.days.orEmpty().asReversed();c.addView(value("История · все считанные данные карты",22f))
         val previous=model?.previousWeekDrivingMinutes?:0;val current=currentWeekDriving();val total=previous+current;val remaining=(90*60-total).coerceAtLeast(0)
-        val summary=card();summary.addView(label("ДВЕ ПОСЛЕДОВАТЕЛЬНЫЕ НЕДЕЛИ"));summary.addView(value("${HistoryData.fmt(total)} из 90:00",24f));summary.addView(sub("Предыдущая ${HistoryData.fmt(previous)} • текущая ${HistoryData.fmt(current)} • осталось ${HistoryData.fmt(remaining)}"));val reduced=usedReducedDailyRests();summary.addView(sub("Сокращённые суточные отдыхи: $reduced/3 использовано • ${(3-reduced).coerceAtLeast(0)} осталось"));summary.addView(sub("10-часовые вождения на этой неделе: ${currentWeekTenHourUses()}/2"));c.addView(summary);c.addView(space(7));c.addView(sub("Все смены и отдыхи: ${days.size} смен"))
+        val summary=card();summary.addView(label("ДВЕ ПОСЛЕДОВАТЕЛЬНЫЕ НЕДЕЛИ"));summary.addView(value("${HistoryData.fmt(total)} из 90:00",24f));summary.addView(sub("Предыдущая ${HistoryData.fmt(previous)} • текущая ${HistoryData.fmt(current)} • осталось ${HistoryData.fmt(remaining)}"));val reduced=usedReducedDailyRests();summary.addView(sub("Сокращённые суточные отдыхи: $reduced/3 использовано • ${(3-reduced).coerceAtLeast(0)} осталось"));summary.addView(sub("10-часовые вождения на этой неделе: ${currentWeekTenHourUses()}/2"));c.addView(summary);c.addView(space(7));c.addView(sub("Считано с карты: ${days.size} смен • без ограничения по неделям"))
         if(days.isEmpty())c.addView(value("История появится после полного считывания карты",17f))
         days.forEachIndexed{i,day->val box=card();val details=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};val head=TextView(this).apply{text="${prettyDate(day.date)}  •  ${day.startTime?:"—"}–${day.endTime?:"—"}   ▾";textSize=18f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setPadding(0,dp(4),0,dp(4));setOnClickListener{details.visibility=if(details.visibility==View.VISIBLE)View.GONE else View.VISIBLE}};box.addView(head);box.addView(sub("${flag(day.startCountry)} ${day.startCountry?:"—"} → ${flag(day.endCountry)} ${day.endCountry?:"—"} • смена ${day.shiftMinutes?.let(HistoryData::fmt)?:"—"}"));box.addView(value("🚗 ${HistoryData.fmt(day.drivingMinutes)}  ⚒ ${HistoryData.fmt(day.workMinutes)}  ✉ ${HistoryData.fmt(day.availabilityMinutes)}",18f));details.addView(label("ПОДРОБНЫЙ ОТЧЁТ ПО ВИДАМ РАБОТ"));val shiftPeriods=periodsInsideShift(day);if(shiftPeriods.isEmpty())details.addView(sub("Подробные периоды отсутствуют в считанных данных карты"));shiftPeriods.forEach{p->details.addView(sub("${activityIcon(p.type)} ${p.startTime}  ${activityName(p.type)}  •  ${HistoryData.fmt(p.minutes)}"))};details.addView(sub("Открытие: ${day.startTime?:"—"} ${flag(day.startCountry)} ${day.startCountry?:"—"}"));details.addView(sub("Закрытие: ${day.endTime?:"—"} ${flag(day.endCountry)} ${day.endCountry?:"—"}"));box.addView(details);c.addView(box);c.addView(space(7));if(i<days.lastIndex){val older=days[i+1];model?.restBetween(older,day)?.let{rest->c.addView(TextView(this).apply{text=restTitle(rest);textSize=14f;gravity=Gravity.CENTER;setTextColor(if(rest.weekly)CYAN else if(rest.creditedDailyMinutes==540)YELLOW else MUTED);setPadding(dp(6),dp(7),dp(6),dp(7))})}}}
         scroll.addView(c);historyRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
@@ -126,7 +126,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
 
     private fun recentThreeWeeks(days:List<HistoryData.Day>):List<HistoryData.Day>{val latest=days.lastOrNull()?.date?.let(::parseDateOnly)?:return emptyList();val cutoff=Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply{time=latest;add(Calendar.DAY_OF_MONTH,-20)}.time;return days.filter{(parseDateOnly(it.date)?:Date(0)).time>=cutoff.time}}
     private fun usedReducedDailyRests():Int{val rests=history?.rests.orEmpty();val after=rests.indexOfLast{it.weekly};return rests.drop(after+1).count{!it.weekly&&!it.splitDaily&&it.creditedDailyMinutes==540}}
-    private fun restTitle(r:HistoryData.RestInfo):String=when{r.weekly&&r.compensationCreatedMinutes>0->"🛏 СОКРАЩЁННЫЙ НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}\nКомпенсация ${HistoryData.fmt(r.compensationRemainingMinutes)} • до ${r.compensationDueDate?.let(HistoryData::prettyDate)?:"—"}";r.weekly->"🛏 НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";r.splitDaily->"🛏 РЕГУЛЯРНЫЙ РАЗДЕЛЁННЫЙ ОТДЫХ  3:00 + ${HistoryData.fmt(r.actualMinutes)}";r.creditedDailyMinutes==540->"🛏 СОКРАЩЁННЫЙ СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";else->"🛏 СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}"}
+    private fun restTitle(r:HistoryData.RestInfo):String=when{r.weekly&&r.compensationCreatedMinutes>0&&r.compensationRemainingMinutes<=0->"🛏 СОКРАЩЁННЫЙ НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}\n✓ Компенсация ${HistoryData.fmt(r.compensationCreatedMinutes)} • возмещена ${r.compensationPaidDate?.let(HistoryData::prettyDate)?:"—"}";r.weekly&&r.compensationCreatedMinutes>0->"🛏 СОКРАЩЁННЫЙ НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}\n⚠ Компенсация ${HistoryData.fmt(r.compensationCreatedMinutes)} • не возмещена • до ${r.compensationDueDate?.let(HistoryData::prettyDate)?:"—"}";r.weekly->"🛏 НЕДЕЛЬНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";r.splitDaily->"🛏 РЕГУЛЯРНЫЙ РАЗДЕЛЁННЫЙ ОТДЫХ  3:00 + ${HistoryData.fmt(r.actualMinutes)}";r.creditedDailyMinutes==540->"🛏 СОКРАЩЁННЫЙ СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}";else->"🛏 СУТОЧНЫЙ ОТДЫХ  ${HistoryData.fmt(r.actualMinutes)}"}
     private fun activityName(type:String)=when(type){"DRIVING"->"Вождение";"WORK"->"Другая работа";"AVAILABILITY"->"Ожидание / готовность";"REST"->"Отдых / пауза";else->type}
     private fun activityIcon(type:String)=when(type){"DRIVING"->"🚗";"WORK"->"⚒";"AVAILABILITY"->"✉";"REST"->"🛏";else->"•"}
     private fun periodsInsideShift(day:HistoryData.Day):List<HistoryData.ActivityPeriod>{val start=day.startTime?.let(::clockValue)?:return day.periods;val length=day.shiftMinutes?:return day.periods;return day.periods.filter{((clockValue(it.startTime)-start+1440)%1440)<length}}
@@ -160,8 +160,43 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:"DTCO"}catch(_:Throwable){"DTCO"}
 
     private fun startCardRead(reason:String,resume:Boolean){if(cardReading)return;val d=dtco?:return;cardReading=true;resumeLive=resume;status.text="Считывание карты • $reason";DriverLiveService.pause(applicationContext);handler.postDelayed({cardReader.connect(d)},500)}
-    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{if(cardReading)return@runOnUiThread;if(connected){status.text="Онлайн • ${deviceName?:"DTCO"}";status.setTextColor(GREEN);if(!prefs.getBoolean(FIRST_READ,false)&&!initialReadAttemptedThisSession){initialReadAttemptedThisSession=true;handler.postDelayed({if(!cardReading)startCardRead("Первое успешное подключение",true)},800)}}else{status.text="Связь потеряна • автоматическое переподключение…";status.setTextColor(YELLOW)}}}
-    override fun onLiveLog(log:String){runOnUiThread{last(log,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}};last(log,"F903")?.let{currentActivity=it};mins(last(log,"F927"))?.let{activityMinutes=it};mins(last(log,"F923"))?.let{continuousMinutes=it};mins(last(log,"F925"))?.let{breakMinutes=it};mins(last(log,"F938"))?.let{twoWeekMinutes=it};val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull();if(cycle!=null&&cycle>lastProcessedCycle){lastProcessedCycle=cycle;restoreCounters();restoreSnapshot();status.text="Онлайн • данные актуальны"};updateNow()}}
+    override fun onLiveConnection(connected:Boolean,deviceName:String?){runOnUiThread{
+        if(cardReading)return@runOnUiThread
+        if(connected){
+            // LiveDidDiagnostic restarts its cycle numbering from #1 after every reconnect.
+            // Reset the UI epoch too, otherwise fresh cycles can be ignored for many minutes.
+            lastProcessedCycle=0
+            status.text="Онлайн • ${deviceName?:"DTCO"}"
+            status.setTextColor(GREEN)
+            if(!prefs.getBoolean(FIRST_READ,false)&&!initialReadAttemptedThisSession){
+                initialReadAttemptedThisSession=true
+                handler.postDelayed({if(!cardReading)startCardRead("Первое успешное подключение",true)},800)
+            }
+        }else{
+            status.text="Связь потеряна • автоматическое переподключение…"
+            status.setTextColor(YELLOW)
+        }
+    }}
+    override fun onLiveLog(log:String){runOnUiThread{
+        val cycle=Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?:return@runOnUiThread
+        if(cycle<=lastProcessedCycle)return@runOnUiThread
+        val block=currentCycleBlock(log,cycle)
+        lastProcessedCycle=cycle
+        if(block==null||!hasFreshCriticalLiveData(block)){
+            status.text="Онлайн • ожидание полного свежего цикла"
+            status.setTextColor(YELLOW)
+            return@runOnUiThread
+        }
+        last(block,"F931")?.let{if(it.isNotBlank()&&it!="—"){driver.text=it;prefs.edit().putString(CARD_NAME,it).apply()}}
+        // The service is the single owner of counter arithmetic. The Activity only renders
+        // the fresh snapshot persisted by that completed live cycle.
+        restoreCounters()
+        restoreSnapshot()
+        status.text="Онлайн • данные актуальны"
+        status.setTextColor(GREEN)
+        updateNow()
+    }}
     override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
     private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({DriverLiveService.start(applicationContext,d.address)},800)}}
@@ -175,7 +210,15 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
 
     private fun parseDateOnly(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull()
     private fun isoCalendar(d:Date)=Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US).apply{firstDayOfWeek=Calendar.MONDAY;minimalDaysInFirstWeek=4;time=d}
-    private fun last(log:String,did:String)=log.lines().asReversed().firstOrNull{it.startsWith("$did=")}?.substringAfter(" | ")?.trim();private fun mins(v:String?):Int?=v?.let{Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull()}
+    private fun currentCycleBlock(log:String,cycle:Int):String?{
+        val endMarker="LIVE CYCLE #$cycle COMPLETE";val end=log.lastIndexOf(endMarker);if(end<0)return null
+        val before=log.substring(0,end)
+        val start=if(cycle>1){val prev=before.lastIndexOf("LIVE CYCLE #${cycle-1} COMPLETE");if(prev>=0)prev else maxOf(before.lastIndexOf("LIVE START"),before.lastIndexOf("LIVE RECONNECT"))}else maxOf(before.lastIndexOf("LIVE START"),before.lastIndexOf("LIVE RECONNECT"))
+        return log.substring(start.coerceAtLeast(0),end)
+    }
+    private fun hasFreshCriticalLiveData(block:String)=listOf("F903","F923","F925","F927").all{last(block,it)!=null}
+    private fun last(log:String,did:String)=log.lines().asReversed().firstOrNull{it.startsWith("$did=")}?.substringAfter(" | ")?.trim()
+    private fun mins(v:String?):Int?=v?.let{Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull()}
     private fun driveColor(m:Int)=when{m>=255->RED;m>=240->YELLOW;else->GREEN};private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN};private fun limitColor(v:Int,limit:Int)=when{limit<=0||v>=limit-120->RED;v>=limit-360->YELLOW;else->GREEN}
 
     private fun gaugeCard(title:String,markerText:String,ticks:List<Float>):Gauge{val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(10),dp(12),dp(9));background=rounded(CARD,dp(15).toFloat(),BORDER)};val top=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL};top.addView(TextView(this).apply{text=title;textSize=13f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD)},LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));val v=TextView(this).apply{text="—";textSize=23f;setTextColor(NEON_GREEN);setTypeface(typeface,Typeface.BOLD);gravity=Gravity.END};top.addView(v);box.addView(top);val frame=FrameLayout(this).apply{background=rounded(TRACK,dp(6).toFloat(),BORDER)};val progress=View(this).apply{background=progressDrawable(GREEN)};frame.addView(progress,FrameLayout.LayoutParams(0,dp(10)));ticks.forEach{ratio->val tick=View(this).apply{setBackgroundColor(if(ratio>=0.999f)RED else AMBER)};frame.addView(tick,FrameLayout.LayoutParams(dp(2),dp(16)).apply{gravity=Gravity.TOP});frame.post{val lp=tick.layoutParams as FrameLayout.LayoutParams;lp.leftMargin=((frame.width-dp(2))*ratio.coerceIn(0f,1f)).toInt();tick.layoutParams=lp}};box.addView(frame,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(10)).apply{topMargin=dp(7)});if(markerText.isNotBlank())box.addView(TextView(this).apply{text=markerText;textSize=10.5f;setTextColor(MUTED);gravity=Gravity.END;setPadding(0,dp(3),0,0)});val s=TextView(this).apply{text="";textSize=12f;setTextColor(MUTED);setPadding(0,dp(3),0,0)};box.addView(s);return Gauge(box,frame,progress,v,s)}

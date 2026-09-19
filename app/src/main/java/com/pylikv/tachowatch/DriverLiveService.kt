@@ -208,26 +208,47 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     override fun onLiveConnection(isConnected: Boolean, name: String?) {
         connected = isConnected
         deviceName = name
+        if (isConnected) {
+            // LiveDidDiagnostic restarts cycle numbering from #1 for each GATT session.
+            // Treat every reconnect as a new processing epoch.
+            lastProcessedCycle = 0
+        }
         updateServiceNotification(if (isConnected) "DTCO подключён • контроль лимитов активен" else "Связь потеряна • переподключение…")
         listeners.forEach { it.onLiveConnection(isConnected, name) }
     }
 
     override fun onLiveLog(log: String) {
         fullLog = log
-        last(log, "F903")?.let { currentActivity = it }
-        mins(last(log, "F927"))?.let { activityMinutes = it }
-        mins(last(log, "F923"))?.let { continuousMinutes = it }
-        mins(last(log, "F925"))?.let { breakMinutes = it }
-        mins(last(log, "F938"))?.let { twoWeekMinutes = it }
-
         val cycle = Regex("LIVE CYCLE #(\\d+) COMPLETE").findAll(log).lastOrNull()
             ?.groupValues?.getOrNull(1)?.toIntOrNull()
+
         if (cycle != null && cycle > lastProcessedCycle) {
+            val block = currentCycleBlock(log, cycle)
+            // Mark this cycle consumed even when one mandatory DID timed out. Reusing a value
+            // from an older cycle is more dangerous than waiting for the next complete cycle.
             lastProcessedCycle = cycle
-            processCycle()
-            persistState()
-            evaluateAlerts()
+
+            val freshActivity = block?.let { last(it, "F903") }
+            val freshActivityMinutes = block?.let { mins(last(it, "F927")) }
+            val freshContinuous = block?.let { mins(last(it, "F923")) }
+            val freshBreak = block?.let { mins(last(it, "F925")) }
+
+            if (freshActivity != null && freshActivityMinutes != null && freshContinuous != null && freshBreak != null) {
+                currentActivity = freshActivity
+                activityMinutes = freshActivityMinutes
+                continuousMinutes = freshContinuous
+                breakMinutes = freshBreak
+                block?.let { mins(last(it, "F938")) }?.let { twoWeekMinutes = it }
+
+                processCycle()
+                persistState()
+                evaluateAlerts()
+                updateServiceNotification("DTCO подключён • свежие данные")
+            } else {
+                updateServiceNotification("DTCO подключён • неполный live-цикл, ожидание свежих данных")
+            }
         }
+
         listeners.forEach { it.onLiveLog(log) }
     }
 
@@ -481,6 +502,20 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private fun isAvailability(v: String) = v.contains("ГОТОВНОСТЬ", true)
 
     private fun prefs() = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private fun currentCycleBlock(log: String, cycle: Int): String? {
+        val endMarker = "LIVE CYCLE #$cycle COMPLETE"
+        val end = log.lastIndexOf(endMarker)
+        if (end < 0) return null
+        val before = log.substring(0, end)
+        val start = if (cycle > 1) {
+            val previous = before.lastIndexOf("LIVE CYCLE #${cycle - 1} COMPLETE")
+            if (previous >= 0) previous else maxOf(before.lastIndexOf("LIVE START"), before.lastIndexOf("LIVE RECONNECT"))
+        } else {
+            maxOf(before.lastIndexOf("LIVE START"), before.lastIndexOf("LIVE RECONNECT"))
+        }
+        return log.substring(start.coerceAtLeast(0), end)
+    }
+
     private fun last(log: String, did: String) = log.lines().asReversed().firstOrNull { it.startsWith("$did=") }?.substringAfter(" | ")?.trim()
     private fun mins(v: String?): Int? = v?.let { Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
 }

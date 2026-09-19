@@ -7,6 +7,9 @@ import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.os.FileObserver
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 /** Reconcile persisted shift state only from a newly completed driver-card download. */
 class ShiftStateRecoveryProvider : ContentProvider() {
@@ -40,7 +43,25 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             if (prefs.getString(KEY_CARD_FINGERPRINT, null) == fingerprint) return
             val parsed = TlvInventory.parse(file)
             if (parsed.error != null) return
-            val seed = currentShiftSeed(HistoryData.load(parsed)) ?: return
+            val model = HistoryData.load(parsed)
+            val ongoingRest = ongoingDailyRestMinutes(model)
+            val seed = if (ongoingRest != null && ongoingRest >= DAILY_REST_MINUTES) {
+                val latest = model.days.lastOrNull() ?: return
+                // A fresh card read made during a confirmed daily rest is authoritative:
+                // never seed the previous shift merely because the rest crosses midnight
+                // and the current rest-only day is absent from the activity-day model.
+                Seed(
+                    id = "rest|${latest.date}|${latest.endTime ?: "?"}",
+                    drivingMinutes = 0,
+                    completedDrivingMinutes = 0,
+                    liveDrivingSegmentMinutes = 0,
+                    continuousWorkMinutes = 0,
+                    workMinutes = 0,
+                    availabilityMinutes = 0
+                )
+            } else {
+                currentShiftSeed(model) ?: return
+            }
 
             // Card read is the authoritative checkpoint for shift driving.
             // SHIFT_COMPLETED now stores the complete shift-driving total at the checkpoint.
@@ -164,6 +185,18 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             workMinutes = work,
             availabilityMinutes = availability
         )
+    }
+
+    private fun ongoingDailyRestMinutes(model: HistoryData.Model): Int? {
+        val latest = model.days.lastOrNull() ?: return null
+        val restStart = latest.endTime ?: return null
+        val parsed = runCatching {
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }.parse("${latest.date} $restStart")
+        }.getOrNull() ?: return null
+        val minutes = ((System.currentTimeMillis() - parsed.time) / 60000L).toInt()
+        return minutes.takeIf { it >= 0 }
     }
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
