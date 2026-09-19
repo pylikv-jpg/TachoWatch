@@ -41,6 +41,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val SHIFT_COMPLETED = "shift_completed_driving"
         const val SHIFT_PREV_CONTINUOUS = "shift_prev_continuous"
         const val WORK_WINDOW = "work_window_minutes"
+        const val CW_OTHER_WINDOW = "continuous_work_other_minutes"
         const val CW_PREV_ACTIVITY = "continuous_work_prev_activity"
         const val CW_PREV_DURATION = "continuous_work_prev_duration"
         const val WORK_PREV_ACTIVITY = "work_prev_activity"
@@ -107,6 +108,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var shiftCompletedMinutes = 0
     private var previousContinuousMinutes = 0
     private var workWindowMinutes = 0
+    private var continuousWorkOtherMinutes = 0
     private var continuousWorkPreviousActivity = "—"
     private var continuousWorkPreviousDuration = 0
     private var previousActivity = "—"
@@ -263,6 +265,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         shiftCompletedMinutes = p.getInt(SHIFT_COMPLETED, 0)
         previousContinuousMinutes = p.getInt(SHIFT_PREV_CONTINUOUS, 0)
         workWindowMinutes = p.getInt(WORK_WINDOW, 0)
+        continuousWorkOtherMinutes = p.getInt(CW_OTHER_WINDOW, 0)
         continuousWorkPreviousActivity = p.getString(CW_PREV_ACTIVITY, "—") ?: "—"
         continuousWorkPreviousDuration = p.getInt(CW_PREV_DURATION, 0)
         previousActivity = p.getString(WORK_PREV_ACTIVITY, "—") ?: "—"
@@ -283,6 +286,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             .putInt(SHIFT_COMPLETED, shiftCompletedMinutes)
             .putInt(SHIFT_PREV_CONTINUOUS, previousContinuousMinutes)
             .putInt(WORK_WINDOW, workWindowMinutes)
+            .putInt(CW_OTHER_WINDOW, continuousWorkOtherMinutes)
             .putString(CW_PREV_ACTIVITY, continuousWorkPreviousActivity)
             .putInt(CW_PREV_DURATION, continuousWorkPreviousDuration)
             .putString(WORK_PREV_ACTIVITY, previousActivity)
@@ -311,7 +315,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         val cw = ContinuousWorkCounter.update(
             state = ContinuousWorkCounter.State(
                 workMinutes = workWindowMinutes,
-                otherWorkMinutes = 0,
+                otherWorkMinutes = continuousWorkOtherMinutes,
                 previousActivity = continuousWorkPreviousActivity,
                 previousSourceMinutes = continuousWorkPreviousDuration
             ),
@@ -321,8 +325,11 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             qualifyingRestMinutes = restMinutes
         )
 
+        // ContinuousWorkCounter is the only owner of the 6h work window.
+        // Legacy bookkeeping below maintains only daily OTHER WORK / AVAILABILITY totals.
         processWorkWindowBookkeeping(restMinutes)
         workWindowMinutes = cw.workMinutes
+        continuousWorkOtherMinutes = cw.otherWorkMinutes
         continuousWorkPreviousActivity = cw.previousActivity
         continuousWorkPreviousDuration = cw.previousSourceMinutes
 
@@ -333,6 +340,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
         if (dailyRestCompleted) {
             workWindowMinutes = 0
+            continuousWorkOtherMinutes = 0
             continuousWorkPreviousActivity = currentActivity
             continuousWorkPreviousDuration = activitySourceMinutes()
             otherWorkWindowMinutes = 0
@@ -363,11 +371,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         } else if (previousActivity == currentActivity) {
             val delta = (sourceNow - previousActivityDuration).coerceAtLeast(0)
             when {
-                isDriving(currentActivity) -> workWindowMinutes += delta
-                isOtherWork(currentActivity) -> {
-                    workWindowMinutes += delta
-                    otherWorkWindowMinutes += delta
-                }
+                isDriving(currentActivity) -> Unit
+                isOtherWork(currentActivity) -> otherWorkWindowMinutes += delta
                 isAvailability(currentActivity) -> availabilityWindowMinutes += delta
             }
             previousActivityDuration = sourceNow
