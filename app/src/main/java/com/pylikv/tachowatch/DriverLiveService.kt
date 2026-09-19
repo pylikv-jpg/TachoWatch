@@ -312,6 +312,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         shiftCompletedMinutes = shift.totalMinutes
         previousContinuousMinutes = shift.previousContinuousMinutes
 
+        val previousContinuousOtherWork = continuousWorkOtherMinutes
         val cw = ContinuousWorkCounter.update(
             state = ContinuousWorkCounter.State(
                 workMinutes = workWindowMinutes,
@@ -325,9 +326,12 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             qualifyingRestMinutes = restMinutes
         )
 
-        // ContinuousWorkCounter is the only owner of the 6h work window.
-        // Legacy bookkeeping below maintains only daily OTHER WORK / AVAILABILITY totals.
-        processWorkWindowBookkeeping(restMinutes)
+        // ContinuousWorkCounter is the only owner of the 6h work window and of live
+        // OTHER WORK deltas. Feed that same delta into the shift OTHER WORK total so
+        // the two counters cannot diverge while standing in OTHER WORK.
+        val liveOtherWorkDelta =
+            (cw.otherWorkMinutes - previousContinuousOtherWork).coerceAtLeast(0)
+        processWorkWindowBookkeeping(liveOtherWorkDelta)
         workWindowMinutes = cw.workMinutes
         continuousWorkOtherMinutes = cw.otherWorkMinutes
         continuousWorkPreviousActivity = cw.previousActivity
@@ -354,43 +358,33 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         }
     }
 
-    private fun processWorkWindowBookkeeping(restMinutes: Int) {
-        val sourceNow = activitySourceMinutes()
+    private fun processWorkWindowBookkeeping(liveOtherWorkDelta: Int) {
+        // OTHER WORK is decoded once by ContinuousWorkCounter from F927.
+        // Reuse exactly that live delta for the full-shift OTHER WORK total instead
+        // of maintaining a second accumulator that can miss or duplicate segments.
+        otherWorkWindowMinutes += liveOtherWorkDelta
 
+        // Availability stays independent and is not part of the 6h work window.
+        val sourceNow = activitySourceMinutes()
         if (previousActivity == "—") {
             previousActivity = currentActivity
             previousActivityDuration = sourceNow
-            // Card reconciliation seeds completed historical periods only. The currently
-            // open F927 segment is absent from that card total, so add it to the separate
-            // OTHER WORK / AVAILABILITY totals instead of replacing the seed with max().
-            when {
-                isDriving(currentActivity) -> Unit
-                isOtherWork(currentActivity) -> otherWorkWindowMinutes += sourceNow
-                isAvailability(currentActivity) -> availabilityWindowMinutes += sourceNow
+            if (isAvailability(currentActivity)) {
+                availabilityWindowMinutes += sourceNow
             }
         } else if (previousActivity == currentActivity) {
             val delta = (sourceNow - previousActivityDuration).coerceAtLeast(0)
-            when {
-                isDriving(currentActivity) -> Unit
-                isOtherWork(currentActivity) -> otherWorkWindowMinutes += delta
-                isAvailability(currentActivity) -> availabilityWindowMinutes += delta
+            if (isAvailability(currentActivity)) {
+                availabilityWindowMinutes += delta
             }
             previousActivityDuration = sourceNow
         } else {
             previousActivity = currentActivity
             previousActivityDuration = sourceNow
-            // F927 may already contain elapsed time in the newly observed activity.
-            // Seed it on the transition so the minutes between two polling cycles are not lost.
-            when {
-                isOtherWork(currentActivity) -> otherWorkWindowMinutes += sourceNow
-                isAvailability(currentActivity) -> availabilityWindowMinutes += sourceNow
+            if (isAvailability(currentActivity)) {
+                availabilityWindowMinutes += sourceNow
             }
         }
-
-        // A single 15-minute part is valid as part of a statutory break, but it does not by
-        // itself satisfy the 30-minute interruption required once working time reaches 6 h.
-        // This legacy path now maintains OTHER WORK / AVAILABILITY only.
-        // ContinuousWorkCounter exclusively owns the 6h work-window reset.
     }
 
     private fun activitySourceMinutes(): Int = when {
