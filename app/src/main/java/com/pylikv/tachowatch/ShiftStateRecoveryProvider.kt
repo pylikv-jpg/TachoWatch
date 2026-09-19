@@ -56,6 +56,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     completedDrivingMinutes = 0,
                     liveDrivingSegmentMinutes = 0,
                     continuousWorkMinutes = 0,
+                    continuousOtherWorkMinutes = 0,
                     workMinutes = 0,
                     availabilityMinutes = 0
                 )
@@ -74,6 +75,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, seed.liveDrivingSegmentMinutes)
                 )
                 .putInt(DriverLiveService.WORK_WINDOW, seed.continuousWorkMinutes)
+                .putInt(DriverLiveService.CW_OTHER_WINDOW, seed.continuousOtherWorkMinutes)
                 .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
                 .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
                 .putString(DriverLiveService.CW_PREV_ACTIVITY, "—")
@@ -100,6 +102,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val completedDrivingMinutes: Int,
         val liveDrivingSegmentMinutes: Int,
         val continuousWorkMinutes: Int,
+        val continuousOtherWorkMinutes: Int,
         val workMinutes: Int,
         val availabilityMinutes: Int
     )
@@ -162,6 +165,9 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val continuousWork = workWindow
             .filter { it.type == "DRIVING" || it.type == "WORK" }
             .sumOf { it.minutes }
+        val continuousOtherWork = workWindow
+            .filter { it.type == "WORK" }
+            .sumOf { it.minutes }
 
         val lastDrivingIndex = active.indexOfLast { it.type == "DRIVING" }
         val lastDrivingMinutes = active.getOrNull(lastDrivingIndex)?.minutes ?: 0
@@ -182,6 +188,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             completedDrivingMinutes = completed,
             liveDrivingSegmentMinutes = liveSegment,
             continuousWorkMinutes = continuousWork,
+            continuousOtherWorkMinutes = continuousOtherWork,
             workMinutes = work,
             availabilityMinutes = availability
         )
@@ -210,7 +217,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         private const val CONTINUOUS_BREAK_MINUTES = 45
         private const val FIRST_READ_KEY = "first_card_read_done"
         private const val KEY_RECOVERY_VERSION = "recovery_model_version"
-        private const val RECOVERY_VERSION = 2
+        private const val RECOVERY_VERSION = 3
         const val KEY_RECONCILED_AT = "recovery_reconciled_at"
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"
         private const val KEY_SHIFT_ID = "recovery_shift_id"
