@@ -337,11 +337,6 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         continuousWorkPreviousActivity = cw.previousActivity
         continuousWorkPreviousDuration = cw.previousSourceMinutes
 
-        if (restMinutes >= 45) {
-            clearAlertGroup("cont_")
-            clearAlertGroup("work_")
-        }
-
         if (dailyRestCompleted) {
             workWindowMinutes = 0
             continuousWorkOtherMinutes = 0
@@ -408,6 +403,16 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     private fun evaluateRemaining(group: String, remaining: Int, label: String, reachedText: String) {
+        // Rearm alerts only after the monitored counter itself has moved back outside
+        // the warning zone. Do not use the last break duration for rearming: some DTCO
+        // live frames can keep reporting the completed 45-minute break value after
+        // driving resumes, which previously cleared fireOnce() on every live cycle.
+        val rearmAbove = if (group.startsWith("shift")) 60 else 30
+        if (remaining > rearmAbove) {
+            clearAlertGroup("${group}_")
+            return
+        }
+
         when {
             remaining <= 0 -> fireOnce("${group}_0", reachedText)
             remaining <= 5 -> fireOnce("${group}_5", "До лимита $label осталось 5 минут")
@@ -427,8 +432,11 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     private fun clearAlertGroup(group: String) {
-        val editor = prefs().edit()
-        listOf("30", "15", "5", "0", "60").forEach { editor.remove("alert_fired_${group}$it") }
+        val p = prefs()
+        val keys = listOf("30", "15", "5", "0", "60").map { "alert_fired_${group}$it" }
+        if (keys.none(p::contains)) return
+        val editor = p.edit()
+        keys.forEach(editor::remove)
         editor.apply()
     }
 
