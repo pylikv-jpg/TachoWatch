@@ -26,9 +26,13 @@ object ContinuousWorkCounter {
 
         val now = source(currentActivity, activityMinutes, continuousDrivingMinutes)
         if (state.previousActivity == "—") {
+            // After a fresh card reconciliation, state.workMinutes contains only completed
+            // card periods. The current live F927/F923 segment is still open on the card and
+            // therefore is NOT part of that seed. Add it; using max(seed, live) drops earlier
+            // OTHER WORK whenever the live driving segment becomes the larger value.
             return when {
-                isDriving(currentActivity) -> State(maxOf(state.workMinutes, now), state.otherWorkMinutes, currentActivity, now)
-                isOtherWork(currentActivity) -> State(maxOf(state.workMinutes, now), maxOf(state.otherWorkMinutes, now), currentActivity, now)
+                isDriving(currentActivity) -> State(state.workMinutes + now, state.otherWorkMinutes, currentActivity, now)
+                isOtherWork(currentActivity) -> State(state.workMinutes + now, state.otherWorkMinutes + now, currentActivity, now)
                 else -> State(state.workMinutes, state.otherWorkMinutes, currentActivity, now)
             }
         }

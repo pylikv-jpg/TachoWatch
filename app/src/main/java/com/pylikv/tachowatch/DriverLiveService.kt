@@ -352,15 +352,13 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         if (previousActivity == "—") {
             previousActivity = currentActivity
             previousActivityDuration = sourceNow
-            // If monitoring starts in the middle of an active segment, initialise from the
-            // tachograph's current segment duration instead of showing zero.
+            // Card reconciliation seeds completed historical periods only. The currently
+            // open F927 segment is absent from that card total, so add it to the separate
+            // OTHER WORK / AVAILABILITY totals instead of replacing the seed with max().
             when {
-                isDriving(currentActivity) -> workWindowMinutes = maxOf(workWindowMinutes, sourceNow)
-                isOtherWork(currentActivity) -> {
-                    workWindowMinutes = maxOf(workWindowMinutes, sourceNow)
-                    otherWorkWindowMinutes = maxOf(otherWorkWindowMinutes, sourceNow)
-                }
-                isAvailability(currentActivity) -> availabilityWindowMinutes = maxOf(availabilityWindowMinutes, sourceNow)
+                isDriving(currentActivity) -> Unit
+                isOtherWork(currentActivity) -> otherWorkWindowMinutes += sourceNow
+                isAvailability(currentActivity) -> availabilityWindowMinutes += sourceNow
             }
         } else if (previousActivity == currentActivity) {
             val delta = (sourceNow - previousActivityDuration).coerceAtLeast(0)
@@ -376,6 +374,12 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         } else {
             previousActivity = currentActivity
             previousActivityDuration = sourceNow
+            // F927 may already contain elapsed time in the newly observed activity.
+            // Seed it on the transition so the minutes between two polling cycles are not lost.
+            when {
+                isOtherWork(currentActivity) -> otherWorkWindowMinutes += sourceNow
+                isAvailability(currentActivity) -> availabilityWindowMinutes += sourceNow
+            }
         }
 
         // A single 15-minute part is valid as part of a statutory break, but it does not by

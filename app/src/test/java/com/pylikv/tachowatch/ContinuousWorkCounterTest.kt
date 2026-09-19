@@ -1,0 +1,89 @@
+package com.pylikv.tachowatch
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class ContinuousWorkCounterTest {
+
+    @Test
+    fun cardSeedOtherWorkPlusCurrentDrivingAreAdded() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 20,
+            otherWorkMinutes = 20,
+            previousActivity = "—",
+            previousSourceMinutes = 0
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ВОЖДЕНИЕ",
+            activityMinutes = 60,
+            continuousDrivingMinutes = 60,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(80, result.workMinutes)
+    }
+
+    @Test
+    fun cardSeedPlusCurrentOpenOtherWorkAreAdded() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 60,
+            otherWorkMinutes = 10,
+            previousActivity = "—",
+            previousSourceMinutes = 0
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 15,
+            continuousDrivingMinutes = 60,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(75, result.workMinutes)
+        assertEquals(25, result.otherWorkMinutes)
+    }
+
+    @Test
+    fun transitionIntoOtherWorkKeepsElapsedNewSegment() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 60,
+            otherWorkMinutes = 0,
+            previousActivity = "ВОЖДЕНИЕ",
+            previousSourceMinutes = 60
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 7,
+            continuousDrivingMinutes = 60,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(67, result.workMinutes)
+        assertEquals(7, result.otherWorkMinutes)
+    }
+
+    @Test
+    fun fortyFiveMinuteBreakResetsContinuousWork() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 180,
+            otherWorkMinutes = 30,
+            previousActivity = "ДРУГАЯ РАБОТА",
+            previousSourceMinutes = 30
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ОТДЫХ / ПЕРЕРЫВ",
+            activityMinutes = 45,
+            continuousDrivingMinutes = 0,
+            qualifyingRestMinutes = 45
+        )
+
+        assertEquals(0, result.workMinutes)
+    }
+}
