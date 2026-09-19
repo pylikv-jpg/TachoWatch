@@ -12,6 +12,25 @@ object ShiftDrivingCounter {
         val previousContinuousMinutes: Int
     )
 
+    fun reconcileCheckpoint(
+        cardShiftDrivingMinutes: Int,
+        cardContinuousDrivingMinutes: Int,
+        liveContinuousDrivingMinutes: Int,
+        dailyRestCompleted: Boolean
+    ): State {
+        if (dailyRestCompleted) return State(true, 0, 0)
+
+        val live = liveContinuousDrivingMinutes.coerceAtLeast(0)
+        val cardContinuous = cardContinuousDrivingMinutes.coerceAtLeast(0)
+        val openDrivingMissingFromCard = (live - cardContinuous).coerceAtLeast(0)
+
+        return State(
+            initialized = true,
+            totalMinutes = cardShiftDrivingMinutes.coerceAtLeast(0) + openDrivingMissingFromCard,
+            previousContinuousMinutes = live
+        )
+    }
+
     fun update(
         initialized: Boolean,
         totalMinutes: Int,
