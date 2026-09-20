@@ -100,6 +100,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var currentActivity = "—"
     private var activityMinutes = 0
     private var continuousMinutes = 0
+    private var continuousAlertStage = 0
     private var breakMinutes = 0
     private var twoWeekMinutes = 0
     private var lastProcessedCycle = 0
@@ -245,7 +246,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                 // A new continuous-driving cycle starts only when the tachograph itself
                 // resets F923. Do not re-arm alerts because of elapsed time or polling.
                 if (previousRawContinuous >= 30 && continuousMinutes <= 5) {
-                    clearAlertGroup("cont_")
+                    resetContinuousAlertCycle()
                 }
                 block?.let { mins(last(it, "F938")) }?.let { twoWeekMinutes = it }
 
@@ -266,6 +267,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         currentActivity = p.getString(SNAP_ACTIVITY, "—") ?: "—"
         activityMinutes = p.getInt(SNAP_ACTIVITY_MIN, 0)
         continuousMinutes = p.getInt(SNAP_CONTINUOUS_MIN, 0)
+        continuousAlertStage = p.getInt("alert_stage_cont", 0)
         breakMinutes = p.getInt(SNAP_BREAK_MIN, 0)
         twoWeekMinutes = p.getInt(SNAP_TWO_WEEK_MIN, 0)
         shiftCounterInitialized = p.getBoolean(SHIFT_INITIALIZED, false)
@@ -353,7 +355,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             availabilityWindowMinutes = 0
             previousActivity = currentActivity
             previousActivityDuration = activitySourceMinutes()
-            clearAlertGroup("cont_")
+            // Continuous-driving alerts are NOT reset here. Their cycle is owned by
+            // F923 and is reset only when F923 itself drops back to the start range.
             clearAlertGroup("work_")
             clearAlertGroup("shift9_")
             clearAlertGroup("shift10_")
@@ -420,14 +423,13 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         }
         if (nextStage == 0) return
 
+        if (nextStage <= continuousAlertStage) return
+
+        // First update the in-memory latch, then persist it. Even if SharedPreferences
+        // is touched elsewhere, the running service cannot re-fire this same stage.
+        continuousAlertStage = nextStage
         val p = prefs()
         val stageKey = "alert_stage_cont"
-        val completedStage = p.getInt(stageKey, 0)
-        if (nextStage <= completedStage) return
-
-        // Persist the reached warning stage before showing anything. Repeated DTCO
-        // cycles, service callbacks, reconnects, or Activity recreation cannot fire
-        // the same threshold again. This stage is cleared only when F923 really resets.
         if (!p.edit().putInt(stageKey, nextStage).commit()) return
 
         val key: String
@@ -509,10 +511,23 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         if (keys.none(p::contains)) return
         val editor = p.edit()
         keys.forEach(editor::remove)
-        if (group == "cont_") {
-            editor.remove("alert_stage_cont")
+        editor.commit()
+    }
+
+    private fun resetContinuousAlertCycle() {
+        continuousAlertStage = 0
+        val p = prefs()
+        val editor = p.edit().remove("alert_stage_cont")
+        listOf("30", "15", "5", "0").forEach { suffix ->
+            editor.remove("alert_fired_cont_$suffix")
+            editor.remove("alert_ack_cont_$suffix")
+            editor.remove("alert_shown_cont_$suffix")
         }
         editor.commit()
+        try {
+            getSystemService(NotificationManager::class.java)
+                .cancel(ALERT_NOTIFICATION_ID)
+        } catch (_: Throwable) {}
     }
 
     private fun speak(text: String) {
