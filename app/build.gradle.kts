@@ -1,6 +1,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("io.gitlab.arturbosch.detekt")
+    id("org.jlleitschuh.gradle.ktlint")
 }
 
 val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
@@ -41,11 +43,33 @@ android {
         }
     }
 
+    lint {
+        // Reporting-only initially: surface legacy findings without blocking APK builds.
+        abortOnError = false
+        checkDependencies = true
+        htmlReport = true
+        xmlReport = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+}
+
+detekt {
+    // Start in reporting mode so existing legacy findings do not break APK builds.
+    buildUponDefaultConfig = true
+    allRules = false
+    parallel = true
+    ignoreFailures = true
+}
+
+ktlint {
+    android.set(true)
+    outputToConsole.set(true)
+    ignoreFailures.set(true)
 }
 
 dependencies {
