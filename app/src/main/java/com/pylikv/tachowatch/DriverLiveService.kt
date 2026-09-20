@@ -403,12 +403,13 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     private fun evaluateRemaining(group: String, remaining: Int, label: String, reachedText: String) {
-        // Rearm alerts only after the monitored counter itself has moved back outside
-        // the warning zone. Do not use the last break duration for rearming: some DTCO
-        // live frames can keep reporting the completed 45-minute break value after
-        // driving resumes, which previously cleared fireOnce() on every live cycle.
-        val rearmAbove = if (group.startsWith("shift")) 60 else 30
-        if (remaining > rearmAbove) {
+        // Re-arm only after a real counter reset, not after a 1-minute fluctuation
+        // around a warning boundary. Example: 30 -> 31 -> 30 must NOT repeat the
+        // 30-minute alert. Continuous driving/work counters reset far away from the
+        // warning zone after a qualifying rest, so 120 minutes gives safe hysteresis.
+        // Shift alerts are also cleared explicitly after completed daily rest.
+        val rearmAbove = 120
+        if (remaining >= rearmAbove) {
             clearAlertGroup("${group}_")
             return
         }
@@ -430,7 +431,9 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
         // Mark this threshold as shown before presenting it so every DTCO refresh
         // cannot create another copy of the same warning.
-        p.edit().putBoolean(shownKey, true).apply()
+        // Persist synchronously before publishing the notification so the same
+        // threshold cannot be re-fired by another service callback/reconnect race.
+        p.edit().putBoolean(shownKey, true).commit()
         showAlert(key, text)
         speak(text)
     }
