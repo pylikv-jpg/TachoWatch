@@ -236,10 +236,17 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             val freshBreak = block?.let { mins(last(it, "F925")) }
 
             if (freshActivity != null && freshActivityMinutes != null && freshContinuous != null && freshBreak != null) {
+                val previousRawContinuous = continuousMinutes
                 currentActivity = freshActivity
                 activityMinutes = freshActivityMinutes
                 continuousMinutes = freshContinuous
                 breakMinutes = freshBreak
+
+                // A new continuous-driving cycle starts only when the tachograph itself
+                // resets F923. Do not re-arm alerts because of elapsed time or polling.
+                if (previousRawContinuous >= 30 && continuousMinutes <= 5) {
+                    clearAlertGroup("cont_")
+                }
                 block?.let { mins(last(it, "F938")) }?.let { twoWeekMinutes = it }
 
                 processCycle()
@@ -392,7 +399,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private fun shiftDrivingTotal(): Int = shiftCompletedMinutes
 
     private fun evaluateAlerts() {
-        evaluateRemaining("cont", 270 - continuousMinutes, "непрерывного вождения", "Лимит непрерывного вождения 4 часа 30 минут достигнут")
+        evaluateContinuousDrivingAlert()
         evaluateRemaining("work", 360 - activeWorkTotal(), "непрерывной работы", "Лимит непрерывной работы 6 часов достигнут")
 
         val shift = shiftDrivingTotal()
@@ -400,6 +407,57 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         if (shift >= 540) {
             evaluateRemaining("shift10", 600 - shift, "продлённого суточного вождения 10 часов", "Лимит продлённого суточного вождения 10 часов достигнут")
         }
+    }
+
+    private fun evaluateContinuousDrivingAlert() {
+        val remaining = 270 - continuousMinutes
+        val nextStage = when {
+            remaining <= 0 -> 4
+            remaining <= 5 -> 3
+            remaining <= 15 -> 2
+            remaining <= 30 -> 1
+            else -> 0
+        }
+        if (nextStage == 0) return
+
+        val p = prefs()
+        val stageKey = "alert_stage_cont"
+        val completedStage = p.getInt(stageKey, 0)
+        if (nextStage <= completedStage) return
+
+        // Persist the reached warning stage before showing anything. Repeated DTCO
+        // cycles, service callbacks, reconnects, or Activity recreation cannot fire
+        // the same threshold again. This stage is cleared only when F923 really resets.
+        if (!p.edit().putInt(stageKey, nextStage).commit()) return
+
+        val key: String
+        val text: String
+        when (nextStage) {
+            4 -> {
+                key = "cont_0"
+                text = "Лимит непрерывного вождения 4 часа 30 минут достигнут"
+            }
+            3 -> {
+                key = "cont_5"
+                text = "До лимита непрерывного вождения осталось 5 минут"
+            }
+            2 -> {
+                key = "cont_15"
+                text = "До лимита непрерывного вождения осталось 15 минут"
+            }
+            else -> {
+                key = "cont_30"
+                text = "До лимита непрерывного вождения осталось 30 минут"
+            }
+        }
+
+        // Keep the legacy flags in sync for the acknowledgement Activity and migration.
+        p.edit()
+            .putBoolean("alert_shown_$key", true)
+            .commit()
+
+        showAlert(key, text)
+        speak(text)
     }
 
     private fun evaluateRemaining(group: String, remaining: Int, label: String, reachedText: String) {
@@ -451,7 +509,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         if (keys.none(p::contains)) return
         val editor = p.edit()
         keys.forEach(editor::remove)
-        editor.apply()
+        if (group == "cont_") {
+            editor.remove("alert_stage_cont")
+        }
+        editor.commit()
     }
 
     private fun speak(text: String) {
