@@ -115,11 +115,14 @@ class LimitAlertActivity : AppCompatActivity() {
 
     private fun acknowledgeAndClose() {
         if (currentKey.isNotBlank()) {
+            // Save acknowledgement synchronously before cancelling the notification.
+            // This closes the race where a service callback could re-post the same
+            // threshold while the confirmation window is being dismissed.
             getSharedPreferences(DriverLiveService.PREFS, MODE_PRIVATE)
                 .edit()
                 .putBoolean("alert_ack_$currentKey", true)
                 .putBoolean("alert_shown_$currentKey", true)
-                .apply()
+                .commit()
         }
 
         try {
