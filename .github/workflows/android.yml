@@ -64,8 +64,31 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Run Android Lint
+        continue-on-error: true
+        run: gradle lintDebug
+
+      - name: Run detekt
+        continue-on-error: true
+        run: gradle detekt
+
+      - name: Run ktlint
+        continue-on-error: true
+        run: gradle ktlintCheck
+
       - name: Run RTO regression tests and build APK
         run: gradle testDebugUnitTest assembleDebug
+
+      - name: Upload static analysis reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TachoWatch-static-analysis
+          if-no-files-found: ignore
+          path: |
+            app/build/reports/lint-results-debug.*
+            app/build/reports/detekt/**
+            app/build/reports/ktlint/**
 
       - name: Verify APK signing certificate
         run: |
