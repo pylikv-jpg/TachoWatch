@@ -118,11 +118,20 @@ class LimitAlertActivity : AppCompatActivity() {
             // Save acknowledgement synchronously before cancelling the notification.
             // This closes the race where a service callback could re-post the same
             // threshold while the confirmation window is being dismissed.
-            getSharedPreferences(DriverLiveService.PREFS, MODE_PRIVATE)
-                .edit()
+            val prefs = getSharedPreferences(DriverLiveService.PREFS, MODE_PRIVATE)
+            val editor = prefs.edit()
                 .putBoolean("alert_ack_$currentKey", true)
                 .putBoolean("alert_shown_$currentKey", true)
-                .commit()
+
+            // Reinforce the continuous-driving one-shot stage at acknowledgement time.
+            // This survives Activity recreation and service restarts.
+            when (currentKey) {
+                "cont_30" -> editor.putInt("alert_stage_cont", maxOf(prefs.getInt("alert_stage_cont", 0), 1))
+                "cont_15" -> editor.putInt("alert_stage_cont", maxOf(prefs.getInt("alert_stage_cont", 0), 2))
+                "cont_5" -> editor.putInt("alert_stage_cont", maxOf(prefs.getInt("alert_stage_cont", 0), 3))
+                "cont_0" -> editor.putInt("alert_stage_cont", maxOf(prefs.getInt("alert_stage_cont", 0), 4))
+            }
+            editor.commit()
         }
 
         try {
