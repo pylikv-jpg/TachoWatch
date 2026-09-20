@@ -101,6 +101,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var activityMinutes = 0
     private var continuousMinutes = 0
     private var continuousAlertStage = 0
+    private var lastPresentedContinuousAlertKey: String? = null
     private var breakMinutes = 0
     private var twoWeekMinutes = 0
     private var lastProcessedCycle = 0
@@ -423,13 +424,17 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         }
         if (nextStage == 0) return
 
-        if (nextStage <= continuousAlertStage) return
-
-        // First update the in-memory latch, then persist it. Even if SharedPreferences
-        // is touched elsewhere, the running service cannot re-fire this same stage.
-        continuousAlertStage = nextStage
         val p = prefs()
         val stageKey = "alert_stage_cont"
+        val persistedStage = p.getInt(stageKey, 0)
+        if (persistedStage > continuousAlertStage) {
+            continuousAlertStage = persistedStage
+        }
+        if (nextStage <= continuousAlertStage) return
+
+        // First update the in-memory latch, then persist it. If another code path ever
+        // removes the preference, the running service still cannot re-fire this stage.
+        continuousAlertStage = nextStage
         if (!p.edit().putInt(stageKey, nextStage).commit()) return
 
         val key: String
@@ -458,6 +463,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             .putBoolean("alert_shown_$key", true)
             .commit()
 
+        if (lastPresentedContinuousAlertKey == key) return
+        lastPresentedContinuousAlertKey = key
         showAlert(key, text)
         speak(text)
     }
@@ -516,6 +523,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
     private fun resetContinuousAlertCycle() {
         continuousAlertStage = 0
+        lastPresentedContinuousAlertKey = null
         val p = prefs()
         val editor = p.edit().remove("alert_stage_cont")
         listOf("30", "15", "5", "0").forEach { suffix ->
