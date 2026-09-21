@@ -14,7 +14,8 @@ object ContinuousWorkCounter {
         val workMinutes: Int,
         val otherWorkMinutes: Int,
         val previousActivity: String,
-        val previousSourceMinutes: Int
+        val previousSourceMinutes: Int,
+        val previousContinuousDrivingMinutes: Int
     )
 
     fun update(
@@ -22,49 +23,67 @@ object ContinuousWorkCounter {
         currentActivity: String,
         activityMinutes: Int,
         continuousDrivingMinutes: Int,
-        qualifyingRestMinutes: Int
+        qualifyingRestMinutes: Int,
+        currentShiftDrivingMinutes: Int?
     ): State {
         val now = activityMinutes.coerceAtLeast(0)
+        val currentContinuous = continuousDrivingMinutes.coerceAtLeast(0)
 
         if (qualifyingRestMinutes >= 45) {
-            return State(0, 0, currentActivity, now)
+            // Anchor F923 at the value seen at the qualifying break. Some DTCO units keep
+            // the previous F923 value until driving starts again; anchoring prevents that
+            // stale value from being re-added to the new 6-hour work window.
+            return State(0, 0, currentActivity, now, currentContinuous)
         }
 
-        // Driving is reconstructed only from F923. Preserve the already accepted driving
-        // contribution if a transient live sample is smaller; the contribution may decrease
-        // only through the explicit qualifying-break reset above.
-        val previousDrivingMinutes =
-            (state.workMinutes - state.otherWorkMinutes).coerceAtLeast(0)
-        val drivingMinutes = maxOf(
-            previousDrivingMinutes,
-            continuousDrivingMinutes.coerceAtLeast(0)
-        )
+        // Count DRIVING only while the tachograph reports DRIVING, and only as a delta of
+        // F923. Never copy the absolute F923 value into the work counter: after a daily or
+        // 45-minute rest it may still contain the previous driving cycle until motion starts.
+        val drivingDelta = when {
+            !isDriving(currentActivity) -> 0
 
-        // F927 belongs only to the current selected activity. For OTHER WORK it is safe to
-        // add the open segment on first reconciliation / entry, then only positive deltas.
-        // For DRIVING we deliberately ignore F927 completely.
-        val nextOtherWorkMinutes = when {
-            state.previousActivity == "—" && isOtherWork(currentActivity) ->
-                state.otherWorkMinutes + now
+            state.previousActivity == "—" -> {
+                // First reconciliation after a card read/restart. On supported DTCOs the
+                // current-shift timer caps the open F923 segment and rejects a stale value
+                // carried from the previous shift.
+                val cap = currentShiftDrivingMinutes?.coerceAtLeast(0)
+                if (cap != null) minOf(currentContinuous, cap) else currentContinuous
+            }
+
+            currentContinuous >= state.previousContinuousDrivingMinutes ->
+                currentContinuous - state.previousContinuousDrivingMinutes
+
+            else ->
+                // F923 really reset to a new continuous-driving cycle.
+                currentContinuous
+        }.coerceAtLeast(0)
+
+        // F927 belongs to the currently selected activity. Count it only for OTHER WORK.
+        // On entry/reconciliation add the open segment, then only positive deltas.
+        val otherWorkDelta = when {
+            state.previousActivity == "—" && isOtherWork(currentActivity) -> now
 
             state.previousActivity == currentActivity && isOtherWork(currentActivity) ->
-                state.otherWorkMinutes +
-                    (now - state.previousSourceMinutes).coerceAtLeast(0)
+                (now - state.previousSourceMinutes).coerceAtLeast(0)
 
-            state.previousActivity != currentActivity && isOtherWork(currentActivity) ->
-                state.otherWorkMinutes + now
+            state.previousActivity != currentActivity && isOtherWork(currentActivity) -> now
 
-            else -> state.otherWorkMinutes
+            else -> 0
         }
 
+        val nextOtherWorkMinutes = state.otherWorkMinutes + otherWorkDelta
+
         return State(
-            workMinutes = drivingMinutes + nextOtherWorkMinutes,
+            workMinutes = state.workMinutes + drivingDelta + otherWorkDelta,
             otherWorkMinutes = nextOtherWorkMinutes,
             previousActivity = currentActivity,
-            previousSourceMinutes = now
+            previousSourceMinutes = now,
+            previousContinuousDrivingMinutes = currentContinuous
         )
     }
 
+    private fun isDriving(v: String) = v.contains("ВОЖДЕНИЕ", true)
+
     private fun isOtherWork(v: String) =
-        v.contains("РАБОТА", true) && !v.contains("ВОЖДЕНИЕ", true)
+        v.contains("РАБОТА", true) && !isDriving(v)
 }
