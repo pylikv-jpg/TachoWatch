@@ -137,6 +137,52 @@ class ContinuousWorkCounterTest {
     }
 
     @Test
+    fun workCounterDoesNotLagBehindFreshContinuousDrivingByOneMinute() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 0,
+            otherWorkMinutes = 0,
+            previousActivity = "ВОЖДЕНИЕ",
+            previousSourceMinutes = 1,
+            previousContinuousDrivingMinutes = 1
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ВОЖДЕНИЕ",
+            activityMinutes = 3,
+            continuousDrivingMinutes = 3,
+            qualifyingRestMinutes = 0,
+            // Shift timer can be one minute behind F923 because the DIDs are read
+            // sequentially inside the same live cycle.
+            currentShiftDrivingMinutes = 2
+        )
+
+        assertEquals(3, result.workMinutes)
+    }
+
+    @Test
+    fun stalePreBreakF923IsNotCopiedIntoNewWorkWindow() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 0,
+            otherWorkMinutes = 0,
+            previousActivity = "ОТДЫХ / ПЕРЕРЫВ",
+            previousSourceMinutes = 45,
+            previousContinuousDrivingMinutes = 120
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ВОЖДЕНИЕ",
+            activityMinutes = 1,
+            continuousDrivingMinutes = 120,
+            qualifyingRestMinutes = 0,
+            currentShiftDrivingMinutes = 3
+        )
+
+        assertEquals(0, result.workMinutes)
+    }
+
+    @Test
     fun fortyFiveMinuteBreakResetsContinuousWork() {
         val state = ContinuousWorkCounter.State(
             workMinutes = 180,

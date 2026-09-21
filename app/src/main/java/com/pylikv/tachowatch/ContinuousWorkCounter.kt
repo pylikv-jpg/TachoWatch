@@ -73,8 +73,45 @@ object ContinuousWorkCounter {
 
         val nextOtherWorkMinutes = state.otherWorkMinutes + otherWorkDelta
 
+        // Keep the driving part of the 6h work window self-consistent with F923.
+        // Delta accumulation can lose the first minute after a service/card-read handoff
+        // when the persisted F923 checkpoint is already one minute ahead of workMinutes.
+        //
+        // Do NOT blindly copy absolute F923: immediately after a qualifying break some
+        // tachographs can briefly expose the previous driving-cycle value. Prefer the
+        // direct shift-driving timer as a plausibility check; without it, only repair
+        // clearly new/small cycles or a detected F923 reset.
+        val accumulatedDrivingMinutes =
+            (state.workMinutes - state.otherWorkMinutes).coerceAtLeast(0) + drivingDelta
+
+        val continuousDrivingFloor = if (isDriving(currentActivity)) {
+            val shiftDriving = currentShiftDrivingMinutes?.coerceAtLeast(0)
+            when {
+                shiftDriving != null ->
+                    if (currentContinuous <= shiftDriving + 1) currentContinuous else 0
+
+                state.previousActivity == "—" ->
+                    currentContinuous
+
+                currentContinuous < state.previousContinuousDrivingMinutes ->
+                    currentContinuous
+
+                state.previousContinuousDrivingMinutes <= 5 &&
+                    currentContinuous > state.previousContinuousDrivingMinutes &&
+                    currentContinuous <= 15 ->
+                    currentContinuous
+
+                else -> 0
+            }
+        } else {
+            0
+        }
+
+        val reconciledDrivingMinutes =
+            maxOf(accumulatedDrivingMinutes, continuousDrivingFloor)
+
         return State(
-            workMinutes = state.workMinutes + drivingDelta + otherWorkDelta,
+            workMinutes = reconciledDrivingMinutes + nextOtherWorkMinutes,
             otherWorkMinutes = nextOtherWorkMinutes,
             previousActivity = currentActivity,
             previousSourceMinutes = now,
