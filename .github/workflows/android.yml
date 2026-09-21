@@ -119,7 +119,19 @@ jobs:
         run: |
           test -n "$TACHOWATCH_UPLOAD_KEYSTORE_BASE64"
           KEYSTORE_PATH="$RUNNER_TEMP/tachowatch-upload.jks"
-          printf '%s' "$TACHOWATCH_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+
+          # Accept either the raw Base64 value or an accidentally pasted
+          # NAME=value line, and ignore whitespace introduced while copying.
+          KEYSTORE_B64="$TACHOWATCH_UPLOAD_KEYSTORE_BASE64"
+          KEYSTORE_B64="${KEYSTORE_B64#TACHOWATCH_UPLOAD_KEYSTORE_BASE64=}"
+          KEYSTORE_B64="$(printf '%s' "$KEYSTORE_B64" | tr -d '[:space:]')"
+
+          if ! printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"; then
+            echo "::error::TACHOWATCH_UPLOAD_KEYSTORE_BASE64 is not valid Base64. Re-copy the first value from TachoWatch-GitHub-secrets.txt."
+            exit 1
+          fi
+
+          test -s "$KEYSTORE_PATH"
           chmod 600 "$KEYSTORE_PATH"
           echo "TACHOWATCH_UPLOAD_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
