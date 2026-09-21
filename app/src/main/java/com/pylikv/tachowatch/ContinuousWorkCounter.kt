@@ -40,9 +40,7 @@ object ContinuousWorkCounter {
         // F923. Never copy the absolute F923 value into the work counter: after a daily or
         // 45-minute rest it may still contain the previous driving cycle until motion starts.
         val drivingDelta = when {
-            !isDriving(currentActivity) -> 0
-
-            state.previousActivity == "—" -> {
+            state.previousActivity == "—" && isDriving(currentActivity) -> {
                 // First reconciliation after a card read/restart. On supported DTCOs the
                 // current-shift timer caps the open F923 segment and rejects a stale value
                 // carried from the previous shift.
@@ -50,12 +48,17 @@ object ContinuousWorkCounter {
                 if (cap != null) minOf(currentContinuous, cap) else currentContinuous
             }
 
-            currentContinuous >= state.previousContinuousDrivingMinutes ->
+            // F903 can switch away from DRIVING one live cycle before the last completed
+            // minute appears in F923. Count that final positive F923 delta as driving.
+            (isDriving(currentActivity) || isDriving(state.previousActivity)) &&
+                currentContinuous >= state.previousContinuousDrivingMinutes ->
                 currentContinuous - state.previousContinuousDrivingMinutes
 
-            else ->
+            isDriving(currentActivity) ->
                 // F923 really reset to a new continuous-driving cycle.
                 currentContinuous
+
+            else -> 0
         }.coerceAtLeast(0)
 
         // F927 belongs to the currently selected activity. Count it only for OTHER WORK.
@@ -84,27 +87,36 @@ object ContinuousWorkCounter {
         val accumulatedDrivingMinutes =
             (state.workMinutes - state.otherWorkMinutes).coerceAtLeast(0) + drivingDelta
 
-        val continuousDrivingFloor = if (isDriving(currentActivity)) {
+        val continuousDrivingFloor = run {
             val shiftDriving = currentShiftDrivingMinutes?.coerceAtLeast(0)
             when {
-                shiftDriving != null ->
+                isDriving(currentActivity) && shiftDriving != null ->
                     if (currentContinuous <= shiftDriving + 1) currentContinuous else 0
 
-                state.previousActivity == "—" ->
+                isDriving(currentActivity) && state.previousActivity == "—" ->
                     currentContinuous
 
-                currentContinuous < state.previousContinuousDrivingMinutes ->
+                isDriving(currentActivity) &&
+                    currentContinuous < state.previousContinuousDrivingMinutes ->
                     currentContinuous
 
-                state.previousContinuousDrivingMinutes <= 5 &&
+                isDriving(currentActivity) &&
+                    state.previousContinuousDrivingMinutes <= 5 &&
                     currentContinuous > state.previousContinuousDrivingMinutes &&
                     currentContinuous <= 15 ->
                     currentContinuous
 
+                // Repair an already-missed final driving minute after the activity has
+                // changed away from DRIVING. Require an existing driving contribution and
+                // an exact one-minute mismatch so stale pre-break F923 cannot repopulate a
+                // freshly reset work window.
+                accumulatedDrivingMinutes > 0 &&
+                    currentContinuous == state.previousContinuousDrivingMinutes &&
+                    currentContinuous == accumulatedDrivingMinutes + 1 ->
+                    currentContinuous
+
                 else -> 0
             }
-        } else {
-            0
         }
 
         val reconciledDrivingMinutes =

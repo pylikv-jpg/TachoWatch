@@ -137,6 +137,73 @@ class ContinuousWorkCounterTest {
     }
 
     @Test
+    fun finalDrivingMinuteIsKeptWhenActivityAlreadyChangedToOtherWork() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 15,
+            otherWorkMinutes = 0,
+            previousActivity = "ВОЖДЕНИЕ",
+            previousSourceMinutes = 15,
+            previousContinuousDrivingMinutes = 15
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 0,
+            continuousDrivingMinutes = 16,
+            qualifyingRestMinutes = 0,
+            currentShiftDrivingMinutes = 16
+        )
+
+        assertEquals(16, result.workMinutes)
+    }
+
+    @Test
+    fun existingOneMinuteDrivingGapRepairsWithoutCardRead() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 15,
+            otherWorkMinutes = 0,
+            previousActivity = "ДРУГАЯ РАБОТА",
+            previousSourceMinutes = 2,
+            previousContinuousDrivingMinutes = 16
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 2,
+            continuousDrivingMinutes = 16,
+            qualifyingRestMinutes = 0,
+            currentShiftDrivingMinutes = 16
+        )
+
+        assertEquals(16, result.workMinutes)
+    }
+
+    @Test
+    fun staleContinuousValueAfterBreakDoesNotRepopulateWorkWindow() {
+        val state = ContinuousWorkCounter.State(
+            workMinutes = 0,
+            otherWorkMinutes = 0,
+            previousActivity = "ДРУГАЯ РАБОТА",
+            previousSourceMinutes = 2,
+            previousContinuousDrivingMinutes = 120
+        )
+
+        val result = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 3,
+            continuousDrivingMinutes = 120,
+            qualifyingRestMinutes = 0,
+            currentShiftDrivingMinutes = 200
+        )
+
+        assertEquals(1, result.workMinutes)
+        assertEquals(1, result.otherWorkMinutes)
+    }
+
+    @Test
     fun workCounterDoesNotLagBehindFreshContinuousDrivingByOneMinute() {
         val state = ContinuousWorkCounter.State(
             workMinutes = 0,
