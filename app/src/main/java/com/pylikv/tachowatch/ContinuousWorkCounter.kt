@@ -48,11 +48,18 @@ object ContinuousWorkCounter {
                 if (cap != null) minOf(currentContinuous, cap) else currentContinuous
             }
 
-            // F903 can switch away from DRIVING one live cycle before the last completed
-            // minute appears in F923. Count that final positive F923 delta as driving.
-            (isDriving(currentActivity) || isDriving(state.previousActivity)) &&
+            isDriving(currentActivity) &&
                 currentContinuous >= state.previousContinuousDrivingMinutes ->
                 currentContinuous - state.previousContinuousDrivingMinutes
+
+            // F903 can switch away from DRIVING one live cycle before the last completed
+            // minute appears in F923. Accept only the exact +1 transition. Requiring a
+            // real previous F923 checkpoint prevents old/default state from creating a jump.
+            !isDriving(currentActivity) &&
+                isDriving(state.previousActivity) &&
+                state.previousContinuousDrivingMinutes > 0 &&
+                currentContinuous == state.previousContinuousDrivingMinutes + 1 ->
+                1
 
             isDriving(currentActivity) ->
                 // F923 really reset to a new continuous-driving cycle.
