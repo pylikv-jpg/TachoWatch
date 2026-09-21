@@ -236,6 +236,11 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             val freshActivityMinutes = block?.let { mins(last(it, "F927")) }
             val freshContinuous = block?.let { mins(last(it, "F923")) }
             val freshBreak = block?.let { mins(last(it, "F925")) }
+            // Direct DTCO shift-driving pair. F9AF is the remaining driving time on
+            // the current shift; F9A6 is the maximum daily driving time for that shift.
+            // Use only values from this same completed live cycle — never a stale snapshot.
+            val freshRemainingShift = block?.let { mins(last(it, "F9AF")) }
+            val freshMaximumDailyDriving = block?.let { mins(last(it, "F9A6")) }
 
             if (freshActivity != null && freshActivityMinutes != null && freshContinuous != null && freshBreak != null) {
                 val previousRawContinuous = continuousMinutes
@@ -251,7 +256,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                 }
                 block?.let { mins(last(it, "F938")) }?.let { twoWeekMinutes = it }
 
-                processCycle()
+                processCycle(
+                    directRemainingShiftMinutes = freshRemainingShift,
+                    directMaximumDailyDrivingMinutes = freshMaximumDailyDriving
+                )
                 persistState()
                 evaluateAlerts()
                 updateServiceNotification("DTCO подключён • свежие данные")
@@ -306,21 +314,49 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             .apply()
     }
 
-    private fun processCycle() {
+    private fun processCycle(
+        directRemainingShiftMinutes: Int?,
+        directMaximumDailyDrivingMinutes: Int?
+    ) {
         val restNow = isRest(currentActivity)
         val restMinutes = if (restNow) maxOf(activityMinutes, breakMinutes) else 0
         val dailyRestCompleted = restMinutes >= 9 * 60
 
-        val shift = ShiftDrivingCounter.update(
-            initialized = shiftCounterInitialized,
-            totalMinutes = shiftCompletedMinutes,
-            previousContinuousMinutes = previousContinuousMinutes,
-            currentContinuousMinutes = continuousMinutes,
-            dailyRestCompleted = dailyRestCompleted
-        )
-        shiftCounterInitialized = shift.initialized
-        shiftCompletedMinutes = shift.totalMinutes
-        previousContinuousMinutes = shift.previousContinuousMinutes
+        // Shift driving has one authoritative source when the DTCO supports it:
+        // used shift driving = maximum allowed daily driving (F9A6)
+        //                    - remaining driving on current shift (F9AF).
+        //
+        // This prevents persisted/card values from the previous shift being carried into
+        // a newly opened shift. If either direct DID is absent/invalid in this cycle, keep
+        // the existing F923-based counter strictly as a compatibility fallback.
+        val directShiftLimit = directMaximumDailyDrivingMinutes?.takeIf { it in 9 * 60..10 * 60 }
+        val directShiftRemaining = directRemainingShiftMinutes?.takeIf {
+            directShiftLimit != null && it in 0..directShiftLimit
+        }
+
+        if (dailyRestCompleted) {
+            shiftCounterInitialized = true
+            shiftCompletedMinutes = 0
+            previousContinuousMinutes = continuousMinutes
+        } else if (directShiftLimit != null && directShiftRemaining != null) {
+            shiftCounterInitialized = true
+            shiftCompletedMinutes =
+                (directShiftLimit - directShiftRemaining).coerceIn(0, directShiftLimit)
+            // Keep fallback checkpoint aligned so a later unsupported cycle cannot add the
+            // current F923 segment a second time.
+            previousContinuousMinutes = continuousMinutes
+        } else {
+            val shift = ShiftDrivingCounter.update(
+                initialized = shiftCounterInitialized,
+                totalMinutes = shiftCompletedMinutes,
+                previousContinuousMinutes = previousContinuousMinutes,
+                currentContinuousMinutes = continuousMinutes,
+                dailyRestCompleted = false
+            )
+            shiftCounterInitialized = shift.initialized
+            shiftCompletedMinutes = shift.totalMinutes
+            previousContinuousMinutes = shift.previousContinuousMinutes
+        }
 
         val previousContinuousOtherWork = continuousWorkOtherMinutes
         val cw = ContinuousWorkCounter.update(
