@@ -15,7 +15,7 @@ object ContinuousWorkCounter {
         val otherWorkMinutes: Int,
         val previousActivity: String,
         val previousSourceMinutes: Int,
-        val previousContinuousDrivingMinutes: Int
+        val previousContinuousDrivingMinutes: Int = 0
     )
 
     fun update(
@@ -24,7 +24,7 @@ object ContinuousWorkCounter {
         activityMinutes: Int,
         continuousDrivingMinutes: Int,
         qualifyingRestMinutes: Int,
-        currentShiftDrivingMinutes: Int?
+        currentShiftDrivingMinutes: Int? = null
     ): State {
         val now = activityMinutes.coerceAtLeast(0)
         val currentContinuous = continuousDrivingMinutes.coerceAtLeast(0)
