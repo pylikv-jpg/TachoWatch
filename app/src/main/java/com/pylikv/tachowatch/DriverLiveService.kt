@@ -44,6 +44,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val CW_OTHER_WINDOW = "continuous_work_other_minutes"
         const val CW_PREV_ACTIVITY = "continuous_work_prev_activity"
         const val CW_PREV_DURATION = "continuous_work_prev_duration"
+        const val CW_PREV_CONTINUOUS = "continuous_work_prev_continuous"
         const val WORK_PREV_ACTIVITY = "work_prev_activity"
         const val WORK_PREV_DURATION = "work_prev_duration"
         const val WORK_ACC = "other_work_window_minutes"
@@ -113,6 +114,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var continuousWorkOtherMinutes = 0
     private var continuousWorkPreviousActivity = "—"
     private var continuousWorkPreviousDuration = 0
+    private var continuousWorkPreviousContinuous = 0
     private var previousActivity = "—"
     private var previousActivityDuration = 0
     private var otherWorkWindowMinutes = 0
@@ -286,6 +288,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         continuousWorkOtherMinutes = p.getInt(CW_OTHER_WINDOW, 0)
         continuousWorkPreviousActivity = p.getString(CW_PREV_ACTIVITY, "—") ?: "—"
         continuousWorkPreviousDuration = p.getInt(CW_PREV_DURATION, 0)
+        continuousWorkPreviousContinuous = p.getInt(CW_PREV_CONTINUOUS, continuousMinutes)
         previousActivity = p.getString(WORK_PREV_ACTIVITY, "—") ?: "—"
         previousActivityDuration = p.getInt(WORK_PREV_DURATION, 0)
         otherWorkWindowMinutes = p.getInt(WORK_ACC, 0)
@@ -307,6 +310,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             .putInt(CW_OTHER_WINDOW, continuousWorkOtherMinutes)
             .putString(CW_PREV_ACTIVITY, continuousWorkPreviousActivity)
             .putInt(CW_PREV_DURATION, continuousWorkPreviousDuration)
+            .putInt(CW_PREV_CONTINUOUS, continuousWorkPreviousContinuous)
             .putString(WORK_PREV_ACTIVITY, previousActivity)
             .putInt(WORK_PREV_DURATION, previousActivityDuration)
             .putInt(WORK_ACC, otherWorkWindowMinutes)
@@ -334,14 +338,20 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             directShiftLimit != null && it in 0..directShiftLimit
         }
 
+        val directShiftDrivingMinutes =
+            if (directShiftLimit != null && directShiftRemaining != null) {
+                (directShiftLimit - directShiftRemaining).coerceIn(0, directShiftLimit)
+            } else {
+                null
+            }
+
         if (dailyRestCompleted) {
             shiftCounterInitialized = true
             shiftCompletedMinutes = 0
             previousContinuousMinutes = continuousMinutes
-        } else if (directShiftLimit != null && directShiftRemaining != null) {
+        } else if (directShiftDrivingMinutes != null) {
             shiftCounterInitialized = true
-            shiftCompletedMinutes =
-                (directShiftLimit - directShiftRemaining).coerceIn(0, directShiftLimit)
+            shiftCompletedMinutes = directShiftDrivingMinutes
             // Keep fallback checkpoint aligned so a later unsupported cycle cannot add the
             // current F923 segment a second time.
             previousContinuousMinutes = continuousMinutes
@@ -364,12 +374,14 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                 workMinutes = workWindowMinutes,
                 otherWorkMinutes = continuousWorkOtherMinutes,
                 previousActivity = continuousWorkPreviousActivity,
-                previousSourceMinutes = continuousWorkPreviousDuration
+                previousSourceMinutes = continuousWorkPreviousDuration,
+                previousContinuousDrivingMinutes = continuousWorkPreviousContinuous
             ),
             currentActivity = currentActivity,
             activityMinutes = activityMinutes,
             continuousDrivingMinutes = continuousMinutes,
-            qualifyingRestMinutes = restMinutes
+            qualifyingRestMinutes = restMinutes,
+            currentShiftDrivingMinutes = directShiftDrivingMinutes
         )
 
         // ContinuousWorkCounter is the only owner of the 6h work window and of live
@@ -382,12 +394,14 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         continuousWorkOtherMinutes = cw.otherWorkMinutes
         continuousWorkPreviousActivity = cw.previousActivity
         continuousWorkPreviousDuration = cw.previousSourceMinutes
+        continuousWorkPreviousContinuous = cw.previousContinuousDrivingMinutes
 
         if (dailyRestCompleted) {
             workWindowMinutes = 0
             continuousWorkOtherMinutes = 0
             continuousWorkPreviousActivity = currentActivity
             continuousWorkPreviousDuration = activitySourceMinutes()
+            continuousWorkPreviousContinuous = continuousMinutes
             otherWorkWindowMinutes = 0
             availabilityWindowMinutes = 0
             previousActivity = currentActivity
