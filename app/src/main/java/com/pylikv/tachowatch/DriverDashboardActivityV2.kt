@@ -196,7 +196,16 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         status.text="Онлайн • данные актуальны"
         status.setTextColor(GREEN)
         updateNow()
+        maybeStartShiftCardRead()
     }}
+    private fun maybeStartShiftCardRead(){
+        if(cardReading||dtco==null)return
+        if(!prefs.getBoolean(DriverLiveService.SHIFT_CARD_READ_PENDING,false))return
+        if(!prefs.edit().putBoolean(DriverLiveService.SHIFT_CARD_READ_PENDING,false).commit())return
+        handler.postDelayed({
+            if(!cardReading&&dtco!=null)startCardRead("Новая смена после суточного отдыха",true)
+        },300)
+    }
     override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
     private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({DriverLiveService.start(applicationContext,d.address)},800)}}
