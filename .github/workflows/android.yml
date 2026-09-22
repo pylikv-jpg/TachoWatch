@@ -65,10 +65,10 @@ jobs:
       - name: Apply confirmed DTCO counter sources
         run: python3 tools/apply_counter_source_fix_v231.py
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
 
       - name: Run Android Lint
         continue-on-error: true

@@ -23,12 +23,12 @@ val hasReleaseSigning = listOf(
 
 android {
     namespace = "com.pylikv.tachowatch"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.pylikv.tachowatch"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = autoVersionCode
         versionName = autoVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
