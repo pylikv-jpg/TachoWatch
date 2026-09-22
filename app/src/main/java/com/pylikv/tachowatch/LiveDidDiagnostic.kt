@@ -35,7 +35,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
 
     companion object {
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-        private val SERVICE = UUID.fromString("fa213def-aef4-475c-bcea-0a8d69073efc")
+        private val SERVICE = TachographDiscovery.DIAGNOSTICS_SERVICE
         private val FIFO = UUID.fromString("e413960c-75ba-4ca9-8a67-99bc052a1b13")
         private val CREDITS = UUID.fromString("e168d1a6-304f-42b4-ab96-4cd1d4efebd9")
         private const val RESPONSE_TIMEOUT = 3000L
