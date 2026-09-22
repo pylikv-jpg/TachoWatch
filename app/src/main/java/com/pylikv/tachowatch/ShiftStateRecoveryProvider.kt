@@ -77,11 +77,56 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             } else {
                 seed.liveDrivingSegmentMinutes
             }
+            val liveActivityAtCheckpoint = if (liveSnapshotFresh) {
+                prefs.getString(DriverLiveService.SNAP_ACTIVITY, "—") ?: "—"
+            } else {
+                "—"
+            }
+            val liveActivityMinutesAtCheckpoint = if (liveSnapshotFresh) {
+                prefs.getInt(DriverLiveService.SNAP_ACTIVITY_MIN, 0).coerceAtLeast(0)
+            } else {
+                0
+            }
+
+            // The current card activity is intentionally OPEN and therefore absent from
+            // HistoryData totals. Merge that open live segment into the authoritative card
+            // checkpoint before restarting live monitoring. Persist the matching source
+            // checkpoint too, so the first cycle after reconnect adds only the new delta.
+            val liveOpenOtherWork = if (isOtherWork(liveActivityAtCheckpoint)) {
+                liveActivityMinutesAtCheckpoint
+            } else {
+                0
+            }
+            val liveOpenAvailability = if (isAvailability(liveActivityAtCheckpoint)) {
+                liveActivityMinutesAtCheckpoint
+            } else {
+                0
+            }
+            val mergedContinuousWork = seed.continuousWorkMinutes + liveOpenOtherWork
+            val mergedContinuousOtherWork =
+                seed.continuousOtherWorkMinutes + liveOpenOtherWork
+            val mergedShiftOtherWork = seed.workMinutes + liveOpenOtherWork
+            val mergedAvailability = seed.availabilityMinutes + liveOpenAvailability
+            val liveBookkeepingDuration = when {
+                isDriving(liveActivityAtCheckpoint) -> liveContinuousAtCheckpoint
+                liveSnapshotFresh -> liveActivityMinutesAtCheckpoint
+                else -> 0
+            }
+
+            // ongoingDailyRestMinutes() is derived from the last closed card shift. Just after
+            // a new shift starts it can still report >=9h because the new current activity is
+            // OPEN on the card. If live already says non-rest, the rest is a completed boundary,
+            // not an ongoing rest: keep the zero card seed but merge the new live driving.
+            val cardReadWhileStillResting =
+                ongoingRest != null &&
+                    ongoingRest >= DAILY_REST_MINUTES &&
+                    (!liveSnapshotFresh || isRest(liveActivityAtCheckpoint))
+
             val shiftCheckpoint = ShiftDrivingCounter.reconcileCheckpoint(
                 cardShiftDrivingMinutes = seed.drivingMinutes,
                 cardContinuousDrivingMinutes = seed.continuousDrivingCheckpointMinutes,
                 liveContinuousDrivingMinutes = liveContinuousAtCheckpoint,
-                dailyRestCompleted = ongoingRest != null && ongoingRest >= DAILY_REST_MINUTES
+                dailyRestCompleted = cardReadWhileStillResting
             )
 
             prefs.edit()
@@ -91,14 +136,15 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     DriverLiveService.SHIFT_PREV_CONTINUOUS,
                     shiftCheckpoint.previousContinuousMinutes
                 )
-                .putInt(DriverLiveService.WORK_WINDOW, seed.continuousWorkMinutes)
-                .putInt(DriverLiveService.CW_OTHER_WINDOW, seed.continuousOtherWorkMinutes)
-                .putInt(DriverLiveService.WORK_ACC, seed.workMinutes)
-                .putInt(DriverLiveService.AVAIL_ACC, seed.availabilityMinutes)
-                .putString(DriverLiveService.CW_PREV_ACTIVITY, "—")
-                .putInt(DriverLiveService.CW_PREV_DURATION, 0)
-                .putString(DriverLiveService.WORK_PREV_ACTIVITY, "—")
-                .putInt(DriverLiveService.WORK_PREV_DURATION, 0)
+                .putInt(DriverLiveService.WORK_WINDOW, mergedContinuousWork)
+                .putInt(DriverLiveService.CW_OTHER_WINDOW, mergedContinuousOtherWork)
+                .putInt(DriverLiveService.WORK_ACC, mergedShiftOtherWork)
+                .putInt(DriverLiveService.AVAIL_ACC, mergedAvailability)
+                .putString(DriverLiveService.CW_PREV_ACTIVITY, liveActivityAtCheckpoint)
+                .putInt(DriverLiveService.CW_PREV_DURATION, liveActivityMinutesAtCheckpoint)
+                .putInt(DriverLiveService.CW_PREV_CONTINUOUS, liveContinuousAtCheckpoint)
+                .putString(DriverLiveService.WORK_PREV_ACTIVITY, liveActivityAtCheckpoint)
+                .putInt(DriverLiveService.WORK_PREV_DURATION, liveBookkeepingDuration)
                 .putString(KEY_CARD_FINGERPRINT, fingerprint)
                 .putInt(KEY_RECOVERY_VERSION, RECOVERY_VERSION)
                 .putString(KEY_SHIFT_ID, seed.id)
@@ -227,6 +273,16 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val minutes = ((System.currentTimeMillis() - parsed.time) / 60000L).toInt()
         return minutes.takeIf { it >= 0 }
     }
+
+    private fun isDriving(v: String) = v.contains("ВОЖДЕНИЕ", true)
+
+    private fun isOtherWork(v: String) =
+        v.contains("РАБОТА", true) && !isDriving(v)
+
+    private fun isAvailability(v: String) = v.contains("ГОТОВНОСТЬ", true)
+
+    private fun isRest(v: String) =
+        v.contains("ОТДЫХ", true) || v.contains("ПЕРЕРЫВ", true)
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
     override fun getType(uri: Uri): String? = null
