@@ -31,7 +31,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         private const val REFILL_DELAY_MS = 180L
         private const val MAX_FRAGMENT_RETRIES = 3
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-        private val SERVICE = UUID.fromString("eef90782-55dd-4388-b80b-695aba7a69b5")
+        private val SERVICE = TachographDiscovery.DOWNLOAD_SERVICE
         private val FIFO = UUID.fromString("29d3a479-1592-47df-80a4-afa742d369bb")
         private val CREDITS = UUID.fromString("db9c4128-bff3-41fe-a306-fb6f9a8aeb2d")
     }
