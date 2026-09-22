@@ -49,6 +49,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val WORK_PREV_DURATION = "work_prev_duration"
         const val WORK_ACC = "other_work_window_minutes"
         const val AVAIL_ACC = "availability_window_minutes"
+        const val DAILY_REST_CARD_READ_ARMED = "daily_rest_card_read_armed"
+        const val SHIFT_CARD_READ_PENDING = "shift_card_read_pending"
 
         const val SNAP_ACTIVITY = "live_current_activity"
         const val SNAP_ACTIVITY_MIN = "live_activity_minutes"
@@ -325,6 +327,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         val restNow = isRest(currentActivity)
         val restMinutes = if (restNow) maxOf(activityMinutes, breakMinutes) else 0
         val dailyRestCompleted = restMinutes >= 9 * 60
+        updateShiftCardReadState(restNow, dailyRestCompleted)
 
         // Shift driving has one authoritative source when the DTCO supports it:
         // used shift driving = maximum allowed daily driving (F9A6)
@@ -411,6 +414,33 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             clearAlertGroup("work_")
             clearAlertGroup("shift9_")
             clearAlertGroup("shift10_")
+        }
+    }
+
+    private fun updateShiftCardReadState(restNow: Boolean, dailyRestCompleted: Boolean) {
+        val p = prefs()
+        if (dailyRestCompleted) {
+            // Arm exactly one automatic card read for the next shift opening. Keep it
+            // armed throughout the daily rest; the trigger is the first fresh non-rest
+            // live cycle after that rest.
+            if (!p.getBoolean(DAILY_REST_CARD_READ_ARMED, false) ||
+                p.getBoolean(SHIFT_CARD_READ_PENDING, false)
+            ) {
+                p.edit()
+                    .putBoolean(DAILY_REST_CARD_READ_ARMED, true)
+                    .putBoolean(SHIFT_CARD_READ_PENDING, false)
+                    .apply()
+            }
+            return
+        }
+
+        if (!restNow && p.getBoolean(DAILY_REST_CARD_READ_ARMED, false)) {
+            // Commit synchronously before notifying listeners through onLiveLog so the
+            // dashboard can consume this flag from the same completed live cycle.
+            p.edit()
+                .putBoolean(DAILY_REST_CARD_READ_ARMED, false)
+                .putBoolean(SHIFT_CARD_READ_PENDING, true)
+                .commit()
         }
     }
 
