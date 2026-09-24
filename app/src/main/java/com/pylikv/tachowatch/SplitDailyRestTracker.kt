@@ -17,6 +17,14 @@ object SplitDailyRestTracker {
         val completedAsSplit: Boolean = false
     )
 
+    /**
+     * Card history contains only closed activity periods. The recovery provider already
+     * limits these periods to the current shift (after the latest >=9h daily-rest boundary),
+     * so any closed REST from 3:00 up to 8:59 is a valid completed first part of 3+9.
+     */
+    fun recoverFirstPartFromClosedRest(restPeriodsMinutes: Iterable<Int>): Boolean =
+        restPeriodsMinutes.any { it in FIRST_PART_MINUTES until SECOND_PART_MINUTES }
+
     fun update(state: State, resting: Boolean, restMinutes: Int): State {
         val minutes = restMinutes.coerceAtLeast(0)
 

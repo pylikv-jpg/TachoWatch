@@ -65,4 +65,13 @@ class SplitDailyRestTrackerTest {
 
         assertFalse(state.firstPartTaken)
     }
+
+    @Test
+    fun cardRecoveryRestoresOnlyClosedThreeToNineHourFirstPart() {
+        assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedRest(listOf(45, 179)))
+        assertTrue(SplitDailyRestTracker.recoverFirstPartFromClosedRest(listOf(45, 180)))
+        assertTrue(SplitDailyRestTracker.recoverFirstPartFromClosedRest(listOf(539)))
+        assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedRest(listOf(540)))
+        assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedRest(listOf(660)))
+    }
 }

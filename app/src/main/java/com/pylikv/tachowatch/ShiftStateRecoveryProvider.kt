@@ -59,7 +59,8 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     continuousWorkMinutes = 0,
                     continuousOtherWorkMinutes = 0,
                     workMinutes = 0,
-                    availabilityMinutes = 0
+                    availabilityMinutes = 0,
+                    splitDailyThreeHourPartTaken = false
                 )
             } else {
                 currentShiftSeed(model) ?: return
@@ -87,6 +88,26 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             } else {
                 0
             }
+            val liveBreakMinutesAtCheckpoint = if (liveSnapshotFresh) {
+                prefs.getInt(DriverLiveService.SNAP_BREAK_MIN, 0).coerceAtLeast(0)
+            } else {
+                0
+            }
+            val liveRestingAtCheckpoint =
+                liveSnapshotFresh && isRest(liveActivityAtCheckpoint)
+            val liveRestMinutesAtCheckpoint = if (liveRestingAtCheckpoint) {
+                maxOf(liveActivityMinutesAtCheckpoint, liveBreakMinutesAtCheckpoint)
+            } else {
+                0
+            }
+            val recoveredSplitState = SplitDailyRestTracker.State(
+                firstPartTaken = seed.splitDailyThreeHourPartTaken,
+                previousResting = liveRestingAtCheckpoint,
+                previousRestMinutes = liveRestMinutesAtCheckpoint,
+                completedAsSplit =
+                    seed.splitDailyThreeHourPartTaken &&
+                        liveRestMinutesAtCheckpoint >= SplitDailyRestTracker.SECOND_PART_MINUTES
+            )
 
             // The current card activity is intentionally OPEN and therefore absent from
             // HistoryData totals. Merge that open live segment into the authoritative card
@@ -151,6 +172,22 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 .putInt(DriverLiveService.CW_PREV_CONTINUOUS, liveContinuousAtCheckpoint)
                 .putString(DriverLiveService.WORK_PREV_ACTIVITY, liveActivityAtCheckpoint)
                 .putInt(DriverLiveService.WORK_PREV_DURATION, liveBookkeepingDuration)
+                .putBoolean(
+                    DriverLiveService.SPLIT_DAILY_3H_TAKEN,
+                    recoveredSplitState.firstPartTaken
+                )
+                .putBoolean(
+                    DriverLiveService.SPLIT_DAILY_PREV_RESTING,
+                    recoveredSplitState.previousResting
+                )
+                .putInt(
+                    DriverLiveService.SPLIT_DAILY_PREV_REST_MINUTES,
+                    recoveredSplitState.previousRestMinutes
+                )
+                .putBoolean(
+                    DriverLiveService.SPLIT_DAILY_COMPLETED_AS_SPLIT,
+                    recoveredSplitState.completedAsSplit
+                )
                 .putString(KEY_CARD_FINGERPRINT, fingerprint)
                 .putInt(KEY_RECOVERY_VERSION, RECOVERY_VERSION)
                 .putString(KEY_SHIFT_ID, seed.id)
@@ -174,7 +211,8 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val continuousWorkMinutes: Int,
         val continuousOtherWorkMinutes: Int,
         val workMinutes: Int,
-        val availabilityMinutes: Int
+        val availabilityMinutes: Int,
+        val splitDailyThreeHourPartTaken: Boolean
     )
 
     private fun currentShiftSeed(model: HistoryData.Model): Seed? {
@@ -208,6 +246,10 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val driving = active.filter { it.type == "DRIVING" }.sumOf { it.minutes }
         val work = active.filter { it.type == "WORK" }.sumOf { it.minutes }
         val availability = active.filter { it.type == "AVAILABILITY" }.sumOf { it.minutes }
+        val splitDailyThreeHourPartTaken =
+            SplitDailyRestTracker.recoverFirstPartFromClosedRest(
+                active.filter { it.type == "REST" }.map { it.minutes }
+            )
 
         // Continuous work is DRIVING + WORK only since the latest qualifying driving break.
         // Mirror the live F925 logic: either one >=45m break or a 15m + >=30m split.
@@ -264,7 +306,8 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             continuousWorkMinutes = continuousWork,
             continuousOtherWorkMinutes = continuousOtherWork,
             workMinutes = work,
-            availabilityMinutes = availability
+            availabilityMinutes = availability,
+            splitDailyThreeHourPartTaken = splitDailyThreeHourPartTaken
         )
     }
 
@@ -301,7 +344,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         private const val CONTINUOUS_BREAK_MINUTES = 45
         private const val FIRST_READ_KEY = "first_card_read_done"
         private const val KEY_RECOVERY_VERSION = "recovery_model_version"
-        private const val RECOVERY_VERSION = 4
+        private const val RECOVERY_VERSION = 5
         private const val LIVE_SNAPSHOT_MAX_AGE_MS = 30L * 60L * 1000L
         const val KEY_RECONCILED_AT = "recovery_reconciled_at"
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"

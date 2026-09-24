@@ -27,6 +27,7 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 
 ### Split daily rest 3+9
 - [ ] After a REST segment reaches at least 3:00 but less than 9:00, switching to OTHER WORK or DRIVING keeps the first 3:00 part credited on the dashboard.
+- [ ] Reading the driver card after that first 3:00 part restores the credit instead of clearing it.
 - [ ] While the second REST part is running, the dashboard keeps the first 3:00 part and shows progress toward the required 9:00 second part.
 - [ ] At 9:00 of the second REST part, the dashboard identifies the result as a regular split daily rest (3:00 + 9:00), not a reduced 9:00 rest.
 - [ ] A continuous 9:00 REST with no earlier completed 3:00 part remains a reduced daily rest.
