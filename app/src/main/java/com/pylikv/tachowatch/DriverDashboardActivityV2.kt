@@ -15,10 +15,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -111,7 +113,8 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         val w=gaugeCard("▥  НЕДЕЛЬНОЕ ВОЖДЕНИЕ","динамический предел",emptyList());weekFrame=w.frame;weekProgress=w.progress;week=w.value;weekSub=w.sub;c.addView(w.container);c.addView(space(7))
         val tw=gaugeCard("↻  ДВУХНЕДЕЛЬНОЕ ВОЖДЕНИЕ","90:00",listOf(1f));twoWeekFrame=tw.frame;twoWeekProgress=tw.progress;twoWeek=tw.value;twoWeekSub=tw.sub;c.addView(tw.container);c.addView(space(7))
         val secondary=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};val ow=miniMetric("⚒  Другая работа");otherWorkFrame=ow.frame;otherWorkProgress=ow.progress;otherWork=ow.value;val av=miniMetric("▤  Готовность");availabilityFrame=av.frame;availabilityProgress=av.progress;availability=av.value;secondary.addView(ow.container,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));secondary.addView(hspace(7));secondary.addView(av.container,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));c.addView(secondary);c.addView(space(7))
-        activityState=TextView(this).apply{text="Текущее состояние: —";textSize=13f;setTextColor(CYAN);gravity=Gravity.CENTER;setPadding(dp(10),dp(10),dp(10),dp(10));background=rounded(CARD,dp(13).toFloat(),BORDER)};c.addView(activityState)
+        activityState=TextView(this).apply{text="Текущее состояние: —";textSize=13f;setTextColor(CYAN);gravity=Gravity.CENTER;setPadding(dp(10),dp(10),dp(10),dp(10));background=rounded(CARD,dp(13).toFloat(),BORDER)};c.addView(activityState);c.addView(space(7))
+        c.addView(tabButton("⚠  Сообщить о проблеме").apply{setOnClickListener{showProblemReportDialog()}},LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(48)))
         scroll.addView(c);nowRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
     }
 
@@ -133,6 +136,40 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private fun historyEventIcon(type:HistoryEventDecoder.Type)=when(type){HistoryEventDecoder.Type.OUT_BEGIN,HistoryEventDecoder.Type.OUT_END->"OUT";HistoryEventDecoder.Type.FERRY_TRAIN,HistoryEventDecoder.Type.FERRY_TRAIN_BEGIN,HistoryEventDecoder.Type.FERRY_TRAIN_END->"⛴";HistoryEventDecoder.Type.LOAD->"📦";HistoryEventDecoder.Type.UNLOAD->"📤";HistoryEventDecoder.Type.LOAD_UNLOAD->"📦↔"}
     private fun periodsInsideShift(day:HistoryData.Day):List<HistoryData.ActivityPeriod>{val start=day.startTime?.let(::clockValue)?:return day.periods;val length=day.shiftMinutes?:return day.periods;return day.periods.filter{((clockValue(it.startTime)-start+1440)%1440)<length}}
     private fun clockValue(v:String):Int=v.substringBefore(':').toIntOrNull()?.times(60)?.plus(v.substringAfter(':').toIntOrNull()?:0)?:0
+
+    private fun showProblemReportDialog(){
+        val input=EditText(this).apply{
+            hint="Коротко опишите, что произошло"
+            minLines=3
+            maxLines=7
+            setTextColor(TEXT)
+            setHintTextColor(MUTED)
+            inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setPadding(dp(12),dp(10),dp(12),dp(10))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Сообщить о проблеме")
+            .setMessage("К отчёту будут приложены технические данные DTCO за последние 60 минут: RAW/decoded DID, NRC, подключения и текущие счётчики. Имя водителя из F931 скрывается.")
+            .setView(input)
+            .setNegativeButton("Отмена",null)
+            .setPositiveButton("Подготовить отчёт"){_,_->
+                runCatching{
+                    val report=DiagnosticReporter.createReport(
+                        applicationContext,
+                        input.text?.toString().orEmpty(),
+                        DriverLiveService.diagnosticConnectionSummary()
+                    )
+                    startActivity(Intent.createChooser(DiagnosticReporter.shareIntent(this,report),"Отправить диагностический отчёт"))
+                }.onFailure{error->
+                    AlertDialog.Builder(this)
+                        .setTitle("Не удалось подготовить отчёт")
+                        .setMessage(error.message?:"Неизвестная ошибка")
+                        .setPositiveButton("ОК",null)
+                        .show()
+                }
+            }
+            .show()
+    }
 
     private fun loadHistory(){val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))?:return;val r=TlvInventory.parse(f);if(r.error==null){history=HistoryData.load(r);if(::historyRoot.isInitialized)buildHistoryView();updateWeekCards();updateWorkWeekClock();updateShiftDriving();updateShiftSpan()}}
     private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
