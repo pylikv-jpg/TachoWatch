@@ -12,7 +12,7 @@ import java.util.TimeZone
 class HistoryEventDecoderTest {
 
     @Test
-    fun decodesCardPresenceSpecificConditionsAndLoadOperations() {
+    fun ignoresCardPresenceAndDecodesSupportedHistoryEvents() {
         val day = epoch("2026-09-24 00:00")
         val activity = ByteArrayOutputStream().apply {
             write16(0)
@@ -69,9 +69,7 @@ class HistoryEventDecoderTest {
             assertEquals(null, parsed.error)
 
             val events = HistoryEventDecoder.decode(parsed)
-            assertEquals(9, events.size)
-            assertTrue(events.any { it.time == "06:15" && it.type == HistoryEventDecoder.Type.CARD_INSERTED && it.odometerKm == 123400 })
-            assertTrue(events.any { it.time == "18:17" && it.type == HistoryEventDecoder.Type.CARD_REMOVED && it.odometerKm == 123500 })
+            assertEquals(7, events.size)
             assertTrue(events.any { it.time == "07:00" && it.type == HistoryEventDecoder.Type.OUT_BEGIN })
             assertTrue(events.any { it.time == "08:00" && it.type == HistoryEventDecoder.Type.OUT_END })
             assertTrue(events.any { it.time == "09:00" && it.type == HistoryEventDecoder.Type.FERRY_TRAIN_BEGIN })
