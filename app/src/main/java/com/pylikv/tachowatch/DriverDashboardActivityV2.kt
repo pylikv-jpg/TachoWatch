@@ -149,24 +149,39 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         }
         AlertDialog.Builder(this)
             .setTitle("Сообщить о проблеме")
-            .setMessage("К отчёту будут приложены технические данные DTCO за последние 60 минут: RAW/decoded DID, NRC, подключения и текущие счётчики. Имя водителя из F931 скрывается.")
+            .setMessage("Будут отправлены технические данные DTCO за последние 60 минут: RAW/decoded DID, NRC, подключения и текущие счётчики. Имя F931 и идентификаторы дополнительно очищаются на сервере.")
             .setView(input)
             .setNegativeButton("Отмена",null)
-            .setPositiveButton("Подготовить отчёт"){_,_->
-                runCatching{
-                    val report=DiagnosticReporter.createReport(
-                        applicationContext,
-                        input.text?.toString().orEmpty(),
-                        DriverLiveService.diagnosticConnectionSummary()
-                    )
-                    startActivity(Intent.createChooser(DiagnosticReporter.shareIntent(this,report),"Отправить диагностический отчёт"))
-                }.onFailure{error->
-                    AlertDialog.Builder(this)
-                        .setTitle("Не удалось подготовить отчёт")
-                        .setMessage(error.message?:"Неизвестная ошибка")
-                        .setPositiveButton("ОК",null)
-                        .show()
+            .setPositiveButton("Отправить"){_,_->
+                val description=input.text?.toString().orEmpty()
+                val connectionSummary=DriverLiveService.diagnosticConnectionSummary()
+                val report=runCatching{
+                    DiagnosticReporter.createReport(applicationContext,description,connectionSummary)
+                }.getOrElse{error->
+                    AlertDialog.Builder(this).setTitle("Не удалось подготовить отчёт").setMessage(error.message?:"Неизвестная ошибка").setPositiveButton("ОК",null).show()
+                    return@setPositiveButton
                 }
+                Thread{
+                    val result=DiagnosticUploader.submit(applicationContext,report,description,connectionSummary)
+                    runOnUiThread{
+                        if(result.ok){
+                            AlertDialog.Builder(this)
+                                .setTitle("Отчёт отправлен")
+                                .setMessage("Диагностический отчёт сохранён. Номер: ${result.reportId?:"—"}")
+                                .setPositiveButton("ОК",null)
+                                .show()
+                        }else{
+                            AlertDialog.Builder(this)
+                                .setTitle("Не удалось отправить")
+                                .setMessage("Отчёт сохранён на телефоне. Можно отправить его вручную.\n\n${result.error?:"Ошибка сети"}")
+                                .setNegativeButton("Закрыть",null)
+                                .setPositiveButton("Поделиться"){_,_->
+                                    startActivity(Intent.createChooser(DiagnosticReporter.shareIntent(this,report),"Отправить диагностический отчёт"))
+                                }
+                                .show()
+                        }
+                    }
+                }.start()
             }
             .show()
     }
