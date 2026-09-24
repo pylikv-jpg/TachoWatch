@@ -332,8 +332,13 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
             return
         }
         if (a.size >= 3 && u(a[0]) == 0x7F && u(a[1]) == 0x22 && waiting) {
-            // Optional ISO DIDs are not guaranteed on every tachograph. NRC means
-            // unsupported/unavailable here, not a broken live session.
+            // Optional ISO DIDs are not guaranteed on every tachograph. Keep the
+            // rejected DID + NRC in diagnostics so compatibility can be analysed
+            // from tester reports without treating it as a broken live session.
+            val rejectedDid = dids.getOrNull(index)
+            if (rejectedDid != null) {
+                log("${hex4(rejectedDid)}=NRC ${hex(a)}", notify = false)
+            }
             markFresh()
             waiting = false
             token++
@@ -462,6 +467,11 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     }.trim()
 
     private fun log(s: String, notify: Boolean = true) {
+        DiagnosticReporter.record(
+            context,
+            if (s.startsWith("F9") || s.startsWith("F8")) "DID" else "LIVE",
+            s
+        )
         lines.add(s)
         while (lines.size > 500) lines.removeAt(0)
         if (notify) listener.onLiveLog(lines.joinToString("\n"))
