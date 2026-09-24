@@ -31,6 +31,16 @@ class HistoryEventDecoderTest {
             write(record)
         }.toByteArray()
 
+        val vehicles = ByteArrayOutputStream().apply {
+            write16(0)
+            writeVehicleUse(
+                firstUse = epoch("2026-09-24 06:15"),
+                lastUse = epoch("2026-09-24 18:17"),
+                odometerBegin = 123400,
+                odometerEnd = 123500
+            )
+        }.toByteArray()
+
         val conditions = ByteArrayOutputStream().apply {
             write16(3)
             writeCondition(epoch("2026-09-24 07:00"), 0x01)
@@ -50,6 +60,7 @@ class HistoryEventDecoderTest {
         try {
             file.writeBytes(
                 tlv(0x0504, 0x02, activity) +
+                    tlv(0x0505, 0x02, vehicles) +
                     tlv(0x0522, 0x02, conditions) +
                     tlv(0x0529, 0x02, operations)
             )
@@ -59,8 +70,8 @@ class HistoryEventDecoderTest {
 
             val events = HistoryEventDecoder.decode(parsed)
             assertEquals(9, events.size)
-            assertTrue(events.any { it.time == "06:15" && it.type == HistoryEventDecoder.Type.CARD_INSERTED })
-            assertTrue(events.any { it.time == "18:17" && it.type == HistoryEventDecoder.Type.CARD_REMOVED })
+            assertTrue(events.any { it.time == "06:15" && it.type == HistoryEventDecoder.Type.CARD_INSERTED && it.odometerKm == 123400 })
+            assertTrue(events.any { it.time == "18:17" && it.type == HistoryEventDecoder.Type.CARD_REMOVED && it.odometerKm == 123500 })
             assertTrue(events.any { it.time == "07:00" && it.type == HistoryEventDecoder.Type.OUT_BEGIN })
             assertTrue(events.any { it.time == "08:00" && it.type == HistoryEventDecoder.Type.OUT_END })
             assertTrue(events.any { it.time == "09:00" && it.type == HistoryEventDecoder.Type.FERRY_TRAIN_BEGIN })
@@ -77,6 +88,22 @@ class HistoryEventDecoderTest {
         var value = minute and 0x07FF
         if (!cardInserted) value = value or 0x2000
         return value
+    }
+
+    private fun ByteArrayOutputStream.writeVehicleUse(
+        firstUse: Long,
+        lastUse: Long,
+        odometerBegin: Int,
+        odometerEnd: Int
+    ) {
+        write24(odometerBegin)
+        write24(odometerEnd)
+        write32(firstUse)
+        write32(lastUse)
+        write(0x20)
+        repeat(14) { write(0x20) }
+        write16(0)
+        repeat(17) { write(0x20) }
     }
 
     private fun ByteArrayOutputStream.writeCondition(timestamp: Long, type: Int) {
