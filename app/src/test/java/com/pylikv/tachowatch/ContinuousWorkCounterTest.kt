@@ -250,6 +250,80 @@ class ContinuousWorkCounterTest {
     }
 
     @Test
+    fun ignitionZeroMinuteRestBlipDoesNotDoubleOtherWork() {
+        var state = ContinuousWorkCounter.State(
+            workMinutes = 12,
+            otherWorkMinutes = 12,
+            previousActivity = "ДРУГАЯ РАБОТА",
+            previousSourceMinutes = 12
+        )
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ОТДЫХ / ПЕРЕРЫВ",
+            activityMinutes = 0,
+            continuousDrivingMinutes = 0,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(12, state.workMinutes)
+        assertEquals(12, state.otherWorkMinutes)
+        assertEquals("ДРУГАЯ РАБОТА", state.previousActivity)
+        assertEquals(12, state.previousSourceMinutes)
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 12,
+            continuousDrivingMinutes = 0,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(12, state.workMinutes)
+        assertEquals(12, state.otherWorkMinutes)
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 13,
+            continuousDrivingMinutes = 0,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(13, state.workMinutes)
+        assertEquals(13, state.otherWorkMinutes)
+    }
+
+    @Test
+    fun ignitionRestBlipWithF927ResetStartsOnlyNewWorkSegment() {
+        var state = ContinuousWorkCounter.State(
+            workMinutes = 12,
+            otherWorkMinutes = 12,
+            previousActivity = "ДРУГАЯ РАБОТА",
+            previousSourceMinutes = 12
+        )
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ОТДЫХ / ПЕРЕРЫВ",
+            activityMinutes = 0,
+            continuousDrivingMinutes = 0,
+            qualifyingRestMinutes = 0
+        )
+
+        state = ContinuousWorkCounter.update(
+            state = state,
+            currentActivity = "ДРУГАЯ РАБОТА",
+            activityMinutes = 1,
+            continuousDrivingMinutes = 0,
+            qualifyingRestMinutes = 0
+        )
+
+        assertEquals(13, state.workMinutes)
+        assertEquals(13, state.otherWorkMinutes)
+    }
+
+    @Test
     fun fortyFiveMinuteBreakResetsContinuousWork() {
         val state = ContinuousWorkCounter.State(
             workMinutes = 180,
