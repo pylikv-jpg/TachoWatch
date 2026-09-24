@@ -51,6 +51,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val AVAIL_ACC = "availability_window_minutes"
         const val DAILY_REST_CARD_READ_ARMED = "daily_rest_card_read_armed"
         const val SHIFT_CARD_READ_PENDING = "shift_card_read_pending"
+        const val SPLIT_DAILY_3H_TAKEN = "split_daily_3h_taken"
+        const val SPLIT_DAILY_COMPLETED_AS_SPLIT = "split_daily_completed_as_split"
+        private const val SPLIT_DAILY_PREV_RESTING = "split_daily_prev_resting"
+        private const val SPLIT_DAILY_PREV_REST_MINUTES = "split_daily_prev_rest_minutes"
 
         const val SNAP_ACTIVITY = "live_current_activity"
         const val SNAP_ACTIVITY_MIN = "live_activity_minutes"
@@ -124,6 +128,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var previousActivityDuration = 0
     private var otherWorkWindowMinutes = 0
     private var availabilityWindowMinutes = 0
+    private var splitDailyRestState = SplitDailyRestTracker.State()
 
     override fun onCreate() {
         super.onCreate()
@@ -313,6 +318,12 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         previousActivityDuration = p.getInt(WORK_PREV_DURATION, 0)
         otherWorkWindowMinutes = p.getInt(WORK_ACC, 0)
         availabilityWindowMinutes = p.getInt(AVAIL_ACC, 0)
+        splitDailyRestState = SplitDailyRestTracker.State(
+            firstPartTaken = p.getBoolean(SPLIT_DAILY_3H_TAKEN, false),
+            previousResting = p.getBoolean(SPLIT_DAILY_PREV_RESTING, false),
+            previousRestMinutes = p.getInt(SPLIT_DAILY_PREV_REST_MINUTES, 0),
+            completedAsSplit = p.getBoolean(SPLIT_DAILY_COMPLETED_AS_SPLIT, false)
+        )
     }
 
     private fun persistState() {
@@ -335,6 +346,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             .putInt(WORK_PREV_DURATION, previousActivityDuration)
             .putInt(WORK_ACC, otherWorkWindowMinutes)
             .putInt(AVAIL_ACC, availabilityWindowMinutes)
+            .putBoolean(SPLIT_DAILY_3H_TAKEN, splitDailyRestState.firstPartTaken)
+            .putBoolean(SPLIT_DAILY_PREV_RESTING, splitDailyRestState.previousResting)
+            .putInt(SPLIT_DAILY_PREV_REST_MINUTES, splitDailyRestState.previousRestMinutes)
+            .putBoolean(SPLIT_DAILY_COMPLETED_AS_SPLIT, splitDailyRestState.completedAsSplit)
             .apply()
     }
 
@@ -344,6 +359,22 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     ) {
         val restNow = isRest(currentActivity)
         val restMinutes = if (restNow) maxOf(activityMinutes, breakMinutes) else 0
+        val previousSplitState = splitDailyRestState
+        splitDailyRestState = SplitDailyRestTracker.update(
+            state = splitDailyRestState,
+            resting = restNow,
+            restMinutes = restMinutes
+        )
+        if (splitDailyRestState != previousSplitState) {
+            DiagnosticReporter.record(
+                applicationContext,
+                "REST",
+                "split3=${splitDailyRestState.firstPartTaken} " +
+                    "splitCompleted=${splitDailyRestState.completedAsSplit} " +
+                    "resting=${splitDailyRestState.previousResting} " +
+                    "restMinutes=${splitDailyRestState.previousRestMinutes}"
+            )
+        }
         val dailyRestCompleted = restMinutes >= 9 * 60
         updateShiftCardReadState(restNow, dailyRestCompleted)
 

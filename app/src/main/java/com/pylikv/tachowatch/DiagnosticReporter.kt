@@ -93,6 +93,8 @@ object DiagnosticReporter {
             appendLine("continuous_work_minutes=${prefs.getInt(DriverLiveService.WORK_WINDOW, 0)}")
             appendLine("other_work_minutes=${prefs.getInt(DriverLiveService.WORK_ACC, 0)}")
             appendLine("availability_minutes=${prefs.getInt(DriverLiveService.AVAIL_ACC, 0)}")
+            appendLine("split_daily_3h_taken=${prefs.getBoolean(DriverLiveService.SPLIT_DAILY_3H_TAKEN, false)}")
+            appendLine("split_daily_completed_as_split=${prefs.getBoolean(DriverLiveService.SPLIT_DAILY_COMPLETED_AS_SPLIT, false)}")
             appendLine("two_week_driving_minutes=${prefs.getInt(DriverLiveService.SNAP_TWO_WEEK_MIN, 0)}")
             appendLine("snapshot_updated_at_utc=${utc(prefs.getLong(DriverLiveService.SNAP_UPDATED_AT, 0L))}")
             appendLine()
