@@ -467,11 +467,11 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     }.trim()
 
     private fun log(s: String, notify: Boolean = true) {
-        DiagnosticReporter.record(
-            context,
-            if (s.startsWith("F9") || s.startsWith("F8")) "DID" else "LIVE",
-            s
-        )
+        // Persist transport events immediately. Raw DID/NRC lines are persisted as one
+        // completed-cycle block by DriverLiveService to avoid file I/O on every DID.
+        if (notify && !s.startsWith("LIVE CYCLE")) {
+            DiagnosticReporter.record(context, "LIVE", s)
+        }
         lines.add(s)
         while (lines.size > 500) lines.removeAt(0)
         if (notify) listener.onLiveLog(lines.joinToString("\n"))
