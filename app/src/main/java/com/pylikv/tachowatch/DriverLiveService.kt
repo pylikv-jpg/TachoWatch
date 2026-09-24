@@ -53,8 +53,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val SHIFT_CARD_READ_PENDING = "shift_card_read_pending"
         const val SPLIT_DAILY_3H_TAKEN = "split_daily_3h_taken"
         const val SPLIT_DAILY_COMPLETED_AS_SPLIT = "split_daily_completed_as_split"
-        private const val SPLIT_DAILY_PREV_RESTING = "split_daily_prev_resting"
-        private const val SPLIT_DAILY_PREV_REST_MINUTES = "split_daily_prev_rest_minutes"
+        const val SPLIT_DAILY_PREV_RESTING = "split_daily_prev_resting"
+        const val SPLIT_DAILY_PREV_REST_MINUTES = "split_daily_prev_rest_minutes"
 
         const val SNAP_ACTIVITY = "live_current_activity"
         const val SNAP_ACTIVITY_MIN = "live_activity_minutes"
