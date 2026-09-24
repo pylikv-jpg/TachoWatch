@@ -62,11 +62,19 @@ object DiagnosticReporter {
         }
 
         val prefs = context.getSharedPreferences(DriverLiveService.PREFS, Context.MODE_PRIVATE)
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        val versionName = packageInfo.versionName ?: "unknown"
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            packageInfo.versionCode.toLong()
+        }
         val report = buildString {
             appendLine("TACHOWATCH DIAGNOSTIC REPORT")
             appendLine("created_utc=${utc(now)}")
-            appendLine("app_version=${BuildConfig.VERSION_NAME}")
-            appendLine("app_version_code=${BuildConfig.VERSION_CODE}")
+            appendLine("app_version=$versionName")
+            appendLine("app_version_code=$versionCode")
             appendLine("android=${Build.VERSION.RELEASE} sdk=${Build.VERSION.SDK_INT}")
             appendLine("device=${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("connection=$connectionSummary")
