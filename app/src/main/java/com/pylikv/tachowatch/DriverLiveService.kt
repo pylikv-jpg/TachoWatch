@@ -244,6 +244,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
         if (cycle != null && cycle > lastProcessedCycle) {
             val block = currentCycleBlock(log, cycle)
+            block?.let { DiagnosticReporter.record(applicationContext, "CYCLE", it) }
             // Mark this cycle consumed even when one mandatory DID timed out. Reusing a value
             // from an older cycle is more dangerous than waiting for the next complete cycle.
             lastProcessedCycle = cycle
