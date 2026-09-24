@@ -10,7 +10,8 @@ import java.util.TimeZone
  * participate in driving/work/rest counter arithmetic.
  *
  * Sources:
- *  - EF Driver_Activity_Data (0504): card IN/OUT transitions
+ *  - EF Vehicles_Used (0505): vehicle use begin/end, used as card insert/remove
+ *  - EF Driver_Activity_Data (0504): card IN/OUT fallback for old/incomplete data
  *  - EF Specific_Conditions (0522): OUT and Ferry/Train
  *  - EF Load_Unload_Operations (0529, Gen2 v2): load/unload entries
  */
@@ -53,6 +54,19 @@ object HistoryEventDecoder {
         }
 
         val events = ArrayList<Event>()
+
+        // EF 0505 records one vehicle-use period with explicit first/last use
+        // timestamps. This is the primary source for insert/remove history.
+        val vehicleUseEvents = result.entries
+            .filter { it.fid == 0x0505 && (it.suffix == 0x00 || it.suffix == 0x02) }
+            .flatMap { entry ->
+                val start = entry.offset + 5
+                val end = start + entry.length
+                if (start < 0 || end > allData.size) emptyList()
+                else decodeVehicleUsage(allData.copyOfRange(start, end), entry.suffix)
+            }
+        events += vehicleUseEvents
+
         result.entries.forEach { entry ->
             val start = entry.offset + 5
             val end = start + entry.length
@@ -60,7 +74,11 @@ object HistoryEventDecoder {
             val payload = allData.copyOfRange(start, end)
 
             when {
-                entry.fid == 0x0504 && (entry.suffix == 0x00 || entry.suffix == 0x02) ->
+                // Fallback only: avoid duplicate/ambiguous card-state rows when
+                // explicit vehicle-use periods are available.
+                entry.fid == 0x0504 &&
+                    vehicleUseEvents.isEmpty() &&
+                    (entry.suffix == 0x00 || entry.suffix == 0x02) ->
                     events += decodeCardPresence(payload)
 
                 entry.fid == 0x0522 && (entry.suffix == 0x00 || entry.suffix == 0x02) ->
@@ -74,6 +92,41 @@ object HistoryEventDecoder {
         return events
             .distinctBy { listOf(it.date, it.time, it.type.name, it.odometerKm?.toString().orEmpty()) }
             .sortedWith(compareBy<Event>({ it.date }, { it.time }, { it.type.ordinal }))
+    }
+
+    private fun decodeVehicleUsage(payload: ByteArray, suffix: Int): List<Event> {
+        val recordSize = when (suffix) {
+            0x00 -> 31
+            0x02 -> 48
+            else -> return emptyList()
+        }
+        if (payload.size < 2 + recordSize || (payload.size - 2) % recordSize != 0) return emptyList()
+
+        val out = ArrayList<Event>()
+        val count = (payload.size - 2) / recordSize
+        for (i in 0 until count) {
+            val p = 2 + i * recordSize
+            val firstUse = be32(payload, p + 6)
+            val lastUse = be32(payload, p + 10)
+
+            if (validTime(firstUse)) {
+                out += Event(
+                    date = formatDate(firstUse),
+                    time = formatClockSeconds(firstUse),
+                    type = Type.CARD_INSERTED,
+                    odometerKm = be24u(payload, p)
+                )
+            }
+            if (validTime(lastUse)) {
+                out += Event(
+                    date = formatDate(lastUse),
+                    time = formatClockSeconds(lastUse),
+                    type = Type.CARD_REMOVED,
+                    odometerKm = be24u(payload, p + 3)
+                )
+            }
+        }
+        return out
     }
 
     private fun decodeCardPresence(payload: ByteArray): List<Event> {
