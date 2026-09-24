@@ -13,6 +13,12 @@ object HistoryData {
         val minutes: Int
     )
 
+    data class HistoryEvent(
+        val time: String,
+        val type: HistoryEventDecoder.Type,
+        val odometerKm: Int? = null
+    )
+
     data class Day(
         val date: String,
         val drivingMinutes: Int,
@@ -23,7 +29,8 @@ object HistoryData {
         val endTime: String?,
         val endCountry: String?,
         val hasSplitDailyRest3h: Boolean = false,
-        val periods: List<ActivityPeriod> = emptyList()
+        val periods: List<ActivityPeriod> = emptyList(),
+        val events: List<HistoryEvent> = emptyList()
     ) {
         val shiftMinutes: Int? get() {
             val s = startTime?.let(::clockMinutes) ?: return null
@@ -89,6 +96,7 @@ object HistoryData {
     fun load(result: TlvInventory.Result): Model {
         val activityText = TlvInventory.render(result)
         val placesText = PlacesDecoder.render(result)
+        val historyEvents = HistoryEventDecoder.decode(result).groupBy { it.date }
         val activityDays = linkedMapOf<String, ActivityDay>()
 
         Regex("(?ms)^DAY#\\d+.*?date=(\\d{4}-\\d{2}-\\d{2}).*?\\n(.*?)(?=^DAY#|^STATUS=)")
@@ -148,7 +156,10 @@ object HistoryData {
             val hasActivity = a.driving > 0 || a.work > 0 || a.availability > 0
             if (!hasActivity && startTime == null && endTime == null) null else Day(
                 date, a.driving, a.work, a.availability,
-                startTime, begin?.country, endTime, end?.country, a.hasSplitDailyRest3h, a.periods.toList()
+                startTime, begin?.country, endTime, end?.country, a.hasSplitDailyRest3h, a.periods.toList(),
+                historyEvents[date].orEmpty()
+                    .map { HistoryEvent(it.time, it.type, it.odometerKm) }
+                    .sortedBy { it.time }
             )
         }.sortedBy { it.date }
 
