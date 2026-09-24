@@ -91,6 +91,9 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         }
 
         fun isRunning(): Boolean = running
+
+        fun diagnosticConnectionSummary(): String =
+            "running=$running connected=$connected device=${deviceName ?: "unknown"}"
     }
 
     private lateinit var live: LiveDidDiagnostic
@@ -144,6 +147,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             }
             ACTION_PAUSE -> {
                 pausedForCardRead = true
+                DiagnosticReporter.record(applicationContext, "CARD_READ", "Live paused for driver-card read")
                 live.disconnect()
                 updateServiceNotification("Считывание карты • live временно приостановлен")
             }
@@ -151,6 +155,9 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                 val address = intent.getStringExtra(EXTRA_ADDRESS)
                 if (!address.isNullOrBlank()) {
                     prefs().edit().putString(SELECTED_DTCO, address).apply()
+                    if (pausedForCardRead) {
+                        DiagnosticReporter.record(applicationContext, "CARD_READ", "Live resumed after driver-card read")
+                    }
                     pausedForCardRead = false
                     connectAddress(address)
                 }
@@ -216,6 +223,11 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     override fun onLiveConnection(isConnected: Boolean, name: String?) {
         connected = isConnected
         deviceName = name
+        DiagnosticReporter.record(
+            applicationContext,
+            "CONNECTION",
+            if (isConnected) "DTCO connected: ${name ?: "unknown"}" else "DTCO disconnected"
+        )
         if (isConnected) {
             // LiveDidDiagnostic restarts cycle numbering from #1 for each GATT session.
             // Treat every reconnect as a new processing epoch.
@@ -232,6 +244,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
         if (cycle != null && cycle > lastProcessedCycle) {
             val block = currentCycleBlock(log, cycle)
+            block?.let { DiagnosticReporter.record(applicationContext, "CYCLE", it) }
             // Mark this cycle consumed even when one mandatory DID timed out. Reusing a value
             // from an older cycle is more dangerous than waiting for the next complete cycle.
             lastProcessedCycle = cycle
