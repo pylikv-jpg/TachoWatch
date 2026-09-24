@@ -74,7 +74,13 @@ object ContinuousWorkCounter {
             state.previousActivity == "—" && isOtherWork(currentActivity) -> now
 
             state.previousActivity == currentActivity && isOtherWork(currentActivity) ->
-                (now - state.previousSourceMinutes).coerceAtLeast(0)
+                if (now >= state.previousSourceMinutes) {
+                    now - state.previousSourceMinutes
+                } else {
+                    // F927 reset while WORK remained/restored as the logical activity.
+                    // Treat the new smaller value as elapsed time of a fresh WORK segment.
+                    now
+                }
 
             state.previousActivity != currentActivity && isOtherWork(currentActivity) -> now
 
@@ -129,11 +135,24 @@ object ContinuousWorkCounter {
         val reconciledDrivingMinutes =
             maxOf(accumulatedDrivingMinutes, continuousDrivingFloor)
 
+        // Ignition can make some DTCO units report a zero-minute REST/AVAILABILITY
+        // blip while the driver was in OTHER WORK. Do not let that zero-length blip erase
+        // the F927 WORK checkpoint: otherwise returning to WORK adds the whole open F927
+        // value again and doubles OTHER WORK.
+        val zeroMinuteBlipAfterOtherWork =
+            isOtherWork(state.previousActivity) &&
+                !isOtherWork(currentActivity) &&
+                !isDriving(currentActivity) &&
+                now == 0 &&
+                qualifyingRestMinutes == 0
+
         return State(
             workMinutes = reconciledDrivingMinutes + nextOtherWorkMinutes,
             otherWorkMinutes = nextOtherWorkMinutes,
-            previousActivity = currentActivity,
-            previousSourceMinutes = now,
+            previousActivity =
+                if (zeroMinuteBlipAfterOtherWork) state.previousActivity else currentActivity,
+            previousSourceMinutes =
+                if (zeroMinuteBlipAfterOtherWork) state.previousSourceMinutes else now,
             previousContinuousDrivingMinutes = currentContinuous
         )
     }
