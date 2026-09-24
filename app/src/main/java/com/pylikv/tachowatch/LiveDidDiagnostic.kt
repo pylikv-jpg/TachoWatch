@@ -432,13 +432,19 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         0xF906 -> if (b.isEmpty()) "—" else "warning=${u(b[0]) and 0x0F}"
         0xF931 -> if (b.size >= 72) "${clean(b.copyOfRange(0, 36))} ${clean(b.copyOfRange(36, 72))}".trim() else clean(b)
         0xF9A0, 0xF9AB -> if (b.isEmpty()) "—" else "${u(b[0])} count"
+        // ISO 16844-7 defines MaximumDailyPeriod as a one-byte value with
+        // 1 hour/bit resolution, unlike the two-byte minute-based timers.
+        0xF9A5 -> if (b.isEmpty()) "—" else {
+            val minutes = u(b[0]) * 60
+            "$minutes мин = ${minutes / 60}:00"
+        }
         in minuteDids -> minuteValue(b)
         else -> hex(b)
     }
 
     private val minuteDids = setOf(
         0xF923, 0xF925, 0xF927, 0xF938,
-        0xF99A, 0xF99B, 0xF99C, 0xF9A1, 0xF9A2, 0xF9A3, 0xF9A4, 0xF9A5, 0xF9A6,
+        0xF99A, 0xF99B, 0xF99C, 0xF9A1, 0xF9A2, 0xF9A3, 0xF9A4, 0xF9A6,
         0xF9AD, 0xF9AF, 0xF9B1, 0xF9B3, 0xF9B5, 0xF9B7, 0xF9B9, 0xF9C0, 0xF9C2
     )
 

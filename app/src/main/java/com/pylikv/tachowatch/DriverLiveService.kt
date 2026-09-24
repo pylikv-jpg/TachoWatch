@@ -245,6 +245,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             // Use only values from this same completed live cycle — never a stale snapshot.
             val freshRemainingShift = block?.let { mins(last(it, "F9AF")) }
             val freshMaximumDailyDriving = block?.let { mins(last(it, "F9A6")) }
+            val freshTimeLeftUntilDailyRest = block?.let { mins(last(it, "F99C")) }
+            val freshMaximumDailyPeriod = block?.let { mins(last(it, "F9A5")) }
 
             if (freshActivity != null && freshActivityMinutes != null && freshContinuous != null && freshBreak != null) {
                 val previousRawContinuous = continuousMinutes
@@ -265,7 +267,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                     directMaximumDailyDrivingMinutes = freshMaximumDailyDriving
                 )
                 persistState()
-                evaluateAlerts()
+                evaluateAlerts(
+                    maximumDailyPeriodMinutes = freshMaximumDailyPeriod,
+                    timeLeftUntilDailyRestMinutes = freshTimeLeftUntilDailyRest
+                )
                 updateServiceNotification("DTCO подключён • свежие данные")
             } else {
                 updateServiceNotification("DTCO подключён • неполный live-цикл, ожидание свежих данных")
@@ -414,6 +419,8 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             clearAlertGroup("work_")
             clearAlertGroup("shift9_")
             clearAlertGroup("shift10_")
+            clearAlertGroup("shiftperiod13_")
+            clearAlertGroup("shiftperiod15_")
         }
     }
 
@@ -482,7 +489,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
     private fun shiftDrivingTotal(): Int = shiftCompletedMinutes
 
-    private fun evaluateAlerts() {
+    private fun evaluateAlerts(
+        maximumDailyPeriodMinutes: Int?,
+        timeLeftUntilDailyRestMinutes: Int?
+    ) {
         evaluateContinuousDrivingAlert()
         evaluateRemaining("work", 360 - activeWorkTotal(), "непрерывной работы", "Лимит непрерывной работы 6 часов достигнут")
 
@@ -490,6 +500,32 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         evaluateRemaining("shift9", 540 - shift, "суточного вождения 9 часов", "Лимит суточного вождения 9 часов достигнут. При допустимом продлении остаётся до 10 часов")
         if (shift >= 540) {
             evaluateRemaining("shift10", 600 - shift, "продлённого суточного вождения 10 часов", "Лимит продлённого суточного вождения 10 часов достигнут")
+        }
+
+        evaluateDailyPeriodAlerts(maximumDailyPeriodMinutes, timeLeftUntilDailyRestMinutes)
+    }
+
+    private fun evaluateDailyPeriodAlerts(
+        maximumDailyPeriodMinutes: Int?,
+        timeLeftUntilDailyRestMinutes: Int?
+    ) {
+        val remaining = ShiftPeriodAlertMath.remaining(
+            maximumDailyPeriodMinutes = maximumDailyPeriodMinutes,
+            timeLeftUntilDailyRestMinutes = timeLeftUntilDailyRestMinutes
+        )
+
+        if (ShiftPeriodAlertMath.shouldWarn(remaining.toThirteenHours)) {
+            fireOnce(
+                "shiftperiod13_30",
+                "До 13-часового периода смены осталось ${remaining.toThirteenHours} мин"
+            )
+        }
+
+        if (ShiftPeriodAlertMath.shouldWarn(remaining.toFifteenHours)) {
+            fireOnce(
+                "shiftperiod15_30",
+                "До максимального 15-часового периода смены осталось ${remaining.toFifteenHours} мин"
+            )
         }
     }
 
