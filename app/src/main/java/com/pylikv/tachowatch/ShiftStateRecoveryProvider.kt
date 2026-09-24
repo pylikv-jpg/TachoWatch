@@ -102,7 +102,13 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             } else {
                 0
             }
-            val mergedContinuousWork = seed.continuousWorkMinutes + liveOpenOtherWork
+            val mergedContinuousWork = ShiftRecoveryMath.mergeContinuousWorkMinutes(
+                cardContinuousWorkMinutes = seed.continuousWorkMinutes,
+                cardContinuousDrivingMinutes = seed.continuousDrivingCheckpointMinutes,
+                liveActivity = liveActivityAtCheckpoint,
+                liveActivityMinutes = liveActivityMinutesAtCheckpoint,
+                liveContinuousDrivingMinutes = liveContinuousAtCheckpoint
+            )
             val mergedContinuousOtherWork =
                 seed.continuousOtherWorkMinutes + liveOpenOtherWork
             val mergedShiftOtherWork = seed.workMinutes + liveOpenOtherWork
