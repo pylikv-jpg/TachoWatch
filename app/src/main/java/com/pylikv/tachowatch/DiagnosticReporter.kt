@@ -64,12 +64,12 @@ object DiagnosticReporter {
         val prefs = context.getSharedPreferences(DriverLiveService.PREFS, Context.MODE_PRIVATE)
         val report = buildString {
             appendLine("TACHOWATCH DIAGNOSTIC REPORT")
-            appendLine("created_utc=\${utc(now)}")
-            appendLine("app_version=\${BuildConfig.VERSION_NAME}")
-            appendLine("app_version_code=\${BuildConfig.VERSION_CODE}")
-            appendLine("android=\${Build.VERSION.RELEASE} sdk=\${Build.VERSION.SDK_INT}")
-            appendLine("device=\${Build.MANUFACTURER} \${Build.MODEL}")
-            appendLine("connection=\$connectionSummary")
+            appendLine("created_utc=${utc(now)}")
+            appendLine("app_version=${BuildConfig.VERSION_NAME}")
+            appendLine("app_version_code=${BuildConfig.VERSION_CODE}")
+            appendLine("android=${Build.VERSION.RELEASE} sdk=${Build.VERSION.SDK_INT}")
+            appendLine("device=${Build.MANUFACTURER} ${Build.MODEL}")
+            appendLine("connection=$connectionSummary")
             appendLine("window_minutes=60")
             appendLine("privacy=F931 driver name is redacted; Bluetooth MAC and driver card number are not included")
             appendLine()
@@ -77,16 +77,16 @@ object DiagnosticReporter {
             appendLine(description.trim().ifBlank { "(no description)" })
             appendLine()
             appendLine("CURRENT COUNTERS")
-            appendLine("activity=\${prefs.getString(DriverLiveService.SNAP_ACTIVITY, "—")}")
-            appendLine("activity_minutes=\${prefs.getInt(DriverLiveService.SNAP_ACTIVITY_MIN, 0)}")
-            appendLine("continuous_driving_minutes=\${prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, 0)}")
-            appendLine("break_minutes=\${prefs.getInt(DriverLiveService.SNAP_BREAK_MIN, 0)}")
-            appendLine("shift_driving_minutes=\${prefs.getInt(DriverLiveService.SHIFT_COMPLETED, 0)}")
-            appendLine("continuous_work_minutes=\${prefs.getInt(DriverLiveService.WORK_WINDOW, 0)}")
-            appendLine("other_work_minutes=\${prefs.getInt(DriverLiveService.WORK_ACC, 0)}")
-            appendLine("availability_minutes=\${prefs.getInt(DriverLiveService.AVAIL_ACC, 0)}")
-            appendLine("two_week_driving_minutes=\${prefs.getInt(DriverLiveService.SNAP_TWO_WEEK_MIN, 0)}")
-            appendLine("snapshot_updated_at_utc=\${utc(prefs.getLong(DriverLiveService.SNAP_UPDATED_AT, 0L))}")
+            appendLine("activity=${prefs.getString(DriverLiveService.SNAP_ACTIVITY, "—")}")
+            appendLine("activity_minutes=${prefs.getInt(DriverLiveService.SNAP_ACTIVITY_MIN, 0)}")
+            appendLine("continuous_driving_minutes=${prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, 0)}")
+            appendLine("break_minutes=${prefs.getInt(DriverLiveService.SNAP_BREAK_MIN, 0)}")
+            appendLine("shift_driving_minutes=${prefs.getInt(DriverLiveService.SHIFT_COMPLETED, 0)}")
+            appendLine("continuous_work_minutes=${prefs.getInt(DriverLiveService.WORK_WINDOW, 0)}")
+            appendLine("other_work_minutes=${prefs.getInt(DriverLiveService.WORK_ACC, 0)}")
+            appendLine("availability_minutes=${prefs.getInt(DriverLiveService.AVAIL_ACC, 0)}")
+            appendLine("two_week_driving_minutes=${prefs.getInt(DriverLiveService.SNAP_TWO_WEEK_MIN, 0)}")
+            appendLine("snapshot_updated_at_utc=${utc(prefs.getLong(DriverLiveService.SNAP_UPDATED_AT, 0L))}")
             appendLine()
             appendLine("DTCO DIAGNOSTIC LOG — LAST 60 MINUTES")
             if (recent.isEmpty()) {
@@ -112,7 +112,7 @@ object DiagnosticReporter {
         }
 
         val outDir = File(context.cacheDir, "diagnostic_reports").apply { mkdirs() }
-        return File(outDir, "tachowatch-report-\${fileStamp(now)}.txt").apply {
+        return File(outDir, "tachowatch-report-${fileStamp(now)}.txt").apply {
             writeText(report)
         }
     }
@@ -120,7 +120,7 @@ object DiagnosticReporter {
     fun shareIntent(context: Context, report: File): Intent {
         val uri = FileProvider.getUriForFile(
             context,
-            "\${context.packageName}.fileprovider",
+            "${context.packageName}.fileprovider",
             report
         )
         return Intent(Intent.ACTION_SEND).apply {
