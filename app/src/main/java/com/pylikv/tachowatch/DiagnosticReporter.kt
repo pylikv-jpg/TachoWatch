@@ -12,8 +12,8 @@ import java.util.TimeZone
 
 object DiagnosticReporter {
     private const val WINDOW_MS = 60L * 60L * 1000L
-    private const val MAX_FILE_BYTES = 1_500_000L
-    private const val TRIM_TO_LINES = 7000
+    private const val MAX_FILE_BYTES = 8_000_000L
+    private const val TRIM_TO_LINES = 30000
     private const val LOG_DIR = "diagnostics"
     private const val LOG_FILE = "rolling.log"
 
