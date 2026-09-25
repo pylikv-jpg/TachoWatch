@@ -25,6 +25,33 @@ object SplitDailyRestTracker {
     fun recoverFirstPartFromClosedRest(restPeriodsMinutes: Iterable<Int>): Boolean =
         restPeriodsMinutes.any { it in FIRST_PART_MINUTES until SECOND_PART_MINUTES }
 
+    /**
+     * Card days can start with the midnight tail of the previous daily rest.
+     * A first part must follow activity in this shift. Keep adjacent REST rows
+     * together across midnight, and discard earlier credit at a daily-rest boundary.
+     * A trailing closed REST is allowed: the following WORK can still be OPEN.
+     */
+    fun recoverFirstPartFromClosedActivities(activities: Iterable<Pair<String, Int>>): Boolean {
+        var shiftHasActivity = false
+        var consecutiveRestMinutes = 0
+        var firstPartTaken = false
+        for ((type, minutes) in activities) {
+            if (type != "REST") {
+                shiftHasActivity = true
+                consecutiveRestMinutes = 0
+                continue
+            }
+            consecutiveRestMinutes += minutes.coerceAtLeast(0)
+            if (consecutiveRestMinutes >= SECOND_PART_MINUTES) {
+                firstPartTaken = false
+                shiftHasActivity = false
+            } else if (shiftHasActivity && consecutiveRestMinutes >= FIRST_PART_MINUTES) {
+                firstPartTaken = true
+            }
+        }
+        return firstPartTaken
+    }
+
     fun update(state: State, resting: Boolean, restMinutes: Int): State {
         val minutes = restMinutes.coerceAtLeast(0)
 

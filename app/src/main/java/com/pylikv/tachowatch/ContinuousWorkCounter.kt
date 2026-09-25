@@ -146,13 +146,22 @@ object ContinuousWorkCounter {
                 now == 0 &&
                 qualifyingRestMinutes == 0
 
+        // Ignition also reports F927=0 without changing F903 at all. A zero is
+        // not evidence of a new WORK segment: keep the last counted source value
+        // through every such reading, including a service restart. When F927
+        // resumes (8 -> 0 -> 0 -> 9), add only the newly elapsed minute.
+        val zeroSourceWhileStillWorking =
+            isOtherWork(state.previousActivity) &&
+                isOtherWork(currentActivity) && now == 0
+
         return State(
             workMinutes = reconciledDrivingMinutes + nextOtherWorkMinutes,
             otherWorkMinutes = nextOtherWorkMinutes,
             previousActivity =
                 if (zeroMinuteBlipAfterOtherWork) state.previousActivity else currentActivity,
             previousSourceMinutes =
-                if (zeroMinuteBlipAfterOtherWork) state.previousSourceMinutes else now,
+                if (zeroMinuteBlipAfterOtherWork || zeroSourceWhileStillWorking)
+                    state.previousSourceMinutes else now,
             previousContinuousDrivingMinutes = currentContinuous
         )
     }

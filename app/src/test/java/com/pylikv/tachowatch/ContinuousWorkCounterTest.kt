@@ -6,6 +6,36 @@ import org.junit.Test
 class ContinuousWorkCounterTest {
 
     @Test
+    fun repeatedZeroReadingsDuringWorkDoNotReAddTheRestoredSegment() {
+        // Diagnostic report 2026-09-25: 03:54:13=8, 03:54:55/03:55:09=0,
+        // 03:55:24=9. F903 remains OTHER WORK throughout ignition.
+        var state = ContinuousWorkCounter.State(8, 8, "ДРУГАЯ РАБОТА", 8)
+        for (minutes in listOf(0, 0, 9, 10)) {
+            state = ContinuousWorkCounter.update(state, "ДРУГАЯ РАБОТА", minutes, 0, 0)
+            assertEquals(if (minutes == 0) 8 else minutes, state.otherWorkMinutes)
+            assertEquals(state.otherWorkMinutes, state.workMinutes)
+        }
+    }
+
+    @Test
+    fun zeroWorkReadingAfterIgnitionRestBlipKeepsTheWorkCheckpoint() {
+        var state = ContinuousWorkCounter.State(8, 8, "ДРУГАЯ РАБОТА", 8)
+        state = ContinuousWorkCounter.update(state, "ОТДЫХ / ПЕРЕРЫВ", 0, 0, 0)
+        state = ContinuousWorkCounter.update(state, "ДРУГАЯ РАБОТА", 0, 0, 0)
+        state = ContinuousWorkCounter.update(state, "ДРУГАЯ РАБОТА", 9, 0, 0)
+        assertEquals(9, state.otherWorkMinutes)
+    }
+
+    @Test
+    fun confirmedDifferentActivityStillStartsANewOtherWorkSegment() {
+        var state = ContinuousWorkCounter.State(8, 8, "ДРУГАЯ РАБОТА", 8)
+        state = ContinuousWorkCounter.update(state, "ОТДЫХ / ПЕРЕРЫВ", 2, 0, 2)
+        state = ContinuousWorkCounter.update(state, "ДРУГАЯ РАБОТА", 0, 0, 0)
+        state = ContinuousWorkCounter.update(state, "ДРУГАЯ РАБОТА", 1, 0, 0)
+        assertEquals(9, state.otherWorkMinutes)
+    }
+
+    @Test
     fun cardSeedOtherWorkPlusCurrentDrivingAreAdded() {
         val state = ContinuousWorkCounter.State(
             workMinutes = 20,

@@ -7,6 +7,40 @@ import org.junit.Test
 class SplitDailyRestTrackerTest {
 
     @Test
+    fun overnightRestTailBeforeNewShiftIsNotAThreeHourPart() {
+        // The card splits the 13h24 rest at midnight. Today's tail is 3h46,
+        // followed by the new shift, so the tail must not qualify on its own.
+        assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
+            listOf("REST" to 226, "WORK" to 5)
+        ))
+        assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
+            listOf("REST" to 226) // first WORK is still OPEN on the card
+        ))
+    }
+
+    @Test
+    fun threeHourPartInsideNewShiftIsStillRecovered() {
+        assertTrue(SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
+            listOf("REST" to 226, "WORK" to 10, "REST" to 372)
+        ))
+    }
+
+    @Test
+    fun dailyRestSplitAtMidnightClosesPreviousShiftCredit() {
+        assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
+            listOf("WORK" to 10, "REST" to 180, "WORK" to 60,
+                "REST" to 300, "REST" to 360, "WORK" to 5)
+        ))
+    }
+
+    @Test
+    fun firstPartCrossingMidnightWithinOneShiftIsCombined() {
+        assertTrue(SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
+            listOf("WORK" to 10, "REST" to 90, "REST" to 100, "WORK" to 5)
+        ))
+    }
+
+    @Test
     fun completedThreeHourPartSurvivesReturnToWork() {
         var state = SplitDailyRestTracker.State()
 
