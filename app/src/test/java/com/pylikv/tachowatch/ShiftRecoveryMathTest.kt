@@ -46,4 +46,40 @@ class ShiftRecoveryMathTest {
 
         assertEquals(15, result)
     }
+
+    @Test
+    fun staleF923FromPreviousShiftIsDiscardedAfterDailyRestWhenNewShiftStartsInWork() {
+        val checkpoint = ShiftRecoveryMath.liveContinuousCheckpoint(
+            confirmedDailyRestBoundary = true,
+            liveActivity = "ДРУГАЯ РАБОТА",
+            liveActivityMinutes = 0,
+            rawContinuousDrivingMinutes = 197
+        )
+
+        assertEquals(0, checkpoint)
+    }
+
+    @Test
+    fun newShiftDrivingUsesCurrentOpenActivityInsteadOfStalePreviousF923() {
+        val checkpoint = ShiftRecoveryMath.liveContinuousCheckpoint(
+            confirmedDailyRestBoundary = true,
+            liveActivity = "ВОЖДЕНИЕ",
+            liveActivityMinutes = 5,
+            rawContinuousDrivingMinutes = 197
+        )
+
+        assertEquals(5, checkpoint)
+    }
+
+    @Test
+    fun sameShiftRecoveryStillKeepsNormalF923Checkpoint() {
+        val checkpoint = ShiftRecoveryMath.liveContinuousCheckpoint(
+            confirmedDailyRestBoundary = false,
+            liveActivity = "ДРУГАЯ РАБОТА",
+            liveActivityMinutes = 9,
+            rawContinuousDrivingMinutes = 197
+        )
+
+        assertEquals(197, checkpoint)
+    }
 }

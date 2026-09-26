@@ -73,7 +73,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             val snapshotAgeMs = System.currentTimeMillis() -
                 prefs.getLong(DriverLiveService.SNAP_UPDATED_AT, 0L)
             val liveSnapshotFresh = snapshotAgeMs in 0..LIVE_SNAPSHOT_MAX_AGE_MS
-            val liveContinuousAtCheckpoint = if (liveSnapshotFresh) {
+            val rawLiveContinuousAtCheckpoint = if (liveSnapshotFresh) {
                 prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, seed.liveDrivingSegmentMinutes)
             } else {
                 seed.liveDrivingSegmentMinutes
@@ -88,6 +88,14 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             } else {
                 0
             }
+            val confirmedDailyRestBoundary =
+                ongoingRest != null && ongoingRest >= DAILY_REST_MINUTES
+            val liveContinuousAtCheckpoint = ShiftRecoveryMath.liveContinuousCheckpoint(
+                confirmedDailyRestBoundary = confirmedDailyRestBoundary,
+                liveActivity = liveActivityAtCheckpoint,
+                liveActivityMinutes = liveActivityMinutesAtCheckpoint,
+                rawContinuousDrivingMinutes = rawLiveContinuousAtCheckpoint
+            )
             val liveBreakMinutesAtCheckpoint = if (liveSnapshotFresh) {
                 prefs.getInt(DriverLiveService.SNAP_BREAK_MIN, 0).coerceAtLeast(0)
             } else {
@@ -145,8 +153,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             // OPEN on the card. If live already says non-rest, the rest is a completed boundary,
             // not an ongoing rest: keep the zero card seed but merge the new live driving.
             val cardReadWhileStillResting =
-                ongoingRest != null &&
-                    ongoingRest >= DAILY_REST_MINUTES &&
+                confirmedDailyRestBoundary &&
                     (!liveSnapshotFresh || isRest(liveActivityAtCheckpoint))
 
             val shiftCheckpoint = ShiftDrivingCounter.reconcileCheckpoint(
@@ -344,7 +351,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         private const val CONTINUOUS_BREAK_MINUTES = 45
         private const val FIRST_READ_KEY = "first_card_read_done"
         private const val KEY_RECOVERY_VERSION = "recovery_model_version"
-        private const val RECOVERY_VERSION = 6
+        private const val RECOVERY_VERSION = 7
         private const val LIVE_SNAPSHOT_MAX_AGE_MS = 30L * 60L * 1000L
         const val KEY_RECONCILED_AT = "recovery_reconciled_at"
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"

@@ -187,7 +187,30 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
             .show()
     }
 
-    private fun loadHistory(){val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))?:return;val r=TlvInventory.parse(f);if(r.error==null){history=HistoryData.load(r);if(::historyRoot.isInitialized)buildHistoryView();updateWeekCards();updateWorkWeekClock();updateShiftDriving();updateShiftSpan()}}
+    private fun loadHistory(){
+        val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))
+        if(f==null){
+            DiagnosticReporter.record(applicationContext,"CARD_HISTORY","No DDD file found after card read")
+            return
+        }
+        val r=TlvInventory.parse(f)
+        if(r.error!=null){
+            DiagnosticReporter.record(applicationContext,"CARD_HISTORY","Parse failed file=${f.name} bytes=${f.length()} error=${r.error}")
+            return
+        }
+        history=HistoryData.load(r)
+        val days=history?.days.orEmpty()
+        val latest=days.lastOrNull()
+        DiagnosticReporter.record(
+            applicationContext,
+            "CARD_HISTORY",
+            "Loaded file=${f.name} bytes=${f.length()} days=${days.size} " +
+                "latest=${latest?.date ?: "—"} ${latest?.startTime ?: "—"}-${latest?.endTime ?: "—"} " +
+                "recent=${days.takeLast(4).joinToString(","){it.date}}"
+        )
+        if(::historyRoot.isInitialized)buildHistoryView()
+        updateWeekCards();updateWorkWeekClock();updateShiftDriving();updateShiftSpan()
+    }
     private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
     private fun restoreSnapshot(){currentActivity=prefs.getString(DriverLiveService.SNAP_ACTIVITY,"—")?:"—";activityMinutes=prefs.getInt(DriverLiveService.SNAP_ACTIVITY_MIN,0);continuousMinutes=prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN,0);breakMinutes=prefs.getInt(DriverLiveService.SNAP_BREAK_MIN,0);twoWeekMinutes=prefs.getInt(DriverLiveService.SNAP_TWO_WEEK_MIN,0);splitDailyThreeHourPartTaken=prefs.getBoolean(DriverLiveService.SPLIT_DAILY_3H_TAKEN,false);splitDailyCompletedAsSplit=prefs.getBoolean(DriverLiveService.SPLIT_DAILY_COMPLETED_AS_SPLIT,false)}
     private fun activeWorkTotal()=workWindowMinutes
@@ -316,7 +339,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
             if(!cardReading&&dtco!=null)startCardRead("Новая смена после суточного отдыха",true)
         },300)
     }
-    override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{finishCardRead(false)}}}
+    override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{DiagnosticReporter.record(applicationContext,"CARD_READ","Driver-card download completed successfully");prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{DiagnosticReporter.record(applicationContext,"CARD_READ","Driver-card download failed");finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
     private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({DriverLiveService.start(applicationContext,d.address)},800)}}
 
