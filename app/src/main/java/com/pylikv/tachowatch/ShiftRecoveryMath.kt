@@ -35,6 +35,24 @@ object ShiftRecoveryMath {
         return cardWork + openOtherWork + openDriving
     }
 
+    /**
+     * After a confirmed >=9h daily-rest boundary some DTCO units can keep the
+     * previous shift's absolute F923 value until the next driving cycle starts.
+     * At that boundary the current activity is authoritative: OTHER WORK/REST
+     * means zero new-shift driving; while DRIVING, F927 is the duration of the
+     * current open driving activity and is safer than the stale absolute F923.
+     */
+    fun liveContinuousCheckpoint(
+        confirmedDailyRestBoundary: Boolean,
+        liveActivity: String,
+        liveActivityMinutes: Int,
+        rawContinuousDrivingMinutes: Int
+    ): Int {
+        val raw = rawContinuousDrivingMinutes.coerceAtLeast(0)
+        if (!confirmedDailyRestBoundary) return raw
+        return if (isDriving(liveActivity)) liveActivityMinutes.coerceAtLeast(0) else 0
+    }
+
     private fun isDriving(v: String) = v.contains("ВОЖДЕНИЕ", true)
 
     private fun isOtherWork(v: String) =
