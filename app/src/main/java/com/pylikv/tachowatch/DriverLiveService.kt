@@ -62,6 +62,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val SNAP_BREAK_MIN = "live_break_minutes"
         const val SNAP_TWO_WEEK_MIN = "live_two_week_minutes"
         const val SNAP_UPDATED_AT = "live_updated_at"
+        const val CARD_ABSENT_DETECTED = "card_absent_detected"
 
         private val listeners = CopyOnWriteArrayList<LiveDidDiagnostic.Listener>()
         @Volatile private var running = false
@@ -115,6 +116,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var breakMinutes = 0
     private var twoWeekMinutes = 0
     private var lastProcessedCycle = 0
+    private var cardAbsentDetected = false
 
     private var shiftCounterInitialized = false
     private var shiftCompletedMinutes = 0
@@ -250,6 +252,17 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         if (cycle != null && cycle > lastProcessedCycle) {
             val block = currentCycleBlock(log, cycle)
             block?.let { DiagnosticReporter.record(applicationContext, "CYCLE", it) }
+            val removalSignal = block?.let(DtcoCardPresence::isRemovalSignal) == true
+            if (removalSignal && !cardAbsentDetected) {
+                cardAbsentDetected = true
+                prefs().edit().putBoolean(CARD_ABSENT_DETECTED, true).commit()
+                LocalCardEventStore.record(applicationContext, LocalCardEventStore.Type.REMOVED)
+                DiagnosticReporter.record(
+                    applicationContext,
+                    "CARD_PRESENCE",
+                    "Driver card removed: F923/F925/F927/F938 all returned FF FF"
+                )
+            }
             // Mark this cycle consumed even when one mandatory DID timed out. Reusing a value
             // from an older cycle is more dangerous than waiting for the next complete cycle.
             lastProcessedCycle = cycle
@@ -267,6 +280,12 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             val freshMaximumDailyPeriod = block?.let { mins(last(it, "F9A5")) }
 
             if (freshActivity != null && freshActivityMinutes != null && freshContinuous != null && freshBreak != null) {
+                if (cardAbsentDetected && block != null && DtcoCardPresence.hasUsableDriverTimers(block)) {
+                    cardAbsentDetected = false
+                    prefs().edit().putBoolean(CARD_ABSENT_DETECTED, false).commit()
+                    LocalCardEventStore.record(applicationContext, LocalCardEventStore.Type.INSERTED)
+                    DiagnosticReporter.record(applicationContext, "CARD_PRESENCE", "Driver card inserted: valid driver timers returned after FF FF state")
+                }
                 val previousRawContinuous = continuousMinutes
                 currentActivity = freshActivity
                 activityMinutes = freshActivityMinutes
@@ -306,6 +325,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         continuousAlertStage = p.getInt("alert_stage_cont", 0)
         breakMinutes = p.getInt(SNAP_BREAK_MIN, 0)
         twoWeekMinutes = p.getInt(SNAP_TWO_WEEK_MIN, 0)
+        cardAbsentDetected = p.getBoolean(CARD_ABSENT_DETECTED, false)
         shiftCounterInitialized = p.getBoolean(SHIFT_INITIALIZED, false)
         shiftCompletedMinutes = p.getInt(SHIFT_COMPLETED, 0)
         previousContinuousMinutes = p.getInt(SHIFT_PREV_CONTINUOUS, 0)
@@ -803,5 +823,5 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     }
 
     private fun last(log: String, did: String) = log.lines().asReversed().firstOrNull { it.startsWith("$did=") }?.substringAfter(" | ")?.trim()
-    private fun mins(v: String?): Int? = v?.let { Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+    private fun mins(v: String?): Int? = v?.let { Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }?.takeIf { it < 0xFFFE }
 }
