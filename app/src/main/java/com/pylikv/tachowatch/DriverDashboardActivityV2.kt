@@ -367,7 +367,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         val start=if(cycle>1){val prev=before.lastIndexOf("LIVE CYCLE #${cycle-1} COMPLETE");if(prev>=0)prev else maxOf(before.lastIndexOf("LIVE START"),before.lastIndexOf("LIVE RECONNECT"))}else maxOf(before.lastIndexOf("LIVE START"),before.lastIndexOf("LIVE RECONNECT"))
         return log.substring(start.coerceAtLeast(0),end)
     }
-    private fun hasFreshCriticalLiveData(block:String)=listOf("F903","F923","F925","F927").all{last(block,it)!=null}
+    private fun hasFreshCriticalLiveData(block:String)=last(block,"F903")!=null&&listOf("F923","F925","F927").all{mins(last(block,it))!=null}
     private fun last(log:String,did:String)=log.lines().asReversed().firstOrNull{it.startsWith("$did=")}?.substringAfter(" | ")?.trim()
     private fun mins(v:String?):Int?=v?.let{Regex("^(\\d+) мин").find(it)?.groupValues?.getOrNull(1)?.toIntOrNull()}
     private fun driveColor(m:Int)=when{m>=255->RED;m>=240->YELLOW;else->GREEN};private fun workColor(m:Int)=when{m>=360->RED;m>=330->YELLOW;else->GREEN};private fun limitColor(v:Int,limit:Int)=when{limit<=0||v>=limit-120->RED;v>=limit-360->YELLOW;else->GREEN}
