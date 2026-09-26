@@ -440,8 +440,11 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         // ISO 16844-7 defines MaximumDailyPeriod as a one-byte value with
         // 1 hour/bit resolution, unlike the two-byte minute-based timers.
         0xF9A5 -> if (b.isEmpty()) "—" else {
-            val minutes = u(b[0]) * 60
-            "$minutes мин = ${minutes / 60}:00"
+            val raw = u(b[0])
+            if (raw >= 0xFE) "—" else {
+                val minutes = raw * 60
+                "$minutes мин = ${minutes / 60}:00"
+            }
         }
         in minuteDids -> minuteValue(b)
         else -> hex(b)
@@ -456,6 +459,9 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     private fun minuteValue(b: ByteArray): String {
         if (b.size < 2) return "—"
         val m = (u(b[0]) shl 8) or u(b[1])
+        // FF FE / FF FF are DTCO unavailable/error sentinels, not elapsed minutes.
+        // FF FF is also the live pattern observed when the driver card is ejected.
+        if (m >= 0xFFFE) return "—"
         return "$m мин = ${m / 60}:${String.format("%02d", m % 60)}"
     }
 
