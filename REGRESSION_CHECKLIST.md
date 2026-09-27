@@ -55,3 +55,9 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] A fresh RtoRuntime card seed resets synthesized legacy runtime state.
 - [ ] DriverDashboardActivityV2 is the only registered driver dashboard.
 - [ ] CI runs git diff --exit-code after the APK build so hidden source mutation fails the build.
+
+
+### Logging performance
+- [ ] Card-download and target-monitor logs use bounded deque buffers instead of CopyOnWriteArrayList.
+- [ ] Frequent log writes do not copy the whole log buffer on every line.
+- [ ] UI log snapshots are throttled while final card-download status remains immediate.

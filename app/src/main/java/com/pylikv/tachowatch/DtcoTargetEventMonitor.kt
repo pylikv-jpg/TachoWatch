@@ -11,7 +11,6 @@ import java.io.File
 import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.*
-import java.util.concurrent.CopyOnWriteArrayList
 
 class DtcoTargetEventMonitor(private val context: Context, private val listener: Listener? = null) {
     interface Listener {
@@ -25,6 +24,7 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
         private const val NEXT_CYCLE_MS = 15000L
         private const val RESPONSE_TIMEOUT_MS = 3500L
         private const val MAX_LOG_LINES = 20000
+        private const val UI_LOG_NOTIFY_INTERVAL_MS = 300L
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private val SERVICE = UUID.fromString("fa213def-aef4-475c-bcea-0a8d69073efc")
         private val FIFO = UUID.fromString("e413960c-75ba-4ca9-8a67-99bc052a1b13")
@@ -62,7 +62,10 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
     )
 
     private val handler = Handler(Looper.getMainLooper())
-    private val lines = CopyOnWriteArrayList<String>()
+    private val lines = ArrayDeque<String>()
+    private val linesLock = Any()
+    private var logNotifyScheduled = false
+    private var lastLogNotifyAt = 0L
     private val previous = linkedMapOf<Int, ByteArray>()
     private val fileLock = Any()
     private var logFile: File? = null
@@ -88,7 +91,7 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
         if (!hasConnectPermission()) { log("ERROR: no BLUETOOTH_CONNECT"); return }
         closeGatt()
         if (logFile == null) {
-            lines.clear()
+            synchronized(linesLock){lines.clear()}
             startLogFile()
             log("============================================================")
             log("$VERSION")
@@ -378,8 +381,8 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
     }
 
     fun addMarker(text: String) { if (text.isNotBlank()) log("========== USER MARKER: ${text.trim()} ==========") }
-    fun clearLog() { lines.clear(); log("Visible log cleared; autosaved file preserved") }
-    fun getLog(): String = lines.joinToString("\n")
+    fun clearLog() { synchronized(linesLock){lines.clear()}; log("Visible log cleared; autosaved file preserved") }
+    fun getLog(): String = synchronized(linesLock){lines.joinToString("\n")}
 
     fun disconnect() {
         connected = false
@@ -413,13 +416,31 @@ class DtcoTargetEventMonitor(private val context: Context, private val listener:
     private fun log(s: String) {
         val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
         val line = "[$ts] $s"
-        lines.add(line)
-        while (lines.size > MAX_LOG_LINES) lines.removeAt(0)
+        synchronized(linesLock) {
+            lines.addLast(line)
+            while (lines.size > MAX_LOG_LINES) lines.removeFirst()
+        }
         synchronized(fileLock) {
             try { logFile?.appendText(line + "\n", Charsets.UTF_8) } catch (_: Throwable) {}
         }
-        val all = getLog()
-        handler.post { listener?.onLogChanged(all) }
+        notifyVisibleLog()
+    }
+
+    private fun notifyVisibleLog() {
+        val now = SystemClock.elapsedRealtime()
+        val delay = (UI_LOG_NOTIFY_INTERVAL_MS - (now - lastLogNotifyAt)).coerceAtLeast(0L)
+        if (delay == 0L) {
+            lastLogNotifyAt = now
+            val snapshot = getLog()
+            handler.post { listener?.onLogChanged(snapshot) }
+        } else if (!logNotifyScheduled) {
+            logNotifyScheduled = true
+            handler.postDelayed({
+                logNotifyScheduled = false
+                lastLogNotifyAt = SystemClock.elapsedRealtime()
+                listener?.onLogChanged(getLog())
+            }, delay)
+        }
     }
 
     @SuppressLint("MissingPermission")

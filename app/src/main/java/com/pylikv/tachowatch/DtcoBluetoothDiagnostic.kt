@@ -11,7 +11,6 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
-import java.util.concurrent.CopyOnWriteArrayList
 
 class DtcoBluetoothDiagnostic(private val context: Context, private val listener: Listener? = null) {
     interface Listener {
@@ -40,7 +39,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private enum class Stage { IDLE, WAIT_C1, WAIT_50, WAIT_75, WAIT_CARD, WAIT_77, WAIT_C2, DONE }
 
     private val handler = Handler(Looper.getMainLooper())
-    private val lines = CopyOnWriteArrayList<String>()
+    private val lines = ArrayDeque<String>()
+    private val linesLock = Any()
     private var gatt: BluetoothGatt? = null
     private var device: BluetoothDevice? = null
     private var connected = false
@@ -98,7 +98,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     }
 
     private fun reset() {
-        lines.clear(); connected=false; fifoSub=false; creditSub=false; txCredits=0
+        synchronized(linesLock){lines.clear()}; connected=false; fifoSub=false; creditSub=false; txCredits=0
         stage=Stage.IDLE; started=false; finished=false; timeoutToken++; fragmentToken++
         pendingCount=0; cardPendingCount=0; ackPendingCount=0; subMessages=0; lastCounter=0; requestedCounter=0
         fifoPacketsSinceRefill=0; totalFifoPackets=0; rxCreditsGranted=0; fragmentRetries=0
@@ -399,30 +399,31 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
 
     @SuppressLint("MissingPermission") fun disconnect(){timeoutToken++;fragmentToken++;try{gatt?.disconnect()}catch(_:Throwable){};closeGatt();connected=false;notifyConnection(false,device?.let(::safeName));log("Отключено пользователем")}
     @SuppressLint("MissingPermission") private fun closeGatt(){try{gatt?.close()}catch(_:Throwable){};gatt=null}
-    fun clearLog(){lines.clear();notifyLog(force=true)}
+    fun clearLog(){synchronized(linesLock){lines.clear()};notifyLog(force=true)}
     private fun nrcName(n:Int)=when(n){0x10->"generalReject";0x11->"serviceNotSupported";0x12->"subFunctionNotSupported";0x13->"incorrectMessageLength";0x21->"busyRepeatRequest";0x22->"conditionsNotCorrect/requestSequenceError";0x31->"requestOutOfRange";0x33->"securityAccessDenied";0x50->"uploadNotAccepted";0x73->"wrongBlockSequenceCounter";0x78->"responsePending";0xFA->"dataNotAvailable";else->"NRC"}
-    private fun log(s:String){val t=SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date());lines.add("[$t] $s");while(lines.size>10000)lines.removeAt(0);notifyLog(force=s.contains(RESULT_MARKER)||s.startsWith("STATUS="))}
+    private fun log(s:String){val t=SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date());synchronized(linesLock){lines.addLast("[$t] $s");while(lines.size>10000)lines.removeFirst()};notifyLog(force=s.contains(RESULT_MARKER)||s.startsWith("STATUS="))}
     private fun notifyLog(force:Boolean=false){
         val now=SystemClock.elapsedRealtime()
         val due=(LOG_NOTIFY_INTERVAL_MS-(now-lastLogNotifyAt)).coerceAtLeast(0L)
         if(force){
             logNotifyScheduled=false
             lastLogNotifyAt=now
-            val text=lines.joinToString("\n")
+            val text=logSnapshot()
             handler.post{listener?.onLogChanged(text)}
         }else if(due==0L){
             lastLogNotifyAt=now
-            val text=lines.joinToString("\n")
+            val text=logSnapshot()
             handler.post{listener?.onLogChanged(text)}
         }else if(!logNotifyScheduled){
             logNotifyScheduled=true
             handler.postDelayed({
                 logNotifyScheduled=false
                 lastLogNotifyAt=SystemClock.elapsedRealtime()
-                listener?.onLogChanged(lines.joinToString("\n"))
+                listener?.onLogChanged(logSnapshot())
             },due)
         }
     }
+    private fun logSnapshot():String=synchronized(linesLock){lines.joinToString("\n")}
     private fun notifyConnection(v:Boolean,n:String?){handler.post{listener?.onConnectionStateChanged(v,n)}}
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:d.address}catch(_:Throwable){"DTCO"}
     private fun err(w:String,e:Throwable){log("ERROR [$w] ${e.javaClass.simpleName}: ${e.message}")}
