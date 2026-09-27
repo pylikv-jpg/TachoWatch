@@ -138,7 +138,19 @@ class ShiftDrivingCounterTest {
             qualifyingRestMinutes = 45
         )
         assertEquals(200, state.totalMinutes)
-        assertEquals(0, state.previousContinuousMinutes)
+        assertEquals(200, state.previousContinuousMinutes)
+
+        // Some tachographs keep the old F923 value for one or more cycles during/after
+        // the break. It must not be re-added while the reset is armed.
+        state = ShiftDrivingCounter.update(
+            initialized = state.initialized,
+            totalMinutes = state.totalMinutes,
+            previousContinuousMinutes = state.previousContinuousMinutes,
+            currentContinuousMinutes = 200,
+            dailyRestCompleted = false,
+            resetCandidateMinutes = state.resetCandidateMinutes
+        )
+        assertEquals(200, state.totalMinutes)
 
         state = ShiftDrivingCounter.update(
             initialized = state.initialized,

@@ -6,6 +6,7 @@ package com.pylikv.tachowatch
  * It does not read or modify continuous-work state.
  */
 object ShiftDrivingCounter {
+    private const val RESET_ARMED_BY_BREAK = -2
     data class State(
         val initialized: Boolean,
         val totalMinutes: Int,
@@ -56,7 +57,15 @@ object ShiftDrivingCounter {
         // Anchor the fallback at zero so the first new driving minutes are counted
         // immediately even if the tachograph keeps the old F923 value during the rest.
         if (qualifyingRestMinutes >= 45) {
-            return State(true, totalMinutes, 0, -1)
+            return State(true, totalMinutes, previous, RESET_ARMED_BY_BREAK)
+        }
+
+        if (resetCandidateMinutes == RESET_ARMED_BY_BREAK) {
+            return when {
+                previous == 0 -> State(true, totalMinutes + current, current, -1)
+                current < previous -> State(true, totalMinutes + current, current, -1)
+                else -> State(true, totalMinutes, previous, RESET_ARMED_BY_BREAK)
+            }
         }
 
         if (current >= previous) {
