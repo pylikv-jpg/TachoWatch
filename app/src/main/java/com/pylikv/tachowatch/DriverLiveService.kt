@@ -28,6 +28,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         private const val ACTION_START = "com.pylikv.tachowatch.DRIVER_LIVE_START"
         private const val ACTION_PAUSE = "com.pylikv.tachowatch.DRIVER_LIVE_PAUSE"
         private const val ACTION_STOP = "com.pylikv.tachowatch.DRIVER_LIVE_STOP"
+        private const val ACTION_CARD_RECOVERY_COMPLETE = "com.pylikv.tachowatch.DRIVER_LIVE_CARD_RECOVERY_COMPLETE"
         private const val EXTRA_ADDRESS = "device_address"
 
         private const val CHANNEL_SERVICE = "driver_live_service"
@@ -63,6 +64,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val SNAP_TWO_WEEK_MIN = "live_two_week_minutes"
         const val SNAP_UPDATED_AT = "live_updated_at"
         const val CARD_ABSENT_DETECTED = "card_absent_detected"
+        private const val CARD_READ_PAUSED = "card_read_paused"
 
         private val listeners = CopyOnWriteArrayList<LiveDidDiagnostic.Listener>()
         @Volatile private var running = false
@@ -83,6 +85,12 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
         fun stop(context: Context) {
             context.startService(Intent(context, DriverLiveService::class.java).setAction(ACTION_STOP))
+        }
+
+        fun resumeAfterCardRecovery(context: Context) {
+            val i = Intent(context, DriverLiveService::class.java)
+                .setAction(ACTION_CARD_RECOVERY_COMPLETE)
+            ContextCompat.startForegroundService(context, i)
         }
 
         fun registerListener(listener: LiveDidDiagnostic.Listener) {
@@ -154,6 +162,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             }
             ACTION_PAUSE -> {
                 pausedForCardRead = true
+                prefs().edit().putBoolean(CARD_READ_PAUSED, true).apply()
                 DiagnosticReporter.record(applicationContext, "CARD_READ", "Live paused for driver-card read")
                 live.disconnect()
                 updateServiceNotification("Считывание карты • live временно приостановлен")
@@ -161,12 +170,28 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             ACTION_START -> {
                 val address = intent.getStringExtra(EXTRA_ADDRESS)
                 if (!address.isNullOrBlank()) {
-                    prefs().edit().putString(SELECTED_DTCO, address).apply()
+                    prefs().edit()
+                        .putString(SELECTED_DTCO, address)
+                        .putBoolean(CARD_READ_PAUSED, false)
+                        .apply()
                     if (pausedForCardRead) {
                         DiagnosticReporter.record(applicationContext, "CARD_READ", "Live resumed after driver-card read")
                     }
                     pausedForCardRead = false
                     connectAddress(address)
+                }
+            }
+            ACTION_CARD_RECOVERY_COMPLETE -> {
+                if (pausedForCardRead || prefs().getBoolean(CARD_READ_PAUSED, false)) {
+                    restoreState()
+                    pausedForCardRead = false
+                    prefs().edit().putBoolean(CARD_READ_PAUSED, false).apply()
+                    DiagnosticReporter.record(
+                        applicationContext,
+                        "CARD_READ",
+                        "Reconciled card state loaded before live resume"
+                    )
+                    prefs().getString(SELECTED_DTCO, null)?.let(::connectAddress)
                 }
             }
             else -> if (!pausedForCardRead) {
@@ -338,6 +363,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         previousActivityDuration = p.getInt(WORK_PREV_DURATION, 0)
         otherWorkWindowMinutes = p.getInt(WORK_ACC, 0)
         availabilityWindowMinutes = p.getInt(AVAIL_ACC, 0)
+        pausedForCardRead = p.getBoolean(CARD_READ_PAUSED, false)
         splitDailyRestState = SplitDailyRestTracker.State(
             firstPartTaken = p.getBoolean(SPLIT_DAILY_3H_TAKEN, false),
             previousResting = p.getBoolean(SPLIT_DAILY_PREV_RESTING, false),

@@ -81,8 +81,10 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
 
     private val permissionLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){findAndAutoConnect()}
 
-    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=BG;window.navigationBarColor=BG;cardReader=DtcoBluetoothDiagnostic(applicationContext,this);restoreCounters();restoreSnapshot();buildUi();loadHistory();DriverLiveService.registerListener(this);requestPermission();updateNow()}
-    override fun onDestroy(){DriverLiveService.unregisterListener(this);cardReader.disconnect();super.onDestroy()}
+    override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=BG;window.navigationBarColor=BG;cardReader=DtcoBluetoothDiagnostic(applicationContext,this);restoreCounters();restoreSnapshot();buildUi();loadHistory();requestPermission();updateNow()}
+    override fun onStart(){super.onStart();DriverLiveService.registerListener(this)}
+    override fun onStop(){DriverLiveService.unregisterListener(this);super.onStop()}
+    override fun onDestroy(){handler.removeCallbacksAndMessages(null);cardReader.disconnect();super.onDestroy()}
 
     private fun buildUi(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG);setPadding(dp(12),dp(10),dp(12),dp(10))}
@@ -165,16 +167,23 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
             .setPositiveButton("Отправить"){_,_->
                 val description=input.text?.toString().orEmpty()
                 val connectionSummary=DriverLiveService.diagnosticConnectionSummary()
-                val report=runCatching{
-                    DiagnosticReporter.createReport(applicationContext,description,connectionSummary)
-                }.getOrElse{error->
-                    AlertDialog.Builder(this).setTitle("Не удалось подготовить отчёт").setMessage(error.message?:"Неизвестная ошибка").setPositiveButton("ОК",null).show()
-                    return@setPositiveButton
-                }
                 Thread{
-                    val result=DiagnosticUploader.submit(applicationContext,report,description,connectionSummary)
+                    val prepared=runCatching{
+                        DiagnosticReporter.createReport(applicationContext,description,connectionSummary)
+                    }
+                    val report=prepared.getOrNull()
+                    val result=if(report!=null){
+                        DiagnosticUploader.submit(applicationContext,report,description,connectionSummary)
+                    }else null
                     runOnUiThread{
-                        if(result.ok){
+                        if(report==null){
+                            val error=prepared.exceptionOrNull()
+                            AlertDialog.Builder(this)
+                                .setTitle("Не удалось подготовить отчёт")
+                                .setMessage(error?.message?:"Неизвестная ошибка")
+                                .setPositiveButton("ОК",null)
+                                .show()
+                        }else if(result?.ok==true){
                             AlertDialog.Builder(this)
                                 .setTitle("Отчёт отправлен")
                                 .setMessage("Диагностический отчёт сохранён. Номер: ${result.reportId?:"—"}")
@@ -183,7 +192,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
                         }else{
                             AlertDialog.Builder(this)
                                 .setTitle("Не удалось отправить")
-                                .setMessage("Отчёт сохранён на телефоне. Можно отправить его вручную.\n\n${result.error?:"Ошибка сети"}")
+                                .setMessage("Отчёт сохранён на телефоне. Можно отправить его вручную.\n\n${result?.error?:"Ошибка сети"}")
                                 .setNegativeButton("Закрыть",null)
                                 .setPositiveButton("Поделиться"){_,_->
                                     startActivity(Intent.createChooser(DiagnosticReporter.shareIntent(this,report),"Отправить диагностический отчёт"))
@@ -350,7 +359,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     }
     override fun onLogChanged(fullLog:String){if(!cardReading)return;when{fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=SUCCESS")->runOnUiThread{DiagnosticReporter.record(applicationContext,"CARD_READ","Driver-card download completed successfully");prefs.edit().putBoolean(FIRST_READ,true).apply();loadHistory();finishCardRead(true)};fullLog.contains(DtcoBluetoothDiagnostic.RESULT_MARKER)&&fullLog.contains("STATUS=FAILED")->runOnUiThread{DiagnosticReporter.record(applicationContext,"CARD_READ","Driver-card download failed");finishCardRead(false)}}}
     override fun onConnectionStateChanged(connected:Boolean,deviceName:String?){if(cardReading&&connected)runOnUiThread{status.text="Считывание карты…"}}
-    private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные обновлены" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;handler.postDelayed({DriverLiveService.start(applicationContext,d.address)},800)}}
+    private fun finishCardRead(ok:Boolean){val resume=resumeLive;cardReading=false;resumeLive=false;status.text=if(ok)"Карта считана • данные применяются" else "Ошибка чтения карты • live восстановлен";cardReader.disconnect();if(resume){val d=dtco?:return;if(ok){handler.postDelayed({if(!DriverLiveService.isRunning())DriverLiveService.start(applicationContext,d.address)},10000)}else{handler.postDelayed({DriverLiveService.start(applicationContext,d.address)},800)}}}
 
     private fun updateNow(){if(!::continuous.isInitialized)return;val continuousRemain=(270-continuousMinutes).coerceAtLeast(0);continuous.text="${HistoryData.fmt(continuousMinutes)} / 4:30";continuousSub.text=if(continuousRemain<=15)"⚠ До лимита ${HistoryData.fmt(continuousRemain)}" else "осталось ${HistoryData.fmt(continuousRemain)}";setProgress(continuousFrame,continuousProgress,continuousMinutes/270f,driveColor(continuousMinutes));updateShiftDriving();updateShiftSpan();
         val resting=currentActivity.contains("ОТДЫХ")||currentActivity.contains("ПЕРЕРЫВ");val actual=if(resting)maxOf(activityMinutes,breakMinutes) else breakMinutes;val breakShown=actual.coerceAtMost(45);val first15=actual>=15;restTime.text="${HistoryData.fmt(breakShown)} / 0:45";restSub.text=when{!resting&&actual<=0->"перерыв не начат";actual>=45->"✓ 45 минут выполнено";first15->"✓ 15 минут зафиксировано • осталось ${(45-actual).coerceAtLeast(0)} мин";else->"до первой ступени 15 мин осталось ${(15-actual).coerceAtLeast(0)} мин"};val breakColor=when{actual>=45->GREEN;actual>=15->YELLOW;else->RED};restTime.setTextColor(breakColor);setRestProgress(restFrame,restProgress,breakShown/45f,breakColor)

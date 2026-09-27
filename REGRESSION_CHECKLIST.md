@@ -32,3 +32,11 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] While the second REST part is running, the dashboard keeps the first 3:00 part and shows progress toward the required 9:00 second part.
 - [ ] At 9:00 of the second REST part, the dashboard identifies the result as a regular split daily rest (3:00 + 9:00), not a reduced 9:00 rest.
 - [ ] A continuous 9:00 REST with no earlier completed 3:00 part remains a reduced daily rest.
+
+
+### Stability / lifecycle
+- [ ] Card-read recovery resume: after a successful DDD download, live BLE resumes only after reconciled counters have been reloaded from preferences.
+- [ ] Background UI: leaving the main Activity does not keep live-log UI callbacks registered.
+- [ ] BLE reconnect: callbacks from a superseded GATT connection cannot replace the current session.
+- [ ] Android 8/9 startup: recovery FileObserver uses the API-26-compatible path constructor.
+- [ ] Card download logging: full-log UI updates are throttled; final SUCCESS/FAILED status remains immediate.

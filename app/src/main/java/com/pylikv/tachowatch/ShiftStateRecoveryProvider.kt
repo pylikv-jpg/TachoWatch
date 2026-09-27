@@ -3,7 +3,6 @@ package com.pylikv.tachowatch
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.os.FileObserver
@@ -26,9 +25,16 @@ class ShiftStateRecoveryProvider : ContentProvider() {
 
         val dir = c.getExternalFilesDir(null)
         if (dir != null) {
-            observer = object : FileObserver(dir, CLOSE_WRITE or MOVED_TO) {
+            @Suppress("DEPRECATION")
+            observer = object : FileObserver(dir.absolutePath, CLOSE_WRITE or MOVED_TO) {
                 override fun onEvent(event: Int, path: String?) {
-                    if (path?.endsWith(".ddd", ignoreCase = true) == true) reconcileLatest(c)
+                    if (path?.endsWith(".ddd", ignoreCase = true) == true) {
+                        try {
+                            reconcileLatest(c)
+                        } finally {
+                            DriverLiveService.resumeAfterCardRecovery(c)
+                        }
+                    }
                 }
             }.also { it.startWatching() }
         }
@@ -201,11 +207,9 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 .putLong(KEY_RECONCILED_AT, System.currentTimeMillis())
                 .apply()
 
-            // The service may still hold the pre-read counters in RAM. If it survives the card
-            // read, its next live cycle would write those stale values back over the corrected
-            // preferences. Stop that paused instance; the normal post-read START recreates it
-            // and restoreState() then loads the authoritative card seed before live resumes.
-            context.stopService(Intent(context, DriverLiveService::class.java))
+            // The FileObserver resumes the paused service only after this reconciliation
+            // returns. DriverLiveService then reloads these preferences before reconnecting BLE,
+            // so stale in-memory counters cannot overwrite the card checkpoint.
         }
     }
 

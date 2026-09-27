@@ -39,7 +39,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         private val FIFO = UUID.fromString("e413960c-75ba-4ca9-8a67-99bc052a1b13")
         private val CREDITS = UUID.fromString("e168d1a6-304f-42b4-ab96-4cd1d4efebd9")
         private const val RESPONSE_TIMEOUT = 3000L
-        private const val POLL_INTERVAL = 0L
+        private const val POLL_INTERVAL = 1000L
         private const val RECONNECT_MIN_DELAY = 1500L
         private const val RECONNECT_MAX_DELAY = 15000L
         private const val WATCHDOG_INTERVAL = 5000L
@@ -103,6 +103,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     private var lastFreshDataAt = 0L
     private var connectionStartedAt = 0L
     private var watchdogStarted = false
+    private var connectionEpoch = 0L
 
     fun hasPermission(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -122,6 +123,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
     private fun startConnection(device: BluetoothDevice, clearLog: Boolean) {
         if (!hasPermission() || !reconnectEnabled) return
         closeCurrentGatt(notify = false)
+        val epoch = ++connectionEpoch
         if (clearLog) lines.clear()
         txCredits = 0
         openSent = false
@@ -134,10 +136,11 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         lastFreshDataAt = 0L
         connectionStartedAt = System.currentTimeMillis()
         log(if (clearLog) "LIVE START" else "LIVE RECONNECT #$reconnectAttempt")
+        val callback = callbackFor(epoch)
         gatt = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                device.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
-            else device.connectGatt(context, false, cb)
+                device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+            else device.connectGatt(context, false, callback)
         } catch (_: Throwable) {
             null
         }
@@ -156,6 +159,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
 
     @SuppressLint("MissingPermission")
     private fun closeCurrentGatt(notify: Boolean) {
+        connectionEpoch++
         token++
         val old = gatt
         gatt = null
@@ -215,14 +219,21 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         lastFreshDataAt = System.currentTimeMillis()
     }
 
-    private val cb = object : BluetoothGattCallback() {
+    private fun callbackFor(epoch: Long) = object : BluetoothGattCallback() {
+        private fun current(g: BluetoothGatt): Boolean =
+            epoch == connectionEpoch && (gatt == null || gatt == g)
+
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
-            if (gatt != g && newState != BluetoothProfile.STATE_CONNECTED) {
+            if (!current(g)) {
                 try { g.close() } catch (_: Throwable) {}
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if (!hasPermission()) {
+                    try { g.close() } catch (_: Throwable) {}
+                    return
+                }
                 reconnectGeneration++
                 reconnectAttempt = 0
                 connected = true
@@ -230,8 +241,15 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
                 connectionStartedAt = System.currentTimeMillis()
                 lastFreshDataAt = 0L
                 listener.onLiveConnection(true, try { g.device.name } catch (_: Throwable) { "DTCO" })
-                try { if (!g.requestMtu(512)) g.discoverServices() } catch (_: Throwable) { g.discoverServices() }
+                try {
+                    if (!g.requestMtu(512)) g.discoverServices()
+                } catch (_: SecurityException) {
+                    forceRecovery()
+                } catch (_: Throwable) {
+                    if (hasPermission()) runCatching { g.discoverServices() }
+                }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                connectionEpoch++
                 if (gatt == g) gatt = null
                 connected = false
                 waiting = false
@@ -242,11 +260,14 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
             }
         }
 
+        @SuppressLint("MissingPermission")
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-            g.discoverServices()
+            if (!current(g) || !hasPermission()) return
+            try { g.discoverServices() } catch (_: Throwable) { forceRecovery() }
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (!current(g)) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 log("LIVE ERROR service discovery status=$status")
                 forceRecovery()
@@ -261,6 +282,7 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (!current(g)) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 log("LIVE ERROR descriptor status=$status")
                 forceRecovery()
@@ -268,24 +290,27 @@ class LiveDidDiagnostic(private val context: Context, private val listener: List
             }
             if (d.characteristic.uuid == FIFO) {
                 val c = g.getService(SERVICE)?.getCharacteristic(CREDITS) ?: return
-                handler.postDelayed({ subscribe(g, c) }, 120)
+                handler.postDelayed({ if (epoch == connectionEpoch) subscribe(g, c) }, 120)
             } else if (d.characteristic.uuid == CREDITS) {
-                handler.postDelayed({ grant(g) }, 180)
+                handler.postDelayed({ if (epoch == connectionEpoch) grant(g) }, 180)
             }
         }
 
         @Deprecated("legacy")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
-            if (Build.VERSION.SDK_INT < 33) incoming(g, c, c.value ?: byteArrayOf())
+            if (epoch == connectionEpoch && Build.VERSION.SDK_INT < 33) {
+                incoming(g, c, c.value ?: byteArrayOf())
+            }
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
-            incoming(g, c, value)
+            if (epoch == connectionEpoch) incoming(g, c, value)
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun subscribe(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+        if (!connected || gatt != g || !hasPermission()) return
         g.setCharacteristicNotification(c, true)
         val d = c.getDescriptor(CCCD) ?: return
         if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)

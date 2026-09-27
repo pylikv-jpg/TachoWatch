@@ -30,6 +30,7 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
         private const val REFILL_RX_CREDITS = 12
         private const val REFILL_DELAY_MS = 180L
         private const val MAX_FRAGMENT_RETRIES = 3
+        private const val LOG_NOTIFY_INTERVAL_MS = 400L
         private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private val SERVICE = TachographDiscovery.DOWNLOAD_SERVICE
         private val FIFO = UUID.fromString("29d3a479-1592-47df-80a4-afa742d369bb")
@@ -66,6 +67,8 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
     private var lastPacketNo = 0
     private val cardFile = ByteArrayOutputStream()
     private var savedPath = ""
+    private var logNotifyScheduled = false
+    private var lastLogNotifyAt = 0L
 
     fun hasConnectPermission(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -396,10 +399,30 @@ class DtcoBluetoothDiagnostic(private val context: Context, private val listener
 
     @SuppressLint("MissingPermission") fun disconnect(){timeoutToken++;fragmentToken++;try{gatt?.disconnect()}catch(_:Throwable){};closeGatt();connected=false;notifyConnection(false,device?.let(::safeName));log("Отключено пользователем")}
     @SuppressLint("MissingPermission") private fun closeGatt(){try{gatt?.close()}catch(_:Throwable){};gatt=null}
-    fun clearLog(){lines.clear();notifyLog()}
+    fun clearLog(){lines.clear();notifyLog(force=true)}
     private fun nrcName(n:Int)=when(n){0x10->"generalReject";0x11->"serviceNotSupported";0x12->"subFunctionNotSupported";0x13->"incorrectMessageLength";0x21->"busyRepeatRequest";0x22->"conditionsNotCorrect/requestSequenceError";0x31->"requestOutOfRange";0x33->"securityAccessDenied";0x50->"uploadNotAccepted";0x73->"wrongBlockSequenceCounter";0x78->"responsePending";0xFA->"dataNotAvailable";else->"NRC"}
-    private fun log(s:String){val t=SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date());lines.add("[$t] $s");while(lines.size>10000)lines.removeAt(0);notifyLog()}
-    private fun notifyLog(){val text=lines.joinToString("\n");handler.post{listener?.onLogChanged(text)}}
+    private fun log(s:String){val t=SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date());lines.add("[$t] $s");while(lines.size>10000)lines.removeAt(0);notifyLog(force=s.contains(RESULT_MARKER)||s.startsWith("STATUS="))}
+    private fun notifyLog(force:Boolean=false){
+        val now=SystemClock.elapsedRealtime()
+        val due=(LOG_NOTIFY_INTERVAL_MS-(now-lastLogNotifyAt)).coerceAtLeast(0L)
+        if(force){
+            logNotifyScheduled=false
+            lastLogNotifyAt=now
+            val text=lines.joinToString("\n")
+            handler.post{listener?.onLogChanged(text)}
+        }else if(due==0L){
+            lastLogNotifyAt=now
+            val text=lines.joinToString("\n")
+            handler.post{listener?.onLogChanged(text)}
+        }else if(!logNotifyScheduled){
+            logNotifyScheduled=true
+            handler.postDelayed({
+                logNotifyScheduled=false
+                lastLogNotifyAt=SystemClock.elapsedRealtime()
+                listener?.onLogChanged(lines.joinToString("\n"))
+            },due)
+        }
+    }
     private fun notifyConnection(v:Boolean,n:String?){handler.post{listener?.onConnectionStateChanged(v,n)}}
     @SuppressLint("MissingPermission") private fun safeName(d:BluetoothDevice)=try{d.name?:d.address}catch(_:Throwable){"DTCO"}
     private fun err(w:String,e:Throwable){log("ERROR [$w] ${e.javaClass.simpleName}: ${e.message}")}
