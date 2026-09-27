@@ -78,13 +78,14 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private var splitDailyThreeHourPartTaken=false; private var splitDailyCompletedAsSplit=false
     private var shiftCounterInitialized=false; private var shiftCompletedMinutes=0; private var previousContinuousMinutes=0; private var lastProcessedCycle=0
     private var workWindowMinutes=0; private var previousActivity="—"; private var previousActivityDuration=0; private var otherWorkWindowMinutes=0; private var availabilityWindowMinutes=0
+    private var historyLoadGeneration=0
 
     private val permissionLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){findAndAutoConnect()}
 
     override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=BG;window.navigationBarColor=BG;cardReader=DtcoBluetoothDiagnostic(applicationContext,this);restoreCounters();restoreSnapshot();buildUi();loadHistory();requestPermission();updateNow()}
     override fun onStart(){super.onStart();DriverLiveService.registerListener(this)}
     override fun onStop(){DriverLiveService.unregisterListener(this);super.onStop()}
-    override fun onDestroy(){handler.removeCallbacksAndMessages(null);cardReader.disconnect();super.onDestroy()}
+    override fun onDestroy(){historyLoadGeneration++;handler.removeCallbacksAndMessages(null);cardReader.disconnect();super.onDestroy()}
 
     private fun buildUi(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG);setPadding(dp(12),dp(10),dp(12),dp(10))}
@@ -206,28 +207,36 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     }
 
     private fun loadHistory(){
-        val f=TlvInventory.findLatestDdd(getExternalFilesDir(null))
-        if(f==null){
-            DiagnosticReporter.record(applicationContext,"CARD_HISTORY","No DDD file found after card read")
-            return
-        }
-        val r=TlvInventory.parse(f)
-        if(r.error!=null){
-            DiagnosticReporter.record(applicationContext,"CARD_HISTORY","Parse failed file=${f.name} bytes=${f.length()} error=${r.error}")
-            return
-        }
-        history=HistoryData.load(r)
-        val days=history?.days.orEmpty()
-        val latest=days.lastOrNull()
-        DiagnosticReporter.record(
-            applicationContext,
-            "CARD_HISTORY",
-            "Loaded file=${f.name} bytes=${f.length()} days=${days.size} " +
-                "latest=${latest?.date ?: "—"} ${latest?.startTime ?: "—"}-${latest?.endTime ?: "—"} " +
-                "recent=${days.takeLast(4).joinToString(","){it.date}}"
-        )
-        if(::historyRoot.isInitialized)buildHistoryView()
-        updateWeekCards();updateWorkWeekClock();updateShiftDriving();updateShiftSpan()
+        val generation=++historyLoadGeneration
+        val dir=getExternalFilesDir(null)
+        Thread{
+            val f=TlvInventory.findLatestDdd(dir)
+            if(f==null){
+                DiagnosticReporter.record(applicationContext,"CARD_HISTORY","No DDD file found after card read")
+                return@Thread
+            }
+            val parsed=TlvInventory.parse(f)
+            if(parsed.error!=null){
+                DiagnosticReporter.record(applicationContext,"CARD_HISTORY","Parse failed file=${f.name} bytes=${f.length()} error=${parsed.error}")
+                return@Thread
+            }
+            val loaded=HistoryData.load(parsed)
+            val days=loaded.days
+            val latest=days.lastOrNull()
+            DiagnosticReporter.record(
+                applicationContext,
+                "CARD_HISTORY",
+                "Loaded file=${f.name} bytes=${f.length()} days=${days.size} " +
+                    "latest=${latest?.date ?: "—"} ${latest?.startTime ?: "—"}-${latest?.endTime ?: "—"} " +
+                    "recent=${days.takeLast(4).joinToString(","){it.date}}"
+            )
+            runOnUiThread{
+                if(generation!=historyLoadGeneration||isFinishing||isDestroyed)return@runOnUiThread
+                history=loaded
+                if(::historyRoot.isInitialized)buildHistoryView()
+                updateWeekCards();updateWorkWeekClock();updateShiftDriving();updateShiftSpan()
+            }
+        }.start()
     }
     private fun restoreCounters(){shiftCounterInitialized=prefs.getBoolean(SHIFT_INITIALIZED,false);shiftCompletedMinutes=prefs.getInt(SHIFT_COMPLETED,0);previousContinuousMinutes=prefs.getInt(SHIFT_PREV_CONTINUOUS,0);workWindowMinutes=prefs.getInt(WORK_WINDOW,0);previousActivity=prefs.getString(WORK_PREV_ACTIVITY,"—")?:"—";previousActivityDuration=prefs.getInt(WORK_PREV_DURATION,0);otherWorkWindowMinutes=prefs.getInt(WORK_ACC,0);availabilityWindowMinutes=prefs.getInt(AVAIL_ACC,0)}
     private fun restoreSnapshot(){currentActivity=prefs.getString(DriverLiveService.SNAP_ACTIVITY,"—")?:"—";activityMinutes=prefs.getInt(DriverLiveService.SNAP_ACTIVITY_MIN,0);continuousMinutes=prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN,0);breakMinutes=prefs.getInt(DriverLiveService.SNAP_BREAK_MIN,0);twoWeekMinutes=prefs.getInt(DriverLiveService.SNAP_TWO_WEEK_MIN,0);splitDailyThreeHourPartTaken=prefs.getBoolean(DriverLiveService.SPLIT_DAILY_3H_TAKEN,false);splitDailyCompletedAsSplit=prefs.getBoolean(DriverLiveService.SPLIT_DAILY_COMPLETED_AS_SPLIT,false)}
