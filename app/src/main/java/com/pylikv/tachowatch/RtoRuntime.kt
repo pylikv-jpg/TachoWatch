@@ -8,12 +8,15 @@ class RtoRuntime(context: Context) {
 
     fun seedFromCard(history: HistoryData.Model?) {
         if (history == null) return
+        val latest = history.days.lastOrNull()
         prefs.edit()
-            .putInt("seed_driving", history.days.lastOrNull()?.drivingMinutes ?: 0)
-            .putInt("seed_work", history.days.lastOrNull()?.let { it.drivingMinutes + it.workMinutes } ?: 0)
-            .putInt("seed_other", history.days.lastOrNull()?.workMinutes ?: 0)
-            .putInt("seed_avail", history.days.lastOrNull()?.availabilityMinutes ?: 0)
+            .putInt("seed_driving", latest?.drivingMinutes ?: 0)
+            .putInt("seed_work", latest?.let { it.drivingMinutes + it.workMinutes } ?: 0)
+            .putInt("seed_other", latest?.workMinutes ?: 0)
+            .putInt("seed_avail", latest?.availabilityMinutes ?: 0)
             .apply()
+        // Never keep state synthesized by an older build after a fresh card seed.
+        state = RtoCore.State()
     }
 
     fun update(

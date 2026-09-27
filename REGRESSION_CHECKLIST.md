@@ -47,3 +47,11 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] Missed F923 reset recovery: a small post-break F923 value that keeps growing is accepted only after confirmation and then catches up.
 - [ ] Observed 45-minute break anchors the fallback F923 cycle immediately.
 - [ ] Split daily rest history: a first 3-hour part split across midnight is carried into the same shift; a continuous 9-hour rest clears that credit.
+
+
+### Reproducible source build
+- [ ] CI does not run Python scripts that rewrite tracked Kotlin source before compilation.
+- [ ] RTO 45-minute continuous-work reset rules are checked into RtoCore.kt.
+- [ ] A fresh RtoRuntime card seed resets synthesized legacy runtime state.
+- [ ] DriverDashboardActivityV2 is the only registered driver dashboard.
+- [ ] CI runs git diff --exit-code after the APK build so hidden source mutation fails the build.

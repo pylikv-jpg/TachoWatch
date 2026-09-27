@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -56,14 +56,8 @@ jobs:
             -storepass android \
             -alias androiddebugkey | grep 'SHA256:'
 
-      - name: Apply canonical RTO v2 rules
-        run: python3 tools/apply_rto_v2.py
-
-      - name: Restore DTCO auto-connect and history allowances
-        run: python3 tools/apply_restore_autoconnect_history_summary.py
-
-      - name: Apply confirmed DTCO counter sources
-        run: python3 tools/apply_counter_source_fix_v231.py
+      - name: Verify checked-in source is clean
+        run: git diff --exit-code
 
       - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
@@ -84,6 +78,9 @@ jobs:
 
       - name: Run RTO regression tests and build APK
         run: gradle testDebugUnitTest assembleDebug
+
+      - name: Verify build did not rewrite tracked source
+        run: git diff --exit-code
 
       - name: Upload static analysis reports
         if: always()

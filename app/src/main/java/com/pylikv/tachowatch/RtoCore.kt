@@ -150,8 +150,8 @@ object RtoCore {
         }
 
         // A qualifying work-break part is >=15 minutes. It interrupts the 6h work clock.
-        if (sample.activity == Activity.REST && sample.activityMinutes >= 15 &&
-            (s.previousActivity != Activity.REST || s.previousActivityMinutes < 15)
+        if (sample.activity == Activity.REST && sample.activityMinutes >= 45 &&
+            (s.previousActivity != Activity.REST || s.previousActivityMinutes < 45)
         ) {
             s = s.copy(continuousWorkCompletedMinutes = 0)
         }
@@ -249,7 +249,7 @@ object RtoCore {
         val currentOther = if (!state.dailyRestLatched && sample.activity == Activity.OTHER_WORK) sample.activityMinutes else 0
         val currentAvail = if (!state.dailyRestLatched && sample.activity == Activity.AVAILABILITY) sample.activityMinutes else 0
 
-        val continuousWork = if (sample.activity == Activity.REST && sample.activityMinutes >= 15) 0
+        val continuousWork = if (sample.activity == Activity.REST && sample.activityMinutes >= 45) 0
         else state.continuousWorkCompletedMinutes +
             if (sample.activity == Activity.DRIVING || sample.activity == Activity.OTHER_WORK) sample.activityMinutes else 0
 
