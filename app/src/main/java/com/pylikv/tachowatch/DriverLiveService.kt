@@ -105,6 +105,10 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
 
         fun isRunning(): Boolean = running
 
+        fun isCardReadPaused(context: Context): Boolean =
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(CARD_READ_PAUSED, false)
+
         fun diagnosticConnectionSummary(): String =
             "running=$running connected=$connected device=${deviceName ?: "unknown"}"
     }
