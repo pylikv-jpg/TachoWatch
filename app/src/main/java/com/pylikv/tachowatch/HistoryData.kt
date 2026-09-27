@@ -98,14 +98,22 @@ object HistoryData {
         val placesText = PlacesDecoder.render(result)
         val historyEvents = HistoryEventDecoder.decode(result).groupBy { it.date }
         val activityDays = linkedMapOf<String, ActivityDay>()
+        var splitRecoveryState = SplitDailyRestTracker.RecoveryState()
+        var previousActivityDate: Date? = null
 
         Regex("(?ms)^DAY#\\d+.*?date=(\\d{4}-\\d{2}-\\d{2}).*?\\n(.*?)(?=^DAY#|^STATUS=)")
             .findAll(activityText)
             .forEach { match ->
                 val date = match.groupValues[1]
+                val parsedActivityDate = parseDate(date)
+                if (previousActivityDate != null && parsedActivityDate != null &&
+                    parsedActivityDate.time - previousActivityDate!!.time > 24L * 60L * 60L * 1000L
+                ) {
+                    splitRecoveryState = SplitDailyRestTracker.RecoveryState()
+                }
+                previousActivityDate = parsedActivityDate
                 val day = ActivityDay()
                 var seenActive = false
-                var pendingThreeHours = false
 
                 match.groupValues[2].lines().forEach { line ->
                     val row = Regex("^\\s*(\\d{2}:\\d{2})\\s+(REST|AVAILABILITY|WORK|DRIVING)\\b").find(line) ?: return@forEach
@@ -116,11 +124,11 @@ object HistoryData {
                         (it.groupValues[1].toIntOrNull() ?: 0) * 60 + (it.groupValues[2].toIntOrNull() ?: 0)
                     } ?: 0
                     if (minutes > 0) day.periods += ActivityPeriod(time, kind, minutes)
+                    splitRecoveryState =
+                        SplitDailyRestTracker.updateRecoveryState(splitRecoveryState, kind, minutes)
 
                     when (kind) {
                         "DRIVING", "WORK", "AVAILABILITY" -> {
-                            if (pendingThreeHours) day.hasSplitDailyRest3h = true
-                            pendingThreeHours = false
                             when (kind) {
                                 "DRIVING" -> day.driving += minutes
                                 "WORK" -> day.work += minutes
@@ -132,10 +140,10 @@ object HistoryData {
                         }
                         "REST" -> if (seenActive) {
                             day.restStartAfterWork = time
-                            pendingThreeHours = minutes >= 180
                         }
                     }
                 }
+                day.hasSplitDailyRest3h = splitRecoveryState.firstPartTaken
                 activityDays[date] = day
             }
 

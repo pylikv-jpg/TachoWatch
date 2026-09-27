@@ -41,6 +41,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val SHIFT_INITIALIZED = "shift_counter_initialized"
         const val SHIFT_COMPLETED = "shift_completed_driving"
         const val SHIFT_PREV_CONTINUOUS = "shift_prev_continuous"
+        const val SHIFT_RESET_CANDIDATE = "shift_reset_candidate"
         const val WORK_WINDOW = "work_window_minutes"
         const val CW_OTHER_WINDOW = "continuous_work_other_minutes"
         const val CW_PREV_ACTIVITY = "continuous_work_prev_activity"
@@ -133,6 +134,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
     private var shiftCounterInitialized = false
     private var shiftCompletedMinutes = 0
     private var previousContinuousMinutes = 0
+    private var shiftResetCandidateMinutes = -1
     private var workWindowMinutes = 0
     private var continuousWorkOtherMinutes = 0
     private var continuousWorkPreviousActivity = "—"
@@ -358,6 +360,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         shiftCounterInitialized = p.getBoolean(SHIFT_INITIALIZED, false)
         shiftCompletedMinutes = p.getInt(SHIFT_COMPLETED, 0)
         previousContinuousMinutes = p.getInt(SHIFT_PREV_CONTINUOUS, 0)
+        shiftResetCandidateMinutes = p.getInt(SHIFT_RESET_CANDIDATE, -1)
         workWindowMinutes = p.getInt(WORK_WINDOW, 0)
         continuousWorkOtherMinutes = p.getInt(CW_OTHER_WINDOW, 0)
         continuousWorkPreviousActivity = p.getString(CW_PREV_ACTIVITY, "—") ?: "—"
@@ -387,6 +390,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             .putBoolean(SHIFT_INITIALIZED, shiftCounterInitialized)
             .putInt(SHIFT_COMPLETED, shiftCompletedMinutes)
             .putInt(SHIFT_PREV_CONTINUOUS, previousContinuousMinutes)
+            .putInt(SHIFT_RESET_CANDIDATE, shiftResetCandidateMinutes)
             .putInt(WORK_WINDOW, workWindowMinutes)
             .putInt(CW_OTHER_WINDOW, continuousWorkOtherMinutes)
             .putString(CW_PREV_ACTIVITY, continuousWorkPreviousActivity)
@@ -451,9 +455,11 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             shiftCounterInitialized = true
             shiftCompletedMinutes = 0
             previousContinuousMinutes = continuousMinutes
+            shiftResetCandidateMinutes = -1
         } else if (directShiftDrivingMinutes != null) {
             shiftCounterInitialized = true
             shiftCompletedMinutes = directShiftDrivingMinutes
+            shiftResetCandidateMinutes = -1
             // Keep fallback checkpoint aligned so a later unsupported cycle cannot add the
             // current F923 segment a second time.
             previousContinuousMinutes = continuousMinutes
@@ -463,11 +469,14 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
                 totalMinutes = shiftCompletedMinutes,
                 previousContinuousMinutes = previousContinuousMinutes,
                 currentContinuousMinutes = continuousMinutes,
-                dailyRestCompleted = false
+                dailyRestCompleted = false,
+                resetCandidateMinutes = shiftResetCandidateMinutes,
+                qualifyingRestMinutes = restMinutes
             )
             shiftCounterInitialized = shift.initialized
             shiftCompletedMinutes = shift.totalMinutes
             previousContinuousMinutes = shift.previousContinuousMinutes
+            shiftResetCandidateMinutes = shift.resetCandidateMinutes
         }
 
         val previousContinuousOtherWork = continuousWorkOtherMinutes

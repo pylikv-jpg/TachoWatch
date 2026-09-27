@@ -40,3 +40,10 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] BLE reconnect: callbacks from a superseded GATT connection cannot replace the current session.
 - [ ] Android 8/9 startup: recovery FileObserver uses the API-26-compatible path constructor.
 - [ ] Card download logging: full-log UI updates are throttled; final SUCCESS/FAILED status remains immediate.
+
+
+### Counter edge cases
+- [ ] F923 transient reset guard: unsupported F9AF/F9A6 with 200 → 0 → 200 must not double shift driving.
+- [ ] Missed F923 reset recovery: a small post-break F923 value that keeps growing is accepted only after confirmation and then catches up.
+- [ ] Observed 45-minute break anchors the fallback F923 cycle immediately.
+- [ ] Split daily rest history: a first 3-hour part split across midnight is carried into the same shift; a continuous 9-hour rest clears that credit.

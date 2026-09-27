@@ -176,6 +176,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     DriverLiveService.SHIFT_PREV_CONTINUOUS,
                     shiftCheckpoint.previousContinuousMinutes
                 )
+                .putInt(DriverLiveService.SHIFT_RESET_CANDIDATE, -1)
                 .putInt(DriverLiveService.WORK_WINDOW, mergedContinuousWork)
                 .putInt(DriverLiveService.CW_OTHER_WINDOW, mergedContinuousOtherWork)
                 .putInt(DriverLiveService.WORK_ACC, mergedShiftOtherWork)

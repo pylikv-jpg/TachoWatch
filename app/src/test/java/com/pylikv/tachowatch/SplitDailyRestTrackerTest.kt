@@ -108,4 +108,29 @@ class SplitDailyRestTrackerTest {
         assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedRest(listOf(540)))
         assertFalse(SplitDailyRestTracker.recoverFirstPartFromClosedRest(listOf(660)))
     }
+
+    @Test
+    fun recoveryStateCarriesFirstPartAcrossMidnightChunks() {
+        var state = SplitDailyRestTracker.RecoveryState()
+        state = SplitDailyRestTracker.updateRecoveryState(state, "WORK", 10)
+        state = SplitDailyRestTracker.updateRecoveryState(state, "REST", 90)
+
+        // Next calendar day continues the same uninterrupted REST.
+        state = SplitDailyRestTracker.updateRecoveryState(state, "REST", 100)
+        state = SplitDailyRestTracker.updateRecoveryState(state, "WORK", 5)
+
+        assertTrue(state.firstPartTaken)
+    }
+
+    @Test
+    fun recoveryStateClearsSplitCreditWhenContinuousRestReachesNineHours() {
+        var state = SplitDailyRestTracker.RecoveryState()
+        state = SplitDailyRestTracker.updateRecoveryState(state, "WORK", 10)
+        state = SplitDailyRestTracker.updateRecoveryState(state, "REST", 180)
+        assertTrue(state.firstPartTaken)
+
+        state = SplitDailyRestTracker.updateRecoveryState(state, "REST", 360)
+        assertFalse(state.firstPartTaken)
+        assertFalse(state.shiftHasActivity)
+    }
 }

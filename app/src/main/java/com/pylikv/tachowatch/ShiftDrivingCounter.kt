@@ -9,7 +9,8 @@ object ShiftDrivingCounter {
     data class State(
         val initialized: Boolean,
         val totalMinutes: Int,
-        val previousContinuousMinutes: Int
+        val previousContinuousMinutes: Int,
+        val resetCandidateMinutes: Int = -1
     )
 
     fun reconcileCheckpoint(
@@ -27,7 +28,8 @@ object ShiftDrivingCounter {
         return State(
             initialized = true,
             totalMinutes = cardShiftDrivingMinutes.coerceAtLeast(0) + openDrivingMissingFromCard,
-            previousContinuousMinutes = live
+            previousContinuousMinutes = live,
+            resetCandidateMinutes = -1
         )
     }
 
@@ -36,22 +38,50 @@ object ShiftDrivingCounter {
         totalMinutes: Int,
         previousContinuousMinutes: Int,
         currentContinuousMinutes: Int,
-        dailyRestCompleted: Boolean
+        dailyRestCompleted: Boolean,
+        resetCandidateMinutes: Int = -1,
+        qualifyingRestMinutes: Int = 0
     ): State {
+        val current = currentContinuousMinutes.coerceAtLeast(0)
+        val previous = previousContinuousMinutes.coerceAtLeast(0)
+
         if (dailyRestCompleted) {
-            return State(true, 0, 0)
+            return State(true, 0, 0, -1)
         }
         if (!initialized) {
-            return State(true, totalMinutes, currentContinuousMinutes)
+            return State(true, totalMinutes, current, -1)
         }
 
-        val delta = if (currentContinuousMinutes >= previousContinuousMinutes) {
-            currentContinuousMinutes - previousContinuousMinutes
-        } else {
-            // F923 starts a new continuous-driving cycle after a qualifying break.
-            // The old cycle was already integrated while it was growing.
-            currentContinuousMinutes
+        // A confirmed 45-minute break is the authoritative F923 cycle boundary.
+        // Anchor the fallback at zero so the first new driving minutes are counted
+        // immediately even if the tachograph keeps the old F923 value during the rest.
+        if (qualifyingRestMinutes >= 45) {
+            return State(true, totalMinutes, 0, -1)
         }
-        return State(true, totalMinutes + delta.coerceAtLeast(0), currentContinuousMinutes)
+
+        if (current >= previous) {
+            val delta = current - previous
+            return State(true, totalMinutes + delta, current, -1)
+        }
+
+        // Without an observed qualifying break, a sudden F923 decrease can be a
+        // one-cycle DTCO/reconnect glitch. Keep the old checkpoint and require the
+        // small new value to grow by at least two minutes before accepting it as a
+        // genuine new continuous-driving cycle. This prevents 200 -> 0 -> 200 from
+        // becoming 400 while still recovering correctly after a missed break.
+        if (current > 30) {
+            return State(true, totalMinutes, previous, -1)
+        }
+
+        val candidate = resetCandidateMinutes
+        if (candidate < 0 || current < candidate) {
+            return State(true, totalMinutes, previous, current)
+        }
+
+        if (current - candidate >= 2) {
+            return State(true, totalMinutes + current, current, -1)
+        }
+
+        return State(true, totalMinutes, previous, candidate)
     }
 }

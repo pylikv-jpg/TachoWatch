@@ -65,4 +65,88 @@ class ShiftDrivingCounterTest {
         assertEquals(0, checkpoint.totalMinutes)
         assertEquals(0, checkpoint.previousContinuousMinutes)
     }
+
+    @Test
+    fun transientZeroDoesNotDoubleShiftDriving() {
+        var state = ShiftDrivingCounter.update(
+            initialized = true,
+            totalMinutes = 200,
+            previousContinuousMinutes = 200,
+            currentContinuousMinutes = 0,
+            dailyRestCompleted = false
+        )
+
+        assertEquals(200, state.totalMinutes)
+        assertEquals(200, state.previousContinuousMinutes)
+        assertEquals(0, state.resetCandidateMinutes)
+
+        state = ShiftDrivingCounter.update(
+            initialized = state.initialized,
+            totalMinutes = state.totalMinutes,
+            previousContinuousMinutes = state.previousContinuousMinutes,
+            currentContinuousMinutes = 200,
+            dailyRestCompleted = false,
+            resetCandidateMinutes = state.resetCandidateMinutes
+        )
+
+        assertEquals(200, state.totalMinutes)
+        assertEquals(200, state.previousContinuousMinutes)
+        assertEquals(-1, state.resetCandidateMinutes)
+    }
+
+    @Test
+    fun smallGrowingValueConfirmsMissedF923ResetWithoutDoubleCounting() {
+        var state = ShiftDrivingCounter.update(
+            initialized = true,
+            totalMinutes = 200,
+            previousContinuousMinutes = 200,
+            currentContinuousMinutes = 0,
+            dailyRestCompleted = false
+        )
+        state = ShiftDrivingCounter.update(
+            initialized = state.initialized,
+            totalMinutes = state.totalMinutes,
+            previousContinuousMinutes = state.previousContinuousMinutes,
+            currentContinuousMinutes = 1,
+            dailyRestCompleted = false,
+            resetCandidateMinutes = state.resetCandidateMinutes
+        )
+        assertEquals(200, state.totalMinutes)
+
+        state = ShiftDrivingCounter.update(
+            initialized = state.initialized,
+            totalMinutes = state.totalMinutes,
+            previousContinuousMinutes = state.previousContinuousMinutes,
+            currentContinuousMinutes = 2,
+            dailyRestCompleted = false,
+            resetCandidateMinutes = state.resetCandidateMinutes
+        )
+
+        assertEquals(202, state.totalMinutes)
+        assertEquals(2, state.previousContinuousMinutes)
+        assertEquals(-1, state.resetCandidateMinutes)
+    }
+
+    @Test
+    fun observedFortyFiveMinuteBreakAnchorsNewF923CycleImmediately() {
+        var state = ShiftDrivingCounter.update(
+            initialized = true,
+            totalMinutes = 200,
+            previousContinuousMinutes = 200,
+            currentContinuousMinutes = 200,
+            dailyRestCompleted = false,
+            qualifyingRestMinutes = 45
+        )
+        assertEquals(200, state.totalMinutes)
+        assertEquals(0, state.previousContinuousMinutes)
+
+        state = ShiftDrivingCounter.update(
+            initialized = state.initialized,
+            totalMinutes = state.totalMinutes,
+            previousContinuousMinutes = state.previousContinuousMinutes,
+            currentContinuousMinutes = 1,
+            dailyRestCompleted = false
+        )
+        assertEquals(201, state.totalMinutes)
+    }
 }

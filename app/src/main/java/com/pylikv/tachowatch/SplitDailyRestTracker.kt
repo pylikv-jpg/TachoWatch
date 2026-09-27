@@ -17,6 +17,32 @@ object SplitDailyRestTracker {
         val completedAsSplit: Boolean = false
     )
 
+    data class RecoveryState(
+        val shiftHasActivity: Boolean = false,
+        val consecutiveRestMinutes: Int = 0,
+        val firstPartTaken: Boolean = false
+    )
+
+    fun updateRecoveryState(state: RecoveryState, type: String, minutes: Int): RecoveryState {
+        val duration = minutes.coerceAtLeast(0)
+        if (type != "REST") {
+            return state.copy(
+                shiftHasActivity = true,
+                consecutiveRestMinutes = 0
+            )
+        }
+
+        val rest = state.consecutiveRestMinutes + duration
+        return when {
+            rest >= SECOND_PART_MINUTES -> RecoveryState()
+            state.shiftHasActivity && rest >= FIRST_PART_MINUTES -> state.copy(
+                consecutiveRestMinutes = rest,
+                firstPartTaken = true
+            )
+            else -> state.copy(consecutiveRestMinutes = rest)
+        }
+    }
+
     /**
      * Card history contains only closed activity periods. The recovery provider already
      * limits these periods to the current shift (after the latest >=9h daily-rest boundary),
@@ -32,24 +58,11 @@ object SplitDailyRestTracker {
      * A trailing closed REST is allowed: the following WORK can still be OPEN.
      */
     fun recoverFirstPartFromClosedActivities(activities: Iterable<Pair<String, Int>>): Boolean {
-        var shiftHasActivity = false
-        var consecutiveRestMinutes = 0
-        var firstPartTaken = false
+        var state = RecoveryState()
         for ((type, minutes) in activities) {
-            if (type != "REST") {
-                shiftHasActivity = true
-                consecutiveRestMinutes = 0
-                continue
-            }
-            consecutiveRestMinutes += minutes.coerceAtLeast(0)
-            if (consecutiveRestMinutes >= SECOND_PART_MINUTES) {
-                firstPartTaken = false
-                shiftHasActivity = false
-            } else if (shiftHasActivity && consecutiveRestMinutes >= FIRST_PART_MINUTES) {
-                firstPartTaken = true
-            }
+            state = updateRecoveryState(state, type, minutes)
         }
-        return firstPartTaken
+        return state.firstPartTaken
     }
 
     fun update(state: State, resting: Boolean, restMinutes: Int): State {
