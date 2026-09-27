@@ -54,8 +54,8 @@ object ShiftDrivingCounter {
         }
 
         // A confirmed 45-minute break is the authoritative F923 cycle boundary.
-        // Anchor the fallback at zero so the first new driving minutes are counted
-        // immediately even if the tachograph keeps the old F923 value during the rest.
+        // Keep the old F923 checkpoint only as a guard while the tachograph may still
+        // expose that stale value; accept the first real lower value as the new cycle.
         if (qualifyingRestMinutes >= 45) {
             return State(true, totalMinutes, previous, RESET_ARMED_BY_BREAK)
         }

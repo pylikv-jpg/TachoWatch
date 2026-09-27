@@ -157,7 +157,8 @@ class ShiftDrivingCounterTest {
             totalMinutes = state.totalMinutes,
             previousContinuousMinutes = state.previousContinuousMinutes,
             currentContinuousMinutes = 1,
-            dailyRestCompleted = false
+            dailyRestCompleted = false,
+            resetCandidateMinutes = state.resetCandidateMinutes
         )
         assertEquals(201, state.totalMinutes)
     }
