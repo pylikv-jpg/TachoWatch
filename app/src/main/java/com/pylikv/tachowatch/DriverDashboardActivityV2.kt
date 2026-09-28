@@ -79,6 +79,8 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private var shiftCounterInitialized=false; private var shiftCompletedMinutes=0; private var previousContinuousMinutes=0; private var lastProcessedCycle=0
     private var workWindowMinutes=0; private var previousActivity="—"; private var previousActivityDuration=0; private var otherWorkWindowMinutes=0; private var availabilityWindowMinutes=0
     private var historyLoadGeneration=0
+    private var mileageFromDate:String?=null
+    private var mileageToDate:String?=null
 
     private val permissionLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){findAndAutoConnect()}
 
@@ -126,6 +128,28 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         historyRoot.removeAllViews();val scroll=ScrollView(this);val c=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};val model=history;val days=model?.days.orEmpty().asReversed();c.addView(value("История · все считанные данные карты",22f))
         val previous=model?.previousWeekDrivingMinutes?:0;val current=currentWeekDriving();val total=previous+current;val remaining=(90*60-total).coerceAtLeast(0)
         val summary=card();summary.addView(label("ДВЕ ПОСЛЕДОВАТЕЛЬНЫЕ НЕДЕЛИ"));summary.addView(value("${HistoryData.fmt(total)} из 90:00",24f));summary.addView(sub("Предыдущая ${HistoryData.fmt(previous)} • текущая ${HistoryData.fmt(current)} • осталось ${HistoryData.fmt(remaining)}"));val reduced=usedReducedDailyRests();summary.addView(sub("Сокращённые суточные отдыхи: $reduced/3 использовано • ${(3-reduced).coerceAtLeast(0)} осталось"));summary.addView(sub("10-часовые вождения на этой неделе: ${currentWeekTenHourUses()}/2"));c.addView(summary);c.addView(space(7));c.addView(sub("Считано с карты: ${days.size} смен • без ограничения по неделям"))
+        val mileageDays=model?.days.orEmpty().filter{it.shiftDistanceKm!=null}
+        if(mileageDays.isNotEmpty()){
+            if(mileageFromDate==null)mileageFromDate=mileageDays.first().date
+            if(mileageToDate==null)mileageToDate=mileageDays.last().date
+            val mileageBox=card();mileageBox.addView(label("ПРОБЕГ ПО ОДОМЕТРУ"))
+            val rangeRow=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+            val fromButton=smallButton("");val toButton=smallButton("")
+            rangeRow.addView(fromButton,LinearLayout.LayoutParams(0,dp(42),1f));rangeRow.addView(hspace(6));rangeRow.addView(toButton,LinearLayout.LayoutParams(0,dp(42),1f));mileageBox.addView(rangeRow)
+            val mileageTotal=value("",24f);val mileageNote=sub("");mileageBox.addView(mileageTotal);mileageBox.addView(mileageNote)
+            fun refreshMileageRange(){
+                var from=mileageFromDate?:mileageDays.first().date
+                var to=mileageToDate?:mileageDays.last().date
+                if(from>to){val tmp=from;from=to;to=tmp;mileageFromDate=from;mileageToDate=to}
+                fromButton.text="С "+prettyDate(from);toButton.text="По "+prettyDate(to)
+                val result=HistoryData.mileageBetween(model?.days.orEmpty(),from,to)
+                mileageTotal.text=result.first.toString()+" км"
+                mileageNote.text=if(result.second>0)"По подтверждённым открытиям/закрытиям • "+result.second+" смен без пары одометра" else "По подтверждённым открытиям/закрытиям смен"
+            }
+            fromButton.setOnClickListener{pickHistoryDate(mileageFromDate?:mileageDays.first().date){mileageFromDate=it;refreshMileageRange()}}
+            toButton.setOnClickListener{pickHistoryDate(mileageToDate?:mileageDays.last().date){mileageToDate=it;refreshMileageRange()}}
+            refreshMileageRange();c.addView(mileageBox);c.addView(space(7))
+        }
         val localCardEvents=LocalCardEventStore.read(this).takeLast(20).asReversed()
         if(localCardEvents.isNotEmpty()){
             val cardEventsBox=card();cardEventsBox.addView(label("КАРТА ВОДИТЕЛЯ • СОБЫТИЯ DTCO"))
@@ -136,7 +160,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
             c.addView(cardEventsBox);c.addView(space(7))
         }
         if(days.isEmpty())c.addView(value("История появится после полного считывания карты",17f))
-        days.forEachIndexed{i,day->val box=card();val details=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};val head=TextView(this).apply{text="${prettyDate(day.date)}  •  ${day.startTime?:"—"}–${day.endTime?:"—"}   ▾";textSize=18f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setPadding(0,dp(4),0,dp(4));setOnClickListener{details.visibility=if(details.visibility==View.VISIBLE)View.GONE else View.VISIBLE}};box.addView(head);box.addView(sub("${flag(day.startCountry)} ${day.startCountry?:"—"} → ${flag(day.endCountry)} ${day.endCountry?:"—"} • смена ${day.shiftMinutes?.let(HistoryData::fmt)?:"—"}"));box.addView(value("🚗 ${HistoryData.fmt(day.drivingMinutes)}  ⚒ ${HistoryData.fmt(day.workMinutes)}  ✉ ${HistoryData.fmt(day.availabilityMinutes)}",18f));details.addView(label("ПОДРОБНЫЙ ОТЧЁТ ПО ВИДАМ РАБОТ"));val shiftPeriods=periodsInsideShift(day);if(shiftPeriods.isEmpty())details.addView(sub("Подробные периоды отсутствуют в считанных данных карты"));shiftPeriods.forEach{p->details.addView(sub("${activityIcon(p.type)} ${p.startTime}  ${activityName(p.type)}  •  ${HistoryData.fmt(p.minutes)}"))};if(day.events.isNotEmpty()){details.addView(space(5));details.addView(label("СОБЫТИЯ ТАХОГРАФА"));day.events.forEach{e->details.addView(sub("${historyEventIcon(e.type)} ${e.time}  ${historyEventName(e.type)}${e.odometerKm?.let{"  •  $it км"}?:""}"))}};details.addView(sub("Открытие: ${day.startTime?:"—"} ${flag(day.startCountry)} ${day.startCountry?:"—"}"));details.addView(sub("Закрытие: ${day.endTime?:"—"} ${flag(day.endCountry)} ${day.endCountry?:"—"}"));box.addView(details);c.addView(box);c.addView(space(7));if(i<days.lastIndex){val older=days[i+1];model?.restBetween(older,day)?.let{rest->c.addView(TextView(this).apply{text=restTitle(rest);textSize=14f;gravity=Gravity.CENTER;setTextColor(if(rest.weekly)CYAN else if(rest.creditedDailyMinutes==540)YELLOW else MUTED);setPadding(dp(6),dp(7),dp(6),dp(7))})}}}
+        days.forEachIndexed{i,day->val box=card();val details=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};val head=TextView(this).apply{text="${prettyDate(day.date)}  •  ${day.startTime?:"—"}–${day.endTime?:"—"}   ▾";textSize=18f;setTextColor(TEXT);setTypeface(typeface,Typeface.BOLD);setPadding(0,dp(4),0,dp(4));setOnClickListener{details.visibility=if(details.visibility==View.VISIBLE)View.GONE else View.VISIBLE}};box.addView(head);box.addView(sub("${flag(day.startCountry)} ${day.startCountry?:"—"} → ${flag(day.endCountry)} ${day.endCountry?:"—"} • смена ${day.shiftMinutes?.let(HistoryData::fmt)?:"—"}"));day.shiftDistanceKm?.let{km->box.addView(sub("🛣 "+km+" км • одометр "+day.startOdometerKm+" → "+day.endOdometerKm+" км"))};box.addView(value("🚗 ${HistoryData.fmt(day.drivingMinutes)}  ⚒ ${HistoryData.fmt(day.workMinutes)}  ✉ ${HistoryData.fmt(day.availabilityMinutes)}",18f));details.addView(label("ПОДРОБНЫЙ ОТЧЁТ ПО ВИДАМ РАБОТ"));val shiftPeriods=periodsInsideShift(day);if(shiftPeriods.isEmpty())details.addView(sub("Подробные периоды отсутствуют в считанных данных карты"));shiftPeriods.forEach{p->details.addView(sub("${activityIcon(p.type)} ${p.startTime}  ${activityName(p.type)}  •  ${HistoryData.fmt(p.minutes)}"))};if(day.events.isNotEmpty()){details.addView(space(5));details.addView(label("СОБЫТИЯ ТАХОГРАФА"));day.events.forEach{e->details.addView(sub("${historyEventIcon(e.type)} ${e.time}  ${historyEventName(e.type)}${e.odometerKm?.let{"  •  $it км"}?:""}"))}};details.addView(sub("Открытие: ${day.startTime?:"—"} ${flag(day.startCountry)} ${day.startCountry?:"—"}"));details.addView(sub("Закрытие: ${day.endTime?:"—"} ${flag(day.endCountry)} ${day.endCountry?:"—"}"));box.addView(details);c.addView(box);c.addView(space(7));if(i<days.lastIndex){val older=days[i+1];model?.restBetween(older,day)?.let{rest->c.addView(TextView(this).apply{text=restTitle(rest);textSize=14f;gravity=Gravity.CENTER;setTextColor(if(rest.weekly)CYAN else if(rest.creditedDailyMinutes==540)YELLOW else MUTED);setPadding(dp(6),dp(7),dp(6),dp(7))})}}}
         scroll.addView(c);historyRoot.addView(scroll,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.MATCH_PARENT))
     }
 
@@ -377,6 +401,13 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
 
     private fun updateWeekCards(){if(!::week.isInitialized)return;val current=currentWeekDriving();val prev=history?.previousWeekDrivingMinutes?:0;val limit=minOf(56*60,(90*60-prev).coerceAtLeast(0));week.text="${HistoryData.fmt(current)} / ${HistoryData.fmt(limit)}";weekSub.text="доступно ещё ${HistoryData.fmt((limit-current).coerceAtLeast(0))} • прошл. неделя ${HistoryData.fmt(prev)} • 10ч: ${currentWeekTenHourUses()}/2";setProgress(weekFrame,weekProgress,if(limit>0)current.toFloat()/limit else 1f,limitColor(current,limit))}
 
+    private fun pickHistoryDate(initial:String,onSelected:(String)->Unit){
+        val parsed=parseDateOnly(initial)?:Date()
+        val cal=Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US).apply{time=parsed}
+        android.app.DatePickerDialog(this,{_,year,month,day->
+            onSelected(String.format(Locale.US,"%04d-%02d-%02d",year,month+1,day))
+        },cal.get(Calendar.YEAR),cal.get(Calendar.MONTH),cal.get(Calendar.DAY_OF_MONTH)).show()
+    }
     private fun parseDateOnly(v:String):Date?=runCatching{SimpleDateFormat("yyyy-MM-dd",Locale.US).apply{timeZone=TimeZone.getTimeZone("UTC")}.parse(v)}.getOrNull()
     private fun isoCalendar(d:Date)=Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US).apply{firstDayOfWeek=Calendar.MONDAY;minimalDaysInFirstWeek=4;time=d}
     private fun currentCycleBlock(log:String,cycle:Int):String?{
