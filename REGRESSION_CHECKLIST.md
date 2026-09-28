@@ -61,3 +61,9 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] Card-download and target-monitor logs use bounded deque buffers instead of CopyOnWriteArrayList.
 - [ ] Frequent log writes do not copy the whole log buffer on every line.
 - [ ] UI log snapshots are throttled while final card-download status remains immediate.
+
+
+### History tab responsiveness
+- [ ] Opening History does not rebuild the full history view on every tap.
+- [ ] History is rebuilt only when fresh card/history data is loaded.
+- [ ] Both top tabs give immediate visual touch feedback before navigation completes.
