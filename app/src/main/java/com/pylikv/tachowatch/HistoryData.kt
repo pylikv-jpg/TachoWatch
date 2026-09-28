@@ -30,12 +30,20 @@ object HistoryData {
         val endCountry: String?,
         val hasSplitDailyRest3h: Boolean = false,
         val periods: List<ActivityPeriod> = emptyList(),
-        val events: List<HistoryEvent> = emptyList()
+        val events: List<HistoryEvent> = emptyList(),
+        val startOdometerKm: Int? = null,
+        val endOdometerKm: Int? = null
     ) {
         val shiftMinutes: Int? get() {
             val s = startTime?.let(::clockMinutes) ?: return null
             val e = endTime?.let(::clockMinutes) ?: return null
             return if (e >= s) e - s else e + 1440 - s
+        }
+
+        val shiftDistanceKm: Int? get() {
+            val start = startOdometerKm ?: return null
+            val end = endOdometerKm ?: return null
+            return (end - start).takeIf { it >= 0 }
         }
     }
 
@@ -72,6 +80,14 @@ object HistoryData {
     }
 
     private data class Place(val date: String, val time: String, val type: String, val country: String)
+    private data class ShiftMileage(
+        val startDate: String,
+        val startTime: String,
+        val endDate: String,
+        val endTime: String,
+        val startOdometerKm: Int,
+        val endOdometerKm: Int
+    )
     private data class ActivityDay(
         var driving: Int = 0,
         var work: Int = 0,
@@ -99,6 +115,8 @@ object HistoryData {
     ): Model {
         val activityText = TlvInventory.render(result)
         val placesText = PlacesDecoder.render(result)
+        val placeRecords = PlacesDecoder.records(result)
+        val shiftMileage = pairShiftMileage(placeRecords).groupBy { it.startDate }
         val historyEvents = HistoryEventDecoder.decode(result).groupBy { it.date }
         val localEventsByDate = localCardEvents.groupBy { it.date }
         val activityDays = linkedMapOf<String, ActivityDay>()
@@ -165,6 +183,9 @@ object HistoryData {
             // Use the earliest active timestamp instead of always preferring BEGIN place time.
             val startTime = earliestClock(begin?.time, a.activeStart)
             val endTime = end?.time ?: a.restStartAfterWork
+            val mileage = shiftMileage[date]
+                .orEmpty()
+                .minByOrNull { kotlin.math.abs(clockMinutes(it.startTime) - clockMinutes(startTime ?: it.startTime)) }
             val hasActivity = a.driving > 0 || a.work > 0 || a.availability > 0
             if (!hasActivity && startTime == null && endTime == null) null else Day(
                 date, a.driving, a.work, a.availability,
@@ -183,7 +204,9 @@ object HistoryData {
                         }
                 )
                     .distinctBy { listOf(it.time, it.type.name, it.odometerKm?.toString().orEmpty()) }
-                    .sortedBy { it.time }
+                    .sortedBy { it.time },
+                startOdometerKm = mileage?.startOdometerKm,
+                endOdometerKm = mileage?.endOdometerKm
             )
         }.sortedBy { it.date }
 
@@ -201,6 +224,40 @@ object HistoryData {
         val rests = buildRestInfo(days)
         latestRests = rests
         return Model(days, previousWeekMinutes, currentWeekMinutes, rests)
+    }
+
+    private fun pairShiftMileage(records: List<PlacesDecoder.Record>): List<ShiftMileage> {
+        val out = ArrayList<ShiftMileage>()
+        var pending: PlacesDecoder.Record? = null
+        records.forEach { record ->
+            when {
+                record.isBegin -> pending = record
+                record.isEnd -> {
+                    val start = pending ?: return@forEach
+                    if (record.timestampSeconds <= start.timestampSeconds) return@forEach
+                    if (record.odometerKm < start.odometerKm) {
+                        pending = null
+                        return@forEach
+                    }
+                    out += ShiftMileage(
+                        startDate = start.date,
+                        startTime = start.time,
+                        endDate = record.date,
+                        endTime = record.time,
+                        startOdometerKm = start.odometerKm,
+                        endOdometerKm = record.odometerKm
+                    )
+                    pending = null
+                }
+            }
+        }
+        return out
+    }
+
+    fun mileageBetween(days: List<Day>, fromDate: String, toDate: String): Pair<Int, Int> {
+        val selected = days.filter { it.date >= fromDate && it.date <= toDate }
+        val known = selected.mapNotNull { it.shiftDistanceKm }
+        return known.sum() to (selected.size - known.size)
     }
 
     private fun buildRestInfo(days: List<Day>): List<RestInfo> {
