@@ -60,7 +60,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
     private var resumeLive=false
     private var initialReadAttemptedThisSession=false
 
-    private lateinit var status:TextView; private lateinit var nowTab:Button; private lateinit var historyTab:Button
+    private lateinit var status:TextView; private lateinit var nowTab:Button; private lateinit var historyTab:Button; private lateinit var controlTab:Button
     private lateinit var nowRoot:LinearLayout; private lateinit var historyRoot:LinearLayout; private lateinit var driver:TextView; private lateinit var shiftSpan:TextView
     private lateinit var keepScreenButton:Button; private lateinit var activityState:TextView
     private lateinit var continuous:TextView; private lateinit var continuousSub:TextView; private lateinit var continuousFrame:FrameLayout; private lateinit var continuousProgress:View
@@ -99,7 +99,7 @@ class DriverDashboardActivityV2 : AppCompatActivity(), LiveDidDiagnostic.Listene
         top.addView(titles,LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f));top.addView(smallButton("Подключить тахограф").apply{setOnClickListener{showDtcoPicker()}})
         root.addView(top);root.addView(space(7))
         val tabs=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};nowTab=tabButton("Сейчас").apply{setOnClickListener{showNow()}};historyTab=tabButton("История").apply{setOnClickListener{showHistory()}}
-        tabs.addView(nowTab,LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));tabs.addView(historyTab,LinearLayout.LayoutParams(0,dp(42),1f));root.addView(tabs);root.addView(space(7))
+        tabs.addView(nowTab,LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));tabs.addView(historyTab,LinearLayout.LayoutParams(0,dp(42),1f));tabs.addView(hspace(6));controlTab=tabButton("Управление").apply{setOnClickListener{startActivity(Intent(this@DriverDashboardActivityV2,ControlActivity::class.java))}};tabs.addView(controlTab,LinearLayout.LayoutParams(0,dp(42),1f));root.addView(tabs);root.addView(space(7))
         val viewport=FrameLayout(this);nowRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};historyRoot=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE};viewport.addView(nowRoot);viewport.addView(historyRoot);root.addView(viewport,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f))
         setContentView(root);buildNow();buildHistoryView();updateTabState(true);applyKeepScreenSetting();root.requestApplyInsets()
     }
