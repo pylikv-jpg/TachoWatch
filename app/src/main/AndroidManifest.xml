@@ -75,6 +75,7 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
         <activity android:name=".DriverActivity" android:exported="false" />
+        <activity android:name=".ControlActivity" android:exported="false" />
         <activity android:name=".Test14Activity" android:exported="false" />
         <activity android:name=".Test15Activity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="false" />
