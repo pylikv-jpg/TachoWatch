@@ -74,3 +74,11 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] The next usable live driver timers after a removal create a card-inserted event.
 - [ ] Local card removal/insertion events appear both in the recent card-events summary and inside the matching day's "События тахографа" section.
 - [ ] Card presence events never affect driving, work, availability, rest, or shift arithmetic.
+
+
+### Shift mileage from odometer
+- [ ] Shift mileage is calculated only from a valid work-period begin/end odometer pair: end - start.
+- [ ] If either endpoint is missing, or end odometer is below start, no distance is invented.
+- [ ] A history day with a confirmed pair shows shift km plus start/end odometer.
+- [ ] The mileage date range is inclusive and sums only confirmed shift distances.
+- [ ] The range summary reports how many selected history days have no valid odometer pair.

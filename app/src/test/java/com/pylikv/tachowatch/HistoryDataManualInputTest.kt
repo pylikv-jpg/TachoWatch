@@ -99,6 +99,96 @@ class HistoryDataManualInputTest {
         }
     }
 
+    @Test
+    fun shiftMileageUsesOpeningAndClosingOdometer() {
+        val day = epoch("2026-09-24 00:00")
+        val activityRecord = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(16)
+            write32(day)
+            write16(0)
+            write16(0)
+            write16(activityChange(6 * 60, activity = 2, cardInserted = true))
+            write16(activityChange(7 * 60, activity = 0, cardInserted = true))
+        }.toByteArray()
+        val activityPayload = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(0)
+            write(activityRecord)
+        }.toByteArray()
+        val placesPayload = ByteArrayOutputStream().apply {
+            write(1)
+            write32(epoch("2026-09-24 06:00"))
+            write(0)
+            write(0x20)
+            write(0)
+            write24(100000)
+            write32(epoch("2026-09-24 18:00"))
+            write(1)
+            write(0x20)
+            write(0)
+            write24(100420)
+        }.toByteArray()
+        val file = File.createTempFile("tachowatch-mileage-history", ".ddd")
+        try {
+            file.writeBytes(
+                tlv(0x0504, 0x02, activityPayload) +
+                    tlv(0x0506, 0x00, placesPayload)
+            )
+            val parsed = TlvInventory.parse(file)
+            assertEquals(null, parsed.error)
+
+            val history = HistoryData.load(parsed)
+            val decodedDay = history.days.single()
+
+            assertEquals(100000, decodedDay.startOdometerKm)
+            assertEquals(100420, decodedDay.endOdometerKm)
+            assertEquals(420, decodedDay.shiftDistanceKm)
+            assertEquals(420, HistoryData.mileageBetween(history.days, "2026-09-24", "2026-09-24").first)
+            assertEquals(0, HistoryData.mileageBetween(history.days, "2026-09-24", "2026-09-24").second)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun mileageRangeCountsMissingOdometerPairsWithoutInventingDistance() {
+        val days = listOf(
+            HistoryData.Day(
+                date = "2026-09-24",
+                drivingMinutes = 60,
+                workMinutes = 0,
+                availabilityMinutes = 0,
+                startTime = "06:00",
+                startCountry = "LV",
+                endTime = "18:00",
+                endCountry = "LV",
+                startOdometerKm = 100000,
+                endOdometerKm = 100420
+            ),
+            HistoryData.Day(
+                date = "2026-09-25",
+                drivingMinutes = 60,
+                workMinutes = 0,
+                availabilityMinutes = 0,
+                startTime = "06:00",
+                startCountry = "LV",
+                endTime = "18:00",
+                endCountry = "LV"
+            )
+        )
+
+        val result = HistoryData.mileageBetween(days, "2026-09-24", "2026-09-25")
+        assertEquals(420, result.first)
+        assertEquals(1, result.second)
+    }
+
+    private fun ByteArrayOutputStream.write24(value: Int) {
+        write((value ushr 16) and 0xFF)
+        write((value ushr 8) and 0xFF)
+        write(value and 0xFF)
+    }
+
     private fun activityChange(minute: Int, activity: Int, cardInserted: Boolean): Int {
         var value = (minute and 0x07FF) or ((activity and 0x03) shl 11)
         if (!cardInserted) value = value or 0x2000
