@@ -7,6 +7,18 @@ import java.util.TimeZone
 
 object PlacesDecoder {
 
+    data class Record(
+        val timestampSeconds: Long,
+        val date: String,
+        val time: String,
+        val entryType: Int,
+        val country: String,
+        val odometerKm: Int
+    ) {
+        val isBegin: Boolean get() = entryType == 0 || entryType == 2 || entryType == 4
+        val isEnd: Boolean get() = entryType == 1 || entryType == 3 || entryType == 5
+    }
+
     private data class Place(
         val index: Int,
         val entryTime: Long,
@@ -21,6 +33,100 @@ object PlacesDecoder {
         val rawLat: Int? = null,
         val rawLon: Int? = null
     )
+
+    fun records(result: TlvInventory.Result): List<Record> {
+        val allData = try {
+            result.file.readBytes()
+        } catch (_: Throwable) {
+            return emptyList()
+        }
+        val out = ArrayList<Record>()
+        result.entries
+            .filter { it.fid == 0x0506 && (it.suffix == 0x00 || it.suffix == 0x02) }
+            .forEach { entry ->
+                val start = entry.offset + 5
+                val end = start + entry.length
+                if (start < 0 || end > allData.size) return@forEach
+                val payload = allData.copyOfRange(start, end)
+                val decoded = when (entry.suffix) {
+                    0x00 -> decodeAllG1(payload)
+                    0x02 -> decodeAllG2(payload)
+                    else -> emptyList()
+                }
+                decoded.forEach { place ->
+                    out += Record(
+                        timestampSeconds = place.entryTime,
+                        date = formatDate(place.entryTime),
+                        time = formatClock(place.entryTime),
+                        entryType = place.entryType,
+                        country = nationAlpha(place.country),
+                        odometerKm = place.odometerKm
+                    )
+                }
+            }
+        return out
+            .distinctBy { listOf(it.timestampSeconds, it.entryType.toLong(), it.odometerKm.toLong()) }
+            .sortedBy { it.timestampSeconds }
+    }
+
+    private fun decodeAllG1(payload: ByteArray): List<Place> {
+        if (payload.size < 11 || (payload.size - 1) % 10 != 0) return emptyList()
+        val newest = u(payload[0])
+        val count = (payload.size - 1) / 10
+        val places = ArrayList<Place>()
+        for (i in 0 until count) {
+            val p = 1 + i * 10
+            val time = be32(payload, p)
+            if (!validTime(time)) continue
+            places += Place(i, time, u(payload[p + 4]), u(payload[p + 5]), u(payload[p + 6]), be24u(payload, p + 7))
+        }
+        return chronologicalPlaces(places, newest, count)
+    }
+
+    private fun decodeAllG2(payload: ByteArray): List<Place> {
+        if (payload.size < 23 || (payload.size - 2) % 21 != 0) return emptyList()
+        val newest = be16(payload, 0)
+        val count = (payload.size - 2) / 21
+        val places = ArrayList<Place>()
+        for (i in 0 until count) {
+            val p = 2 + i * 21
+            val time = be32(payload, p)
+            if (!validTime(time)) continue
+            val gnssTime = be32(payload, p + 10)
+            val accuracy = u(payload[p + 14])
+            val rawLatUnsigned = be24u(payload, p + 15)
+            val rawLonUnsigned = be24u(payload, p + 18)
+            val rawLat = signed24(rawLatUnsigned)
+            val rawLon = signed24(rawLonUnsigned)
+            places += Place(
+                index = i,
+                entryTime = time,
+                entryType = u(payload[p + 4]),
+                country = u(payload[p + 5]),
+                region = u(payload[p + 6]),
+                odometerKm = be24u(payload, p + 7),
+                gnssTime = if (validTime(gnssTime)) gnssTime else null,
+                gnssAccuracy = accuracy,
+                latitude = if (rawLatUnsigned == 0x7FFFFF) null else coordToDegrees(rawLat),
+                longitude = if (rawLonUnsigned == 0x7FFFFF) null else coordToDegrees(rawLon),
+                rawLat = rawLatUnsigned,
+                rawLon = rawLonUnsigned
+            )
+        }
+        return chronologicalPlaces(places, newest, count)
+    }
+
+    private fun chronologicalPlaces(places: List<Place>, newest: Int, capacity: Int): List<Place> {
+        if (places.isEmpty()) return emptyList()
+        if (newest !in 0 until capacity) return places.sortedBy { it.entryTime }
+        val byIndex = places.associateBy { it.index }
+        val out = ArrayList<Place>()
+        for (step in 1..capacity) {
+            val idx = (newest + step) % capacity
+            byIndex[idx]?.let { out += it }
+        }
+        return out
+    }
 
     fun render(result: TlvInventory.Result): String {
         val sb = StringBuilder()
@@ -270,6 +376,14 @@ object PlacesDecoder {
     private fun signed24(v: Int): Int = if ((v and 0x800000) != 0) v or -0x1000000 else v
 
     private fun validTime(seconds: Long): Boolean = seconds in 946684800L..4133980799L
+
+    private fun formatDate(seconds: Long): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+            .format(Date(seconds * 1000L))
+
+    private fun formatClock(seconds: Long): String =
+        SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+            .format(Date(seconds * 1000L))
 
     private fun formatDateTime(seconds: Long): String {
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
