@@ -82,4 +82,32 @@ class ShiftRecoveryMathTest {
 
         assertEquals(197, checkpoint)
     }
+
+    @Test
+    fun qualifyingRestDuringCardReadKeepsContinuousWorkReset() {
+        val result = ShiftRecoveryMath.mergeContinuousWorkMinutes(
+            cardContinuousWorkMinutes = 280,
+            cardContinuousDrivingMinutes = 260,
+            liveActivity = "ОТДЫХ / ПЕРЕРЫВ",
+            liveActivityMinutes = 45,
+            liveContinuousDrivingMinutes = 260,
+            qualifyingRestMinutes = 45
+        )
+
+        assertEquals(0, result)
+    }
+
+    @Test
+    fun subFortyFiveMinuteRestDoesNotEraseContinuousWorkDuringRecovery() {
+        val result = ShiftRecoveryMath.mergeContinuousWorkMinutes(
+            cardContinuousWorkMinutes = 280,
+            cardContinuousDrivingMinutes = 260,
+            liveActivity = "ОТДЫХ / ПЕРЕРЫВ",
+            liveActivityMinutes = 44,
+            liveContinuousDrivingMinutes = 260,
+            qualifyingRestMinutes = 44
+        )
+
+        assertEquals(280, result)
+    }
 }

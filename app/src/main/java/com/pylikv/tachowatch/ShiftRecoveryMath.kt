@@ -14,8 +14,10 @@ object ShiftRecoveryMath {
         cardContinuousDrivingMinutes: Int,
         liveActivity: String,
         liveActivityMinutes: Int,
-        liveContinuousDrivingMinutes: Int
+        liveContinuousDrivingMinutes: Int,
+        qualifyingRestMinutes: Int = 0
     ): Int {
+        if (qualifyingRestMinutes >= 45) return 0
         val cardWork = cardContinuousWorkMinutes.coerceAtLeast(0)
         val cardDriving = cardContinuousDrivingMinutes.coerceAtLeast(0)
         val liveActivityMin = liveActivityMinutes.coerceAtLeast(0)

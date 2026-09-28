@@ -82,3 +82,10 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] A history day with a confirmed pair shows shift km plus start/end odometer.
 - [ ] The mileage date range is inclusive and sums only confirmed shift distances.
 - [ ] The range summary reports how many selected history days have no valid odometer pair.
+
+
+### Card read after 45-minute break
+- [ ] A live-confirmed rest of 45 minutes or more keeps Continuous Work at 0 during card recovery.
+- [ ] Card history must not restore the pre-break continuous-work window when the current REST segment is still OPEN in DDD.
+- [ ] A 44-minute rest does not reset Continuous Work during card recovery.
+- [ ] Shift OTHER WORK totals remain intact; only the 6-hour continuous-work window resets.

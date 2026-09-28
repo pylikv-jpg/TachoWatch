@@ -137,15 +137,26 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             } else {
                 0
             }
+            val qualifyingContinuousWorkRest =
+                liveRestingAtCheckpoint && liveRestMinutesAtCheckpoint >= CONTINUOUS_BREAK_MINUTES
             val mergedContinuousWork = ShiftRecoveryMath.mergeContinuousWorkMinutes(
                 cardContinuousWorkMinutes = seed.continuousWorkMinutes,
                 cardContinuousDrivingMinutes = seed.continuousDrivingCheckpointMinutes,
                 liveActivity = liveActivityAtCheckpoint,
                 liveActivityMinutes = liveActivityMinutesAtCheckpoint,
-                liveContinuousDrivingMinutes = liveContinuousAtCheckpoint
+                liveContinuousDrivingMinutes = liveContinuousAtCheckpoint,
+                qualifyingRestMinutes = liveRestMinutesAtCheckpoint
             )
             val mergedContinuousOtherWork =
-                seed.continuousOtherWorkMinutes + liveOpenOtherWork
+                if (qualifyingContinuousWorkRest) 0
+                else seed.continuousOtherWorkMinutes + liveOpenOtherWork
+            if (qualifyingContinuousWorkRest) {
+                DiagnosticReporter.record(
+                    context,
+                    "CARD_RECOVERY",
+                    "Continuous work kept reset after qualifying live rest=${liveRestMinutesAtCheckpoint}m"
+                )
+            }
             val mergedShiftOtherWork = seed.workMinutes + liveOpenOtherWork
             val mergedAvailability = seed.availabilityMinutes + liveOpenAvailability
             val liveBookkeepingDuration = when {
