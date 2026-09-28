@@ -13,9 +13,9 @@ import java.util.TimeZone
  *  - EF Specific_Conditions (0522): OUT and Ferry/Train
  *  - EF Load_Unload_Operations (0529, Gen2 v2): load/unload entries
  *
- * Card insertion/removal is intentionally NOT inferred here. Vehicle-use and
- * daily activity records can be split at midnight, which creates false
- * 23:59/00:00 insert/remove events even when the physical card stayed inserted.
+ * Card insertion/removal is intentionally NOT inferred from card-file boundaries here.
+ * Physical card presence events are supplied separately by LocalCardEventStore from the
+ * live DTCO FF-FF sentinel signal, avoiding false 23:59/00:00 events at midnight.
  */
 object HistoryEventDecoder {
     enum class Type {
@@ -26,7 +26,9 @@ object HistoryEventDecoder {
         FERRY_TRAIN_END,
         LOAD,
         UNLOAD,
-        LOAD_UNLOAD
+        LOAD_UNLOAD,
+        CARD_REMOVED,
+        CARD_INSERTED
     }
 
     data class Event(

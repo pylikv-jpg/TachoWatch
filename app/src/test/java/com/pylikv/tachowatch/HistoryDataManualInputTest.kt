@@ -56,6 +56,49 @@ class HistoryDataManualInputTest {
         }
     }
 
+    @Test
+    fun liveCardPresenceEventsAreMergedIntoMatchingHistoryDay() {
+        val day = epoch("2026-09-24 00:00")
+        val record = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(18)
+            write32(day)
+            write16(0)
+            write16(0)
+            write16(activityChange(0, activity = 0, cardInserted = true))
+            write16(activityChange(6 * 60, activity = 2, cardInserted = true))
+            write16(activityChange(7 * 60, activity = 0, cardInserted = true))
+        }.toByteArray()
+        val activityPayload = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(0)
+            write(record)
+        }.toByteArray()
+        val file = File.createTempFile("tachowatch-card-events-history", ".ddd")
+        try {
+            file.writeBytes(tlv(0x0504, 0x02, activityPayload))
+            val parsed = TlvInventory.parse(file)
+            val localEvents = listOf(
+                LocalCardEventStore.Event(
+                    timestamp = epoch("2026-09-24 06:10") * 1000L,
+                    type = LocalCardEventStore.Type.REMOVED
+                ),
+                LocalCardEventStore.Event(
+                    timestamp = epoch("2026-09-24 06:40") * 1000L,
+                    type = LocalCardEventStore.Type.INSERTED
+                )
+            )
+
+            val history = HistoryData.load(parsed, localEvents)
+            val events = history.days.single().events
+
+            assertTrue(events.any { it.time == "06:10" && it.type == HistoryEventDecoder.Type.CARD_REMOVED })
+            assertTrue(events.any { it.time == "06:40" && it.type == HistoryEventDecoder.Type.CARD_INSERTED })
+        } finally {
+            file.delete()
+        }
+    }
+
     private fun activityChange(minute: Int, activity: Int, cardInserted: Boolean): Int {
         var value = (minute and 0x07FF) or ((activity and 0x03) shl 11)
         if (!cardInserted) value = value or 0x2000

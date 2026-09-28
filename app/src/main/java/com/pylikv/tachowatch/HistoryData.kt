@@ -93,10 +93,14 @@ object HistoryData {
     private val restMilestones = intArrayOf(15, 45, 180, 540, 660, 1440, 2700)
     private var latestRests: List<RestInfo> = emptyList()
 
-    fun load(result: TlvInventory.Result): Model {
+    fun load(
+        result: TlvInventory.Result,
+        localCardEvents: List<LocalCardEventStore.Event> = emptyList()
+    ): Model {
         val activityText = TlvInventory.render(result)
         val placesText = PlacesDecoder.render(result)
         val historyEvents = HistoryEventDecoder.decode(result).groupBy { it.date }
+        val localEventsByDate = localCardEvents.groupBy { it.date }
         val activityDays = linkedMapOf<String, ActivityDay>()
         var splitRecoveryState = SplitDailyRestTracker.RecoveryState()
         var previousActivityDate: Date? = null
@@ -165,8 +169,20 @@ object HistoryData {
             if (!hasActivity && startTime == null && endTime == null) null else Day(
                 date, a.driving, a.work, a.availability,
                 startTime, begin?.country, endTime, end?.country, a.hasSplitDailyRest3h, a.periods.toList(),
-                historyEvents[date].orEmpty()
-                    .map { HistoryEvent(it.time, it.type, it.odometerKm) }
+                (
+                    historyEvents[date].orEmpty()
+                        .map { HistoryEvent(it.time, it.type, it.odometerKm) } +
+                        localEventsByDate[date].orEmpty().map {
+                            HistoryEvent(
+                                time = it.time,
+                                type = when (it.type) {
+                                    LocalCardEventStore.Type.REMOVED -> HistoryEventDecoder.Type.CARD_REMOVED
+                                    LocalCardEventStore.Type.INSERTED -> HistoryEventDecoder.Type.CARD_INSERTED
+                                }
+                            )
+                        }
+                )
+                    .distinctBy { listOf(it.time, it.type.name, it.odometerKm?.toString().orEmpty()) }
                     .sortedBy { it.time }
             )
         }.sortedBy { it.date }

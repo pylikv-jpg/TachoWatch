@@ -67,3 +67,10 @@ For counter fixes, verify at minimum: app restart, Android process death/restart
 - [ ] Opening History does not rebuild the full history view on every tap.
 - [ ] History is rebuilt only when fresh card/history data is loaded.
 - [ ] Both top tabs give immediate visual touch feedback before navigation completes.
+
+
+### Driver-card presence history
+- [ ] Physical card removal is recorded only from the live DTCO FF-FF sentinel, not inferred from midnight card-file boundaries.
+- [ ] The next usable live driver timers after a removal create a card-inserted event.
+- [ ] Local card removal/insertion events appear both in the recent card-events summary and inside the matching day's "События тахографа" section.
+- [ ] Card presence events never affect driving, work, availability, rest, or shift arithmetic.
