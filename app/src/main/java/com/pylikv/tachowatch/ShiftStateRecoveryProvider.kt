@@ -47,6 +47,13 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             val fingerprint = "${file.absolutePath}|${file.length()}|${file.lastModified()}"
             val prefs = context.getSharedPreferences(DriverLiveService.PREFS, Context.MODE_PRIVATE)
             if (prefs.getString(KEY_CARD_FINGERPRINT, null) == fingerprint) return
+            val now = System.currentTimeMillis()
+            val shiftBoundaryMillis =
+                prefs.getLong(DriverLiveService.SHIFT_STARTED_AFTER_DAILY_REST_AT, 0L)
+                    .takeIf { boundary ->
+                        val age = now - boundary
+                        age in 0..MAX_SHIFT_BOUNDARY_AGE_MS
+                    }
             val parsed = TlvInventory.parse(file)
             if (parsed.error != null) return
             val model = HistoryData.load(parsed)
@@ -69,14 +76,14 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     splitDailyThreeHourPartTaken = false
                 )
             } else {
-                currentShiftSeed(model) ?: return
+                currentShiftSeed(model, shiftBoundaryMillis) ?: return
             }
 
             // The card parser intentionally omits the still-open activity because its duration
             // is reported as OPEN. Merge only the part of live F923 that is not already present
             // in the card's current continuous-driving window. This preserves an in-progress
             // driving segment without double-counting earlier driving before OTHER WORK.
-            val snapshotAgeMs = System.currentTimeMillis() -
+            val snapshotAgeMs = now -
                 prefs.getLong(DriverLiveService.SNAP_UPDATED_AT, 0L)
             val liveSnapshotFresh = snapshotAgeMs in 0..LIVE_SNAPSHOT_MAX_AGE_MS
             val rawLiveContinuousAtCheckpoint = if (liveSnapshotFresh) {
@@ -94,14 +101,36 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             } else {
                 0
             }
+            // The one-shot card-read flag is cleared by the dashboard before download.
+            // Keep using the durable shift boundary recorded by the live service. When
+            // the card has no driving from this new shift yet, F923 can still be the
+            // previous shift value and must not be merged back into the new shift.
+            val freshShiftBoundaryWithNoCardDriving =
+                shiftBoundaryMillis != null &&
+                    seed.drivingMinutes == 0 &&
+                    seed.continuousDrivingCheckpointMinutes == 0
             val confirmedDailyRestBoundary =
-                ongoingRest != null && ongoingRest >= DAILY_REST_MINUTES
+                (ongoingRest != null && ongoingRest >= DAILY_REST_MINUTES) ||
+                    freshShiftBoundaryWithNoCardDriving
             val liveContinuousAtCheckpoint = ShiftRecoveryMath.liveContinuousCheckpoint(
                 confirmedDailyRestBoundary = confirmedDailyRestBoundary,
                 liveActivity = liveActivityAtCheckpoint,
                 liveActivityMinutes = liveActivityMinutesAtCheckpoint,
                 rawContinuousDrivingMinutes = rawLiveContinuousAtCheckpoint
             )
+            if (shiftBoundaryMillis != null) {
+                DiagnosticReporter.record(
+                    context,
+                    "CARD_RECOVERY",
+                    "shiftBoundaryMillis=$shiftBoundaryMillis " +
+                        "cardDriving=${seed.drivingMinutes} " +
+                        "cardContinuousDriving=${seed.continuousDrivingCheckpointMinutes} " +
+                        "rawF923=$rawLiveContinuousAtCheckpoint " +
+                        "safeF923=$liveContinuousAtCheckpoint " +
+                        "freshBoundaryNoCardDriving=$freshShiftBoundaryWithNoCardDriving"
+                )
+            }
+
             val liveBreakMinutesAtCheckpoint = if (liveSnapshotFresh) {
                 prefs.getInt(DriverLiveService.SNAP_BREAK_MIN, 0).coerceAtLeast(0)
             } else {
@@ -238,14 +267,21 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val splitDailyThreeHourPartTaken: Boolean
     )
 
-    private fun currentShiftSeed(model: HistoryData.Model): Seed? {
+    private data class DatedActivityPeriod(
+        val date: String,
+        val period: HistoryData.ActivityPeriod
+    )
+
+    private fun currentShiftSeed(
+        model: HistoryData.Model,
+        shiftBoundaryMillis: Long?
+    ): Seed? {
         val days = model.days
         val latest = days.lastOrNull() ?: return null
 
         // Build the complete current shift, including a shift that crosses midnight.
         // Stop at an explicit >=9h REST period or an inter-day gap of >=9h.
-        val active = mutableListOf<HistoryData.ActivityPeriod>()
-        var firstActiveDate = latest.date
+        val collected = mutableListOf<DatedActivityPeriod>()
         var dayIndex = days.lastIndex
         while (dayIndex >= 0) {
             val day = days[dayIndex]
@@ -255,8 +291,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             }
             val part = if (lastDailyRestIndex >= 0) periods.drop(lastDailyRestIndex + 1) else periods
             if (part.isNotEmpty()) {
-                active.addAll(0, part)
-                firstActiveDate = day.date
+                collected.addAll(0, part.map { DatedActivityPeriod(day.date, it) })
             }
             if (lastDailyRestIndex >= 0 || dayIndex == 0) break
 
@@ -264,6 +299,20 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             if (gap == null || gap >= DAILY_REST_MINUTES) break
             dayIndex--
         }
+
+        // A just-opened activity is encoded as OPEN and omitted by HistoryData.
+        // The persisted live boundary prevents older closed periods from the previous
+        // shift leaking back in before that OPEN activity appears in the card history.
+        val scoped = if (shiftBoundaryMillis != null) {
+            collected.filter { dated ->
+                activityStartMillis(dated.date, dated.period.startTime)
+                    ?.let { it >= shiftBoundaryMillis } == true
+            }
+        } else {
+            collected
+        }
+        val active = scoped.map { it.period }
+        val firstActiveDate = scoped.firstOrNull()?.date ?: latest.date
 
         val firstActive = active.firstOrNull { it.type != "REST" }
         val driving = active.filter { it.type == "DRIVING" }.sumOf { it.minutes }
@@ -274,8 +323,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                 active.map { it.type to it.minutes }
             )
 
-        // Continuous work is DRIVING + WORK only since the latest qualifying driving break.
-        // Mirror the live F925 logic: either one >=45m break or a 15m + >=30m split.
         var firstSplitPartSeen = false
         var lastQualifyingBreakIndex = -1
         active.forEachIndexed { index, period ->
@@ -315,13 +362,17 @@ class ShiftStateRecoveryProvider : ContentProvider() {
 
         val lastSegmentStillLive =
             lastDrivingIndex >= 0 &&
-            !hasActiveNonRestAfterDriving &&
-            tailRestMinutes < CONTINUOUS_BREAK_MINUTES
+                !hasActiveNonRestAfterDriving &&
+                tailRestMinutes < CONTINUOUS_BREAK_MINUTES
         val liveSegment = if (lastSegmentStillLive) lastDrivingMinutes else 0
         val completed = (driving - liveSegment).coerceAtLeast(0)
 
         return Seed(
-            id = "${firstActiveDate}|${firstActive?.startTime ?: latest.startTime ?: "?"}",
+            id = if (shiftBoundaryMillis != null) {
+                "boundary|$shiftBoundaryMillis"
+            } else {
+                "$firstActiveDate|${firstActive?.startTime ?: latest.startTime ?: "?"}"
+            },
             drivingMinutes = driving,
             completedDrivingMinutes = completed,
             liveDrivingSegmentMinutes = liveSegment,
@@ -333,6 +384,12 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             splitDailyThreeHourPartTaken = splitDailyThreeHourPartTaken
         )
     }
+
+    private fun activityStartMillis(date: String, time: String): Long? = runCatching {
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.parse("$date $time")?.time
+    }.getOrNull()
 
     private fun ongoingDailyRestMinutes(model: HistoryData.Model): Int? {
         val latest = model.days.lastOrNull() ?: return null
@@ -367,8 +424,9 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         private const val CONTINUOUS_BREAK_MINUTES = 45
         private const val FIRST_READ_KEY = "first_card_read_done"
         private const val KEY_RECOVERY_VERSION = "recovery_model_version"
-        private const val RECOVERY_VERSION = 7
+        private const val RECOVERY_VERSION = 8
         private const val LIVE_SNAPSHOT_MAX_AGE_MS = 30L * 60L * 1000L
+        private const val MAX_SHIFT_BOUNDARY_AGE_MS = 25L * 60L * 60L * 1000L
         const val KEY_RECONCILED_AT = "recovery_reconciled_at"
         private const val KEY_CARD_FINGERPRINT = "recovery_card_fingerprint"
         private const val KEY_SHIFT_ID = "recovery_shift_id"
