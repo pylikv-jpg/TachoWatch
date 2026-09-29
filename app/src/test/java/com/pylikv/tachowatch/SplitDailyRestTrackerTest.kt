@@ -7,6 +7,18 @@ import org.junit.Test
 class SplitDailyRestTrackerTest {
 
     @Test
+    fun currentRestNeverCreditsItselfAtThreeHoursOrFiveHoursFiftySeven() {
+        var state = SplitDailyRestTracker.RecoveryState()
+        state = SplitDailyRestTracker.updateRecoveryState(state, "WORK", 60)
+        for (minutes in listOf(179, 1, 177)) {
+            state = SplitDailyRestTracker.updateRecoveryState(state, "REST", minutes)
+            assertFalse(state.firstPartTaken)
+        }
+        state = SplitDailyRestTracker.updateRecoveryState(state, "WORK", 1)
+        assertTrue(state.firstPartTaken)
+    }
+
+    @Test
     fun ongoingThreeHourRestMustNotCreditItselfAsAnEarlierFirstPart() {
         assertFalse(SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(
             listOf("WORK" to 60, "REST" to 180)
@@ -162,7 +174,7 @@ class SplitDailyRestTrackerTest {
         var state = SplitDailyRestTracker.RecoveryState()
         state = SplitDailyRestTracker.updateRecoveryState(state, "WORK", 10)
         state = SplitDailyRestTracker.updateRecoveryState(state, "REST", 180)
-        assertTrue(state.firstPartTaken)
+        assertFalse(state.firstPartTaken)
 
         state = SplitDailyRestTracker.updateRecoveryState(state, "REST", 360)
         assertFalse(state.firstPartTaken)

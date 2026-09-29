@@ -28,6 +28,9 @@ object SplitDailyRestTracker {
         if (type != "REST") {
             return state.copy(
                 shiftHasActivity = true,
+                firstPartTaken = state.firstPartTaken ||
+                    (state.shiftHasActivity && state.consecutiveRestMinutes in
+                        FIRST_PART_MINUTES until SECOND_PART_MINUTES),
                 consecutiveRestMinutes = 0
             )
         }
@@ -35,10 +38,6 @@ object SplitDailyRestTracker {
         val rest = state.consecutiveRestMinutes + duration
         return when {
             rest >= SECOND_PART_MINUTES -> RecoveryState()
-            state.shiftHasActivity && rest >= FIRST_PART_MINUTES -> state.copy(
-                consecutiveRestMinutes = rest,
-                firstPartTaken = true
-            )
             else -> state.copy(consecutiveRestMinutes = rest)
         }
     }
@@ -62,7 +61,8 @@ object SplitDailyRestTracker {
         for ((type, minutes) in activities) {
             state = updateRecoveryState(state, type, minutes)
         }
-        return state.firstPartTaken
+        // This API receives closed rows; a trailing REST may precede OPEN WORK.
+        return updateRecoveryState(state, "WORK", 0).firstPartTaken
     }
 
     /**

@@ -84,7 +84,8 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     splitDailyThreeHourPartTaken = false
                 )
             } else {
-                currentShiftSeed(model, shiftBoundaryMillis, liveRestingAtCheckpoint) ?: return
+                currentShiftSeed(model, shiftBoundaryMillis,
+                    !liveSnapshotFresh || liveRestingAtCheckpoint) ?: return
             }
 
             // The card parser intentionally omits the still-open activity because its duration
@@ -428,7 +429,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         private const val CONTINUOUS_BREAK_MINUTES = 45
         private const val FIRST_READ_KEY = "first_card_read_done"
         private const val KEY_RECOVERY_VERSION = "recovery_model_version"
-        private const val RECOVERY_VERSION = 9
+        private const val RECOVERY_VERSION = 10
         private const val LIVE_SNAPSHOT_MAX_AGE_MS = 30L * 60L * 1000L
         private const val MAX_SHIFT_BOUNDARY_AGE_MS = 25L * 60L * 60L * 1000L
         const val KEY_RECONCILED_AT = "recovery_reconciled_at"
