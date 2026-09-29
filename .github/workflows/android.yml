@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - main
+      - fix-472-false-split-rest
   pull_request:
     branches:
       - main
@@ -157,7 +158,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Prepare Play upload keystore
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'push' && github.ref == 'refs/heads/fix-472-false-split-rest') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
         env:
           TACHOWATCH_UPLOAD_KEYSTORE_BASE64: ${{ secrets.TACHOWATCH_UPLOAD_KEYSTORE_BASE64 }}
         run: |
@@ -180,7 +181,7 @@ jobs:
           echo "TACHOWATCH_UPLOAD_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Build signed Google Play AAB
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'push' && github.ref == 'refs/heads/fix-472-false-split-rest') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
         env:
           TACHOWATCH_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.TACHOWATCH_UPLOAD_KEYSTORE_PASSWORD }}
           TACHOWATCH_UPLOAD_KEY_ALIAS: ${{ secrets.TACHOWATCH_UPLOAD_KEY_ALIAS }}
@@ -193,7 +194,7 @@ jobs:
           jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab >/dev/null
 
       - name: Upload Google Play AAB
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'push' && github.ref == 'refs/heads/fix-472-false-split-rest') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
         uses: actions/upload-artifact@v4
         with:
           name: TachoWatch-play-aab
