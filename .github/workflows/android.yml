@@ -27,19 +27,19 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Verify stable 462 source and absence of DTCO Control
+      - name: Verify stable 471 source and absence of DTCO Control
         env:
           EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
-          git merge-base --is-ancestor 389fb794fe1ce56c635bbed5ed1001f131a795ee HEAD
+          git merge-base --is-ancestor a7c884279972aa55e98417cec2bdcc00553ef965 HEAD
           python3 - <<'PY'
           import subprocess
 
-          base = "389fb794fe1ce56c635bbed5ed1001f131a795ee"
+          base = "a7c884279972aa55e98417cec2bdcc00553ef965"
           allowed = {
-              "app/src/main/java/com/pylikv/tachowatch/DriverLiveService.kt",
-              "app/src/main/java/com/pylikv/tachowatch/ShiftStateRecoveryProvider.kt",
+              "app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivityV2.kt",
+              "app/src/main/java/com/pylikv/tachowatch/WeeklyDrivingLimits.kt",
           }
           changed = set(subprocess.check_output(
               ["git", "diff", "--name-only", base, "HEAD", "--", "app/src/main", "app/build.gradle.kts"],
@@ -47,7 +47,7 @@ jobs:
           ).splitlines())
           unexpected = changed - allowed
           if unexpected:
-              raise SystemExit("Unexpected changes to stable 462: " + ", ".join(sorted(unexpected)))
+              raise SystemExit("Unexpected changes to stable 471: " + ", ".join(sorted(unexpected)))
           print("Base: " + base)
           print("Production changes: " + ", ".join(sorted(changed)))
           PY
