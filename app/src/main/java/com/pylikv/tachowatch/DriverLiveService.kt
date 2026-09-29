@@ -53,6 +53,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         const val AVAIL_ACC = "availability_window_minutes"
         const val DAILY_REST_CARD_READ_ARMED = "daily_rest_card_read_armed"
         const val SHIFT_CARD_READ_PENDING = "shift_card_read_pending"
+        const val SHIFT_STARTED_AFTER_DAILY_REST_AT = "shift_started_after_daily_rest_at"
         const val SPLIT_DAILY_3H_TAKEN = "split_daily_3h_taken"
         const val SPLIT_DAILY_COMPLETED_AS_SPLIT = "split_daily_completed_as_split"
         const val SPLIT_DAILY_PREV_RESTING = "split_daily_prev_resting"
@@ -545,12 +546,29 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
         }
 
         if (!restNow && p.getBoolean(DAILY_REST_CARD_READ_ARMED, false)) {
+            // Remember the actual start boundary of the new shift, not merely the fact
+            // that an automatic card read is pending. The dashboard clears the pending
+            // flag before the read starts, while recovery still needs durable evidence
+            // that the stale pre-rest F923 belongs to the previous shift.
+            val sourceMinutes = activitySourceMinutes().coerceAtLeast(0)
+            val estimatedStart = (System.currentTimeMillis() - sourceMinutes.toLong() * 60_000L)
+                .coerceAtLeast(0L)
+            val shiftStartedAt = (estimatedStart / 60_000L) * 60_000L
+
             // Commit synchronously before notifying listeners through onLiveLog so the
-            // dashboard can consume this flag from the same completed live cycle.
+            // dashboard can consume the pending flag from the same completed live cycle.
             p.edit()
                 .putBoolean(DAILY_REST_CARD_READ_ARMED, false)
                 .putBoolean(SHIFT_CARD_READ_PENDING, true)
+                .putLong(SHIFT_STARTED_AFTER_DAILY_REST_AT, shiftStartedAt)
                 .commit()
+
+            DiagnosticReporter.record(
+                applicationContext,
+                "SHIFT_BOUNDARY",
+                "newShiftAfterDailyRest=true startedAtMillis=$shiftStartedAt " +
+                    "activity=$currentActivity sourceMinutes=$sourceMinutes"
+            )
         }
     }
 
