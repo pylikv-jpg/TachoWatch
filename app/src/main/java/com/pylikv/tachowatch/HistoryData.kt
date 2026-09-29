@@ -278,7 +278,8 @@ object HistoryData {
             // by an equivalent period taken en bloc. Never chip away a debt across several
             // later rests. A debt changes from its full original amount to zero only when
             // one later uninterrupted rest contains enough surplus to cover it in full.
-            var surplus = compensationSurplusMinutes(actual, weekly, previous.hasSplitDailyRest3h)
+            val splitFirstPartBeforeGap = hasCompletedSplitFirstPartBeforeTrailingRest(previous.periods)
+            var surplus = compensationSurplusMinutes(actual, weekly, splitFirstPartBeforeGap)
             debts
                 .filter { it.remaining > 0 && !(it.previousDate == previous.date && it.nextDate == next.date) }
                 .forEach { debt ->
@@ -289,7 +290,7 @@ object HistoryData {
                 }
 
             val dailyCredit = if (weekly) null else when {
-                previous.hasSplitDailyRest3h && actual >= 540 -> 660
+                splitFirstPartBeforeGap && actual >= 540 -> 660
                 actual >= 660 -> 660
                 actual >= 540 -> 540
                 else -> null
@@ -300,7 +301,7 @@ object HistoryData {
                 next.date,
                 actual,
                 weekly,
-                !weekly && previous.hasSplitDailyRest3h && actual >= 540,
+                !weekly && splitFirstPartBeforeGap && actual >= 540,
                 dailyCredit,
                 created,
                 created,
@@ -316,6 +317,15 @@ object HistoryData {
                 compensationPaidDate = debt.paidDate
             )
         }
+    }
+
+    private fun hasCompletedSplitFirstPartBeforeTrailingRest(periods: List<ActivityPeriod>): Boolean {
+        if (periods.isEmpty()) return false
+        val trailingRestStart = periods.indexOfLast { it.type != "REST" } + 1
+        val beforeGap = if (trailingRestStart > 0) periods.take(trailingRestStart) else emptyList()
+        return SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
+            beforeGap.map { it.type to it.minutes }
+        )
     }
 
     private fun compensationSurplusMinutes(actual: Int, weekly: Boolean, splitDaily: Boolean): Int {
