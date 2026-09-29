@@ -23,7 +23,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # Build the stable branch itself; a PR merge would reintroduce Control from main.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+
+      - name: Verify stable 471 source and absence of DTCO Control
+        env:
+          EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          git merge-base --is-ancestor a7c884279972aa55e98417cec2bdcc00553ef965 HEAD
+          python3 - <<'PY'
+          import subprocess
+
+          base = "a7c884279972aa55e98417cec2bdcc00553ef965"
+          allowed = {
+              "app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivityV2.kt",
+              "app/src/main/java/com/pylikv/tachowatch/WeeklyDrivingLimits.kt",
+          }
+          changed = set(subprocess.check_output(
+              ["git", "diff", "--name-only", base, "HEAD", "--", "app/src/main", "app/build.gradle.kts"],
+              text=True,
+          ).splitlines())
+          unexpected = changed - allowed
+          if unexpected:
+              raise SystemExit("Unexpected changes to stable 471: " + ", ".join(sorted(unexpected)))
+          print("Base: " + base)
+          print("Production changes: " + ", ".join(sorted(changed)))
+          PY
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -92,6 +119,7 @@ jobs:
             app/build/reports/lint-results-debug.*
             app/build/reports/detekt/**
             app/build/reports/ktlint/**
+            app/build/test-results/testDebugUnitTest/*.xml
 
       - name: Verify APK signing certificate
         run: |
@@ -103,6 +131,24 @@ jobs:
           test -n "$KEY_FP"
           test "$KEY_FP" = "$APK_FP"
 
+      - name: Verify APK excludes experimental DTCO Control
+        run: |
+          python3 - <<'PY'
+          import zipfile
+
+          forbidden = (
+              b"Lcom/pylikv/tachowatch/ControlActivity;",
+              b"Lcom/pylikv/tachowatch/RhmiControlClient;",
+          )
+          with zipfile.ZipFile("app/build/outputs/apk/debug/app-debug.apk") as apk:
+              for name in apk.namelist():
+                  if name.endswith(".dex"):
+                      data = apk.read(name)
+                      if any(symbol in data for symbol in forbidden):
+                          raise SystemExit("Experimental Control code found in " + name)
+          print("APK verified: no ControlActivity or RhmiControlClient")
+          PY
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -110,7 +156,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Prepare Play upload keystore
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_play_aab }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'stable-462-fix-stale-f923') }}
         env:
           TACHOWATCH_UPLOAD_KEYSTORE_BASE64: ${{ secrets.TACHOWATCH_UPLOAD_KEYSTORE_BASE64 }}
         run: |
@@ -133,7 +179,7 @@ jobs:
           echo "TACHOWATCH_UPLOAD_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Build signed Google Play AAB
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_play_aab }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'stable-462-fix-stale-f923') }}
         env:
           TACHOWATCH_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.TACHOWATCH_UPLOAD_KEYSTORE_PASSWORD }}
           TACHOWATCH_UPLOAD_KEY_ALIAS: ${{ secrets.TACHOWATCH_UPLOAD_KEY_ALIAS }}
@@ -146,7 +192,7 @@ jobs:
           jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab >/dev/null
 
       - name: Upload Google Play AAB
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_play_aab }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'stable-462-fix-stale-f923') }}
         uses: actions/upload-artifact@v4
         with:
           name: TachoWatch-play-aab
