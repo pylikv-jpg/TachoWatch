@@ -7,6 +7,41 @@ import org.junit.Test
 class SplitDailyRestTrackerTest {
 
     @Test
+    fun ongoingThreeHourRestMustNotCreditItselfAsAnEarlierFirstPart() {
+        assertFalse(SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(
+            listOf("WORK" to 60, "REST" to 180)
+        ))
+    }
+
+    @Test
+    fun ongoingRestChunksAcrossMidnightMustNotBecomeASeparateFirstPart() {
+        assertFalse(SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(
+            listOf("WORK" to 60, "REST" to 120, "REST" to 90)
+        ))
+    }
+
+    @Test
+    fun realEarlierThreeHourPartSurvivesWhileSecondRestContinues() {
+        assertTrue(SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(
+            listOf("WORK" to 60, "REST" to 180, "WORK" to 30, "REST" to 210)
+        ))
+    }
+
+    @Test
+    fun firstPartBeforeAnOpenSecondRestIsPreserved() {
+        assertTrue(SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(
+            listOf("WORK" to 60, "REST" to 180, "WORK" to 30)
+        ))
+    }
+
+    @Test
+    fun overnightTailWithoutShiftActivityDoesNotCreateCredit() {
+        assertFalse(SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(
+            listOf("REST" to 210)
+        ))
+    }
+
+    @Test
     fun overnightRestTailBeforeNewShiftIsNotAThreeHourPart() {
         // The card splits the 13h24 rest at midnight. Today's tail is 3h46,
         // followed by the new shift, so the tail must not qualify on its own.

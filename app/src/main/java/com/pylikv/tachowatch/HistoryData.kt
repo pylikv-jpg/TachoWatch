@@ -320,11 +320,8 @@ object HistoryData {
     }
 
     private fun hasCompletedSplitFirstPartBeforeTrailingRest(periods: List<ActivityPeriod>): Boolean {
-        if (periods.isEmpty()) return false
-        val trailingRestStart = periods.indexOfLast { it.type != "REST" } + 1
-        val beforeGap = if (trailingRestStart > 0) periods.take(trailingRestStart) else emptyList()
-        return SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
-            beforeGap.map { it.type to it.minutes }
+        return SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(
+            periods.map { it.type to it.minutes }
         )
     }
 

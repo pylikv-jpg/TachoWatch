@@ -48,6 +48,14 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             val prefs = context.getSharedPreferences(DriverLiveService.PREFS, Context.MODE_PRIVATE)
             if (prefs.getString(KEY_CARD_FINGERPRINT, null) == fingerprint) return
             val now = System.currentTimeMillis()
+            val snapshotAgeMs = now - prefs.getLong(DriverLiveService.SNAP_UPDATED_AT, 0L)
+            val liveSnapshotFresh = snapshotAgeMs in 0..LIVE_SNAPSHOT_MAX_AGE_MS
+            val liveActivityAtCheckpoint = if (liveSnapshotFresh) {
+                prefs.getString(DriverLiveService.SNAP_ACTIVITY, "—") ?: "—"
+            } else {
+                "—"
+            }
+            val liveRestingAtCheckpoint = liveSnapshotFresh && isRest(liveActivityAtCheckpoint)
             val shiftBoundaryMillis =
                 prefs.getLong(DriverLiveService.SHIFT_STARTED_AFTER_DAILY_REST_AT, 0L)
                     .takeIf { boundary ->
@@ -76,25 +84,17 @@ class ShiftStateRecoveryProvider : ContentProvider() {
                     splitDailyThreeHourPartTaken = false
                 )
             } else {
-                currentShiftSeed(model, shiftBoundaryMillis) ?: return
+                currentShiftSeed(model, shiftBoundaryMillis, liveRestingAtCheckpoint) ?: return
             }
 
             // The card parser intentionally omits the still-open activity because its duration
             // is reported as OPEN. Merge only the part of live F923 that is not already present
             // in the card's current continuous-driving window. This preserves an in-progress
             // driving segment without double-counting earlier driving before OTHER WORK.
-            val snapshotAgeMs = now -
-                prefs.getLong(DriverLiveService.SNAP_UPDATED_AT, 0L)
-            val liveSnapshotFresh = snapshotAgeMs in 0..LIVE_SNAPSHOT_MAX_AGE_MS
             val rawLiveContinuousAtCheckpoint = if (liveSnapshotFresh) {
                 prefs.getInt(DriverLiveService.SNAP_CONTINUOUS_MIN, seed.liveDrivingSegmentMinutes)
             } else {
                 seed.liveDrivingSegmentMinutes
-            }
-            val liveActivityAtCheckpoint = if (liveSnapshotFresh) {
-                prefs.getString(DriverLiveService.SNAP_ACTIVITY, "—") ?: "—"
-            } else {
-                "—"
             }
             val liveActivityMinutesAtCheckpoint = if (liveSnapshotFresh) {
                 prefs.getInt(DriverLiveService.SNAP_ACTIVITY_MIN, 0).coerceAtLeast(0)
@@ -136,8 +136,6 @@ class ShiftStateRecoveryProvider : ContentProvider() {
             } else {
                 0
             }
-            val liveRestingAtCheckpoint =
-                liveSnapshotFresh && isRest(liveActivityAtCheckpoint)
             val liveRestMinutesAtCheckpoint = if (liveRestingAtCheckpoint) {
                 maxOf(liveActivityMinutesAtCheckpoint, liveBreakMinutesAtCheckpoint)
             } else {
@@ -274,7 +272,8 @@ class ShiftStateRecoveryProvider : ContentProvider() {
 
     private fun currentShiftSeed(
         model: HistoryData.Model,
-        shiftBoundaryMillis: Long?
+        shiftBoundaryMillis: Long?,
+        currentRestContinues: Boolean
     ): Seed? {
         val days = model.days
         val latest = days.lastOrNull() ?: return null
@@ -318,10 +317,15 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         val driving = active.filter { it.type == "DRIVING" }.sumOf { it.minutes }
         val work = active.filter { it.type == "WORK" }.sumOf { it.minutes }
         val availability = active.filter { it.type == "AVAILABILITY" }.sumOf { it.minutes }
-        val splitDailyThreeHourPartTaken =
+        val closedActivities = active.map { it.type to it.minutes }
+        val splitDailyThreeHourPartTaken = if (currentRestContinues) {
+            // Card chunks of the current REST are not a separate earlier 3h part.
+            SplitDailyRestTracker.recoverFirstPartBeforeTrailingRest(closedActivities)
+        } else {
             SplitDailyRestTracker.recoverFirstPartFromClosedActivities(
-                active.map { it.type to it.minutes }
+                closedActivities
             )
+        }
 
         var firstSplitPartSeen = false
         var lastQualifyingBreakIndex = -1
@@ -424,7 +428,7 @@ class ShiftStateRecoveryProvider : ContentProvider() {
         private const val CONTINUOUS_BREAK_MINUTES = 45
         private const val FIRST_READ_KEY = "first_card_read_done"
         private const val KEY_RECOVERY_VERSION = "recovery_model_version"
-        private const val RECOVERY_VERSION = 8
+        private const val RECOVERY_VERSION = 9
         private const val LIVE_SNAPSHOT_MAX_AGE_MS = 30L * 60L * 1000L
         private const val MAX_SHIFT_BOUNDARY_AGE_MS = 25L * 60L * 60L * 1000L
         const val KEY_RECONCILED_AT = "recovery_reconciled_at"

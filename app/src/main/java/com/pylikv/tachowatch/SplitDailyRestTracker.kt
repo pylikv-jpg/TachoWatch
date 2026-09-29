@@ -65,6 +65,14 @@ object SplitDailyRestTracker {
         return state.firstPartTaken
     }
 
+    /**
+     * A closed card row may be only a chunk of the rest that is still running.
+     * Exclude its whole trailing REST run when looking for an earlier first part.
+     * Keep the ordinary recovery path for an OPEN non-rest activity after a real break.
+     */
+    fun recoverFirstPartBeforeTrailingRest(activities: Iterable<Pair<String, Int>>): Boolean =
+        recoverFirstPartFromClosedActivities(activities.toList().dropLastWhile { it.first == "REST" })
+
     fun update(state: State, resting: Boolean, restMinutes: Int): State {
         val minutes = restMinutes.coerceAtLeast(0)
 

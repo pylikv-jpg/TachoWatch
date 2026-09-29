@@ -27,19 +27,20 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Verify stable 471 source and absence of DTCO Control
+      - name: Verify stable 472 source and absence of DTCO Control
         env:
           EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
-          git merge-base --is-ancestor a7c884279972aa55e98417cec2bdcc00553ef965 HEAD
+          git merge-base --is-ancestor 83e38e514ebd87eabaf06edeefa54c04f270f160 HEAD
           python3 - <<'PY'
           import subprocess
 
-          base = "a7c884279972aa55e98417cec2bdcc00553ef965"
+          base = "83e38e514ebd87eabaf06edeefa54c04f270f160"
           allowed = {
-              "app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivityV2.kt",
-              "app/src/main/java/com/pylikv/tachowatch/WeeklyDrivingLimits.kt",
+              "app/src/main/java/com/pylikv/tachowatch/HistoryData.kt",
+              "app/src/main/java/com/pylikv/tachowatch/SplitDailyRestTracker.kt",
+              "app/src/main/java/com/pylikv/tachowatch/ShiftStateRecoveryProvider.kt",
           }
           changed = set(subprocess.check_output(
               ["git", "diff", "--name-only", base, "HEAD", "--", "app/src/main", "app/build.gradle.kts"],
@@ -47,7 +48,7 @@ jobs:
           ).splitlines())
           unexpected = changed - allowed
           if unexpected:
-              raise SystemExit("Unexpected changes to stable 471: " + ", ".join(sorted(unexpected)))
+              raise SystemExit("Unexpected changes to stable 472: " + ", ".join(sorted(unexpected)))
           print("Base: " + base)
           print("Production changes: " + ", ".join(sorted(changed)))
           PY
@@ -156,7 +157,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Prepare Play upload keystore
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'stable-462-fix-stale-f923') }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
         env:
           TACHOWATCH_UPLOAD_KEYSTORE_BASE64: ${{ secrets.TACHOWATCH_UPLOAD_KEYSTORE_BASE64 }}
         run: |
@@ -179,7 +180,7 @@ jobs:
           echo "TACHOWATCH_UPLOAD_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Build signed Google Play AAB
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'stable-462-fix-stale-f923') }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
         env:
           TACHOWATCH_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.TACHOWATCH_UPLOAD_KEYSTORE_PASSWORD }}
           TACHOWATCH_UPLOAD_KEY_ALIAS: ${{ secrets.TACHOWATCH_UPLOAD_KEY_ALIAS }}
@@ -192,7 +193,7 @@ jobs:
           jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab >/dev/null
 
       - name: Upload Google Play AAB
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'stable-462-fix-stale-f923') }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_play_aab) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'stable-462-fix-stale-f923' || github.head_ref == 'fix-472-false-split-rest')) }}
         uses: actions/upload-artifact@v4
         with:
           name: TachoWatch-play-aab
