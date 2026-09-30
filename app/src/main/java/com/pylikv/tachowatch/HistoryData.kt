@@ -80,7 +80,7 @@ object HistoryData {
     }
 
     private data class Place(val date: String, val time: String, val type: String, val country: String)
-    private data class ShiftMileage(
+    internal data class ShiftMileage(
         val startDate: String,
         val startTime: String,
         val endDate: String,
@@ -116,7 +116,6 @@ object HistoryData {
         val activityText = TlvInventory.render(result)
         val placesText = PlacesDecoder.render(result)
         val placeRecords = PlacesDecoder.records(result)
-        val shiftMileage = pairShiftMileage(placeRecords).groupBy { it.startDate }
         val historyEvents = HistoryEventDecoder.decode(result).groupBy { it.date }
         val localEventsByDate = localCardEvents.groupBy { it.date }
         val activityDays = linkedMapOf<String, ActivityDay>()
@@ -168,6 +167,22 @@ object HistoryData {
                 day.hasSplitDailyRest3h = splitRecoveryState.firstPartTaken
                 activityDays[date] = day
             }
+
+        val restRuns = mutableListOf<Pair<Long, Long>>()
+        activityDays.forEach { (date, day) ->
+            val midnight = (parseDate(date)?.time ?: return@forEach) / 1000L
+            day.periods.filter { it.type == "REST" }.forEach { period ->
+                val start = midnight + clockMinutes(period.startTime) * 60L
+                val end = start + period.minutes * 60L
+                val previous = restRuns.lastOrNull()
+                if (previous != null && previous.second == start) {
+                    restRuns[restRuns.lastIndex] = previous.first to end
+                } else {
+                    restRuns += start to end
+                }
+            }
+        }
+        val shiftMileage = pairShiftMileage(placeRecords, restRuns).groupBy { it.startDate }
 
         val places = Regex("(?m)^#\\d+ time=(\\d{4}-\\d{2}-\\d{2}) (\\d{2}:\\d{2}):\\d{2} type=([^ ]+) country=([^ ]+)")
             .findAll(placesText)
@@ -226,12 +241,31 @@ object HistoryData {
         return Model(days, previousWeekMinutes, currentWeekMinutes, rests)
     }
 
-    private fun pairShiftMileage(records: List<PlacesDecoder.Record>): List<ShiftMileage> {
+    internal fun pairShiftMileage(
+        records: List<PlacesDecoder.Record>,
+        restRuns: List<Pair<Long, Long>>
+    ): List<ShiftMileage> {
         val out = ArrayList<ShiftMileage>()
         var pending: PlacesDecoder.Record? = null
+        var lastEnd: PlacesDecoder.Record? = null
+        var outputIndex: Int? = null
         records.forEach { record ->
             when {
-                record.isBegin -> pending = record
+                record.isBegin -> {
+                    val previousEnd = lastEnd
+                    val from = previousEnd?.timestampSeconds ?: pending?.timestampSeconds
+                    val dailyRest = from != null && restRuns.any { (start, end) ->
+                        minOf(end, record.timestampSeconds) - maxOf(start, from) >= 9 * 3600L
+                    }
+                    // Missing activity data cannot establish continuity across a long gap.
+                    val unknownLongGap = from != null && record.timestampSeconds - from >= 9 * 3600L &&
+                        restRuns.isEmpty()
+                    if (pending == null || dailyRest || unknownLongGap) {
+                        pending = record
+                        lastEnd = null
+                        outputIndex = null
+                    }
+                }
                 record.isEnd -> {
                     val start = pending ?: return@forEach
                     if (record.timestampSeconds <= start.timestampSeconds) return@forEach
@@ -239,7 +273,7 @@ object HistoryData {
                         pending = null
                         return@forEach
                     }
-                    out += ShiftMileage(
+                    val mileage = ShiftMileage(
                         startDate = start.date,
                         startTime = start.time,
                         endDate = record.date,
@@ -247,7 +281,14 @@ object HistoryData {
                         startOdometerKm = start.odometerKm,
                         endOdometerKm = record.odometerKm
                     )
-                    pending = null
+                    val index = outputIndex
+                    if (index == null) {
+                        out += mileage
+                        outputIndex = out.lastIndex
+                    } else {
+                        out[index] = mileage
+                    }
+                    lastEnd = record
                 }
             }
         }

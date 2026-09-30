@@ -11,6 +11,44 @@ import java.util.TimeZone
 
 class HistoryDataManualInputTest {
 
+    private fun place(hour: Int, type: Int, km: Int) = PlacesDecoder.Record(
+        timestampSeconds = epoch("2026-09-24 00:00") + hour * 3600L,
+        date = if (hour < 24) "2026-09-24" else "2026-09-25",
+        time = "%02d:00".format(hour % 24), entryType = type,
+        country = "E", odometerKm = km
+    )
+
+    @Test
+    fun countryEndAndBeginDoNotSplitMileageWithoutDailyRest() {
+        val mileage = HistoryData.pairShiftMileage(
+            listOf(place(6, 0, 100000), place(14, 1, 100400),
+                place(14, 0, 100400), place(18, 1, 100520)), emptyList()
+        ).single()
+        assertEquals(520, mileage.endOdometerKm - mileage.startOdometerKm)
+    }
+
+    @Test
+    fun nineHourRestStartsNewMileagePeriodAcrossMidnight() {
+        val midnight = epoch("2026-09-24 00:00")
+        val mileage = HistoryData.pairShiftMileage(
+            listOf(place(6, 0, 100000), place(18, 1, 100520),
+                place(27, 0, 100520), place(35, 1, 100820)),
+            listOf(midnight + 18 * 3600L to midnight + 27 * 3600L)
+        )
+        assertEquals(listOf(520, 300), mileage.map { it.endOdometerKm - it.startOdometerKm })
+    }
+
+    @Test
+    fun eightHourRestDoesNotResetMileagePeriod() {
+        val midnight = epoch("2026-09-24 00:00")
+        val mileage = HistoryData.pairShiftMileage(
+            listOf(place(6, 0, 100000), place(18, 1, 100400),
+                place(26, 0, 100400), place(30, 1, 100520)),
+            listOf(midnight + 18 * 3600L to midnight + 26 * 3600L)
+        ).single()
+        assertEquals(520, mileage.endOdometerKm - mileage.startOdometerKm)
+    }
+
     @Test
     fun manuallyEnteredWorkWithCardOutIsCountedInHistory() {
         val day = epoch("2026-09-24 00:00")
@@ -151,6 +189,62 @@ class HistoryDataManualInputTest {
         }
     }
 
+    @Test
+    fun countryBeginInsideShiftDoesNotDiscardFirstFourHundredKilometres() {
+        val day = epoch("2026-09-24 00:00")
+        val activityRecord = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(16)
+            write32(day)
+            write16(0)
+            write16(0)
+            write16(activityChange(6 * 60, activity = 2, cardInserted = true))
+            write16(activityChange(7 * 60, activity = 0, cardInserted = true))
+        }.toByteArray()
+        val activityPayload = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(0)
+            write(activityRecord)
+        }.toByteArray()
+        val placesPayload = ByteArrayOutputStream().apply {
+            write(2)
+            write32(epoch("2026-09-24 06:00"))
+            write(0)
+            write(0x20)
+            write(0)
+            write24(100000)
+            write32(epoch("2026-09-24 14:00"))
+            write(0)
+            write(0x0F)
+            write(0)
+            write24(100400)
+            write32(epoch("2026-09-24 18:00"))
+            write(1)
+            write(0x20)
+            write(0)
+            write24(100520)
+        }.toByteArray()
+        val file = File.createTempFile("tachowatch-mileage-history", ".ddd")
+        try {
+            file.writeBytes(
+                tlv(0x0504, 0x02, activityPayload) +
+                    tlv(0x0506, 0x00, placesPayload)
+            )
+            val parsed = TlvInventory.parse(file)
+            assertEquals(null, parsed.error)
+
+            val history = HistoryData.load(parsed)
+            val decodedDay = history.days.single()
+
+            assertEquals(100000, decodedDay.startOdometerKm)
+            assertEquals(100520, decodedDay.endOdometerKm)
+            assertEquals(520, decodedDay.shiftDistanceKm)
+            assertEquals(520, HistoryData.mileageBetween(history.days, "2026-09-24", "2026-09-24").first)
+            assertEquals(0, HistoryData.mileageBetween(history.days, "2026-09-24", "2026-09-24").second)
+        } finally {
+            file.delete()
+        }
+    }
     @Test
     fun mileageRangeCountsMissingOdometerPairsWithoutInventingDistance() {
         val days = listOf(
