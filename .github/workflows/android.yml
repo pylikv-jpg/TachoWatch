@@ -40,6 +40,9 @@ jobs:
           base = "83e38e514ebd87eabaf06edeefa54c04f270f160"
           allowed = {
               "app/src/main/java/com/pylikv/tachowatch/HistoryData.kt",
+              "app/src/main/java/com/pylikv/tachowatch/DriverLiveService.kt",
+              "app/src/main/java/com/pylikv/tachowatch/DriverDashboardActivityV2.kt",
+              "app/src/main/java/com/pylikv/tachowatch/LiveActivityValue.kt",
               "app/src/main/java/com/pylikv/tachowatch/SplitDailyRestTracker.kt",
               "app/src/main/java/com/pylikv/tachowatch/ShiftStateRecoveryProvider.kt",
           }

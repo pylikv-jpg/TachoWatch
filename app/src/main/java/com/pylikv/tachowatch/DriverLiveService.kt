@@ -299,7 +299,7 @@ class DriverLiveService : Service(), LiveDidDiagnostic.Listener, TextToSpeech.On
             // from an older cycle is more dangerous than waiting for the next complete cycle.
             lastProcessedCycle = cycle
 
-            val freshActivity = block?.let { last(it, "F903") }
+            val freshActivity = block?.let(LiveActivityValue::fromCycle)
             val freshActivityMinutes = block?.let { mins(last(it, "F927")) }
             val freshContinuous = block?.let { mins(last(it, "F923")) }
             val freshBreak = block?.let { mins(last(it, "F925")) }
