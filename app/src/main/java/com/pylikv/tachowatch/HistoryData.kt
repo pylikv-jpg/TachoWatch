@@ -95,6 +95,7 @@ object HistoryData {
         var activeStart: String? = null,
         var restStartAfterWork: String? = null,
         var hasSplitDailyRest3h: Boolean = false,
+        var trailingOpenRest: String? = null,
         val periods: MutableList<ActivityPeriod> = mutableListOf()
     )
     private data class Debt(
@@ -141,6 +142,7 @@ object HistoryData {
                     val time = row.groupValues[1]
                     val kind = row.groupValues[2]
                     val duration = Regex("duration=(\\d+):(\\d{2})").find(line)
+                    day.trailingOpenRest = time.takeIf { kind == "REST" && duration == null }
                     val minutes = duration?.let {
                         (it.groupValues[1].toIntOrNull() ?: 0) * 60 + (it.groupValues[2].toIntOrNull() ?: 0)
                     } ?: 0
@@ -169,9 +171,16 @@ object HistoryData {
             }
 
         val restRuns = mutableListOf<Pair<Long, Long>>()
-        activityDays.forEach { (date, day) ->
+        activityDays.toSortedMap().forEach { (date, day) ->
             val midnight = (parseDate(date)?.time ?: return@forEach) / 1000L
-            day.periods.filter { it.type == "REST" }.forEach { period ->
+            // The decoder leaves the last change OPEN, including on historical days.
+            // A consecutive recorded day bounds that rest at midnight. Do not extend
+            // the latest day or bridge missing dates, and keep activity totals untouched.
+            val nextDate = dateFormat("yyyy-MM-dd").format(Date((midnight + 86400L) * 1000L))
+            val boundedTrailingRest = day.trailingOpenRest?.takeIf { activityDays.containsKey(nextDate) }
+                ?.let { ActivityPeriod(it, "REST", 1440 - clockMinutes(it)) }
+            val restPeriods = day.periods.filter { it.type == "REST" } + listOfNotNull(boundedTrailingRest)
+            restPeriods.forEach { period ->
                 val start = midnight + clockMinutes(period.startTime) * 60L
                 val end = start + period.minutes * 60L
                 val previous = restRuns.lastOrNull()

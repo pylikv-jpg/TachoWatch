@@ -50,6 +50,71 @@ class HistoryDataManualInputTest {
     }
 
     @Test
+    fun historicalOpenRestAcrossMidnightSeparatesMileageAfterNineHours() {
+        val days = mileageHistoryAcrossMidnight(nextStartHour = 3)
+        assertEquals(listOf(520, 300), days.map { it.shiftDistanceKm })
+        assertEquals(820, HistoryData.mileageBetween(days, "2026-09-24", "2026-09-25").first)
+    }
+
+    @Test
+    fun historicalOpenRestOfEightHoursKeepsOneMileagePeriod() {
+        val days = mileageHistoryAcrossMidnight(nextStartHour = 2)
+        assertEquals(820, days.first().shiftDistanceKm)
+        assertEquals(null, days.last().shiftDistanceKm)
+    }
+
+    @Test
+    fun missingActivityDayDoesNotInventAnOvernightRest() {
+        val days = mileageHistoryAcrossMidnight(nextStartHour = 6, nextDate = "2026-09-26")
+        assertEquals(820, days.first().shiftDistanceKm)
+        assertEquals(null, days.last().shiftDistanceKm)
+    }
+
+    private fun mileageHistoryAcrossMidnight(
+        nextStartHour: Int,
+        nextDate: String = "2026-09-25"
+    ): List<HistoryData.Day> {
+        fun activityRecord(date: String, changes: List<Pair<Int, Int>>) = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(12 + changes.size * 2)
+            write32(epoch("$date 00:00"))
+            write16(0)
+            write16(0)
+            changes.forEach { (minute, kind) -> write16(activityChange(minute, kind, true)) }
+        }.toByteArray()
+        val first = activityRecord("2026-09-24", listOf(360 to 3, 1080 to 0))
+        val second = activityRecord(nextDate, listOf(0 to 0, nextStartHour * 60 to 3, 1080 to 0))
+        val activityPayload = ByteArrayOutputStream().apply {
+            write16(0)
+            write16(first.size)
+            write(first)
+            write(second)
+        }.toByteArray()
+        val placesPayload = ByteArrayOutputStream().apply {
+            write(3)
+            listOf(
+                Triple("2026-09-24 06:00", 0, 100000),
+                Triple("2026-09-24 18:00", 1, 100520),
+                Triple("$nextDate %02d:00".format(nextStartHour), 0, 100520),
+                Triple("$nextDate 18:00", 1, 100820)
+            ).forEach { (time, kind, km) ->
+                write32(epoch(time))
+                write(kind)
+                write(0x20)
+                write(0)
+                write24(km)
+            }
+        }.toByteArray()
+        val file = File.createTempFile("tachowatch-midnight-mileage", ".ddd")
+        return try {
+            file.writeBytes(tlv(0x0504, 0x02, activityPayload) + tlv(0x0506, 0x00, placesPayload))
+            HistoryData.load(TlvInventory.parse(file)).days
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun manuallyEnteredWorkWithCardOutIsCountedInHistory() {
         val day = epoch("2026-09-24 00:00")
         val record = ByteArrayOutputStream().apply {
